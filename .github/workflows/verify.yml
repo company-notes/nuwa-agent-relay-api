@@ -1,9 +1,10 @@
-name: Verify Nuwa Agent Relay API
+name: Verify and deploy Nuwa Agent Relay API
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,9 +18,60 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
       - name: Typecheck
         run: npm run check
       - name: Test Worker and D1
         run: npm test
+      - name: Validate deployment configuration script
+        run: node --check scripts/prepare-deploy.mjs
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || vars.RELAY_DEPLOY_ENABLED == 'true')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: nuwa-agent-relay-production
+      cancel-in-progress: false
+    env:
+      CI: "true"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
+      CLOUDFLARE_D1_DATABASE_NAME: ${{ vars.CLOUDFLARE_D1_DATABASE_NAME }}
+      CLOUDFLARE_CUSTOM_DOMAIN: ${{ vars.CLOUDFLARE_CUSTOM_DOMAIN }}
+      MAILTRIGGER_API_URL: ${{ vars.MAILTRIGGER_API_URL }}
+      MAILTRIGGER_MANAGED_DOMAIN: ${{ vars.MAILTRIGGER_MANAGED_DOMAIN }}
+      MAILTRIGGER_API_TOKEN: ${{ secrets.MAILTRIGGER_API_TOKEN }}
+      ALIAS_VERIFICATION_KEY: ${{ secrets.ALIAS_VERIFICATION_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Validate deployment credentials
+        shell: bash
+        run: |
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_D1_DATABASE_ID MAILTRIGGER_MANAGED_DOMAIN MAILTRIGGER_API_TOKEN ALIAS_VERIFICATION_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required Cloudflare / MailTrigger configuration: ${name}"
+              exit 1
+            fi
+          done
+      - name: Prepare deployment config
+        run: node scripts/prepare-deploy.mjs
+      - name: Apply D1 migrations
+        run: npx wrangler d1 migrations apply DB --remote --config .wrangler.deploy.jsonc
+      - name: Deploy Worker
+        run: npx wrangler deploy --config .wrangler.deploy.jsonc
+      - name: Set MailTrigger Worker secret
+        shell: bash
+        run: printf '%s' "$MAILTRIGGER_API_TOKEN" | npx wrangler secret put MAILTRIGGER_API_TOKEN --config .wrangler.deploy.jsonc
+      - name: Set operator alias-verification Worker secret
+        shell: bash
+        run: printf '%s' "$ALIAS_VERIFICATION_KEY" | npx wrangler secret put ALIAS_VERIFICATION_KEY --config .wrangler.deploy.jsonc

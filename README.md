@@ -138,7 +138,23 @@ npm run db:migrate:local
 npm run dev
 ```
 
-No production deployment is attempted by the verification workflow. A separate deployment workflow can be enabled once Cloudflare resources, secrets and domain are configured.
+The GitHub Actions workflow automatically checks every push. **Production deployment is disabled by default.** To enable deploy-on-merge, set repository variable `RELAY_DEPLOY_ENABLED=true`; alternatively use the manual **Run workflow** action.
+
+At **Settings → Secrets and variables → Actions**, configure:
+
+| Type | Name | Notes |
+| --- | --- | --- |
+| Secret | `CLOUDFLARE_API_TOKEN` | Scoped Workers Scripts / D1 / Workers Routes edit permissions |
+| Secret | `CLOUDFLARE_ACCOUNT_ID` | Target Cloudflare account |
+| Secret | `MAILTRIGGER_API_TOKEN` | MailTrigger service account credential |
+| Secret | `ALIAS_VERIFICATION_KEY` | Operator-managed verification credential |
+| Variable | `CLOUDFLARE_D1_DATABASE_ID` | **New** D1 database UUID |
+| Variable | `MAILTRIGGER_MANAGED_DOMAIN` | Existing MailTrigger-verified mail domain |
+| Variable (optional) | `MAILTRIGGER_API_URL` | Override MailTrigger API origin, e.g. an isolated test tunnel |
+| Variable (optional) | `CLOUDFLARE_CUSTOM_DOMAIN` | Must equal `agent-relay.company-notes.com` |
+| Variable | `RELAY_DEPLOY_ENABLED` | Set to `true` when ready for automatic deploys |
+
+The deployment workflow verifies all source tests, applies remote migrations, deploys the Worker to `agent-relay.company-notes.com`, and uploads Worker secrets through Wrangler without printing secret contents. It never automatically creates a production D1 database or MailTrigger domain.
 
 ## Testing policy
 
