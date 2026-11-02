@@ -11,3 +11,6 @@ coverage/
 dist/
 *.local
 .DS_Store
+
+# Local live smoke test state (contains IDs, never tokens)
+.relay-smoke/
