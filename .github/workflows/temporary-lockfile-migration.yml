@@ -1,0 +1,46 @@
+name: Regenerate lockfile after supported test-plugin migration (temporary)
+
+on:
+  push:
+    branches: [maintenance/node-26-dependency-security]
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    if: >-
+      github.event.head_commit.message != 'chore: regenerate secure dependency lockfile'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: maintenance/node-26-dependency-security
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Resolve supported dependency graph
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Apply compatible vulnerability fixes
+        shell: bash
+        run: npm audit fix --package-lock-only --ignore-scripts --no-fund || true
+      - name: Verify installation
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npm run check
+      - name: Run tests
+        run: npm test
+      - name: Commit new lockfile in pull request branch only
+        shell: bash
+        run: |
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "Lockfile already consistent."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: regenerate secure dependency lockfile"
+          git push origin HEAD:maintenance/node-26-dependency-security
