@@ -15,7 +15,9 @@
     "test:core": "vitest run test/CoreFlow.test.ts",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "audit:report": "node scripts/audit-report.mjs",
+    "audit:check": "node scripts/audit-report.mjs --enforce"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
@@ -23,5 +25,8 @@
     "typescript": "^5.9.2",
     "vitest": "^4.1.11",
     "wrangler": "^4.38.0"
+  },
+  "engines": {
+    "node": ">=26.13.0 <27"
   }
 }
