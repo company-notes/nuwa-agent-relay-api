@@ -4,7 +4,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 class DeploymentConfiguration {
-  static readonly d1UUIDPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  static d1UUIDPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   static required(name) {
     const value = (process.env[name] || '').trim();
