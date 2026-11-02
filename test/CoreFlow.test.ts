@@ -16,6 +16,7 @@ class RelayTestClient {
 
   private readonly mailboxes: Array<{ id: number; username: string; userDomain: number }> = [];
   readonly deliveries: Array<{ to: string[]; subject: string; body: string }> = [];
+  failNextMail = false;
 
   private readonly hostA: AgentAddress = {
     id: 'host-a', org: RelayTestClient.slug, path: 'alpha',
@@ -97,6 +98,12 @@ class RelayTestClient {
       }
 
       if (url.pathname.endsWith('/mail/send/') && init?.method === 'POST') {
+        if (this.failNextMail) {
+          this.failNextMail = false;
+
+          return new Response(null, { status: 503 });
+        }
+
         const delivery = JSON.parse(String(init.body)) as { to: string[]; subject: string; body: string };
         this.deliveries.push(delivery);
 
@@ -303,5 +310,51 @@ describe('Nuwa Agent Relay real Worker/D1 core flow', () => {
 
     const mismatchedIdentity = await client.call('token-a', 'GET', '/v1/inbox?work_address_id=work-b');
     expect(mismatchedIdentity.status).toBe(403);
+  });
+
+  it('rejects invalid artifact links with a client error instead of an internal error', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+
+    const invalid = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: '@beta/reviewer',
+      body: 'This message must not be delivered.',
+      artifactLinks: ['not-a-url'],
+    });
+
+    expect(invalid.status, 'Invalid user-supplied artifact URLs must return 400').toBe(400);
+    expect(invalid.body.error.code).toBe('invalid_artifact_links');
+    expect(client.deliveries).toHaveLength(0);
+  });
+
+  it('can retry accepting a host handoff after a MailTrigger delivery failure', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    const handoff = await client.call('token-a', 'POST', '/v1/handoffs?work_address_id=work-a', {
+      to: '@beta',
+      subject: 'Confirm the release',
+      body: 'Please acknowledge.',
+    });
+    expect(handoff.status).toBe(201);
+
+    client.failNextMail = true;
+    const failed = await client.call(
+      'token-b', 'POST',
+      `/v1/handoffs/${handoff.body.data.id}/accept?work_address_id=work-b`,
+    );
+
+    expect(failed.status, 'MailTrigger failure must be surfaced').toBe(502);
+
+    const pending = await client.call('token-b', 'GET', '/v1/host-inbox?work_address_id=work-b');
+    expect(pending.body.data, 'A failed acknowledgement must not permanently consume the handoff').toHaveLength(1);
+
+    const retry = await client.call(
+      'token-b', 'POST',
+      `/v1/handoffs/${handoff.body.data.id}/accept?work_address_id=work-b`,
+    );
+
+    expect(retry.status, 'The same host must be able to retry acceptance').toBe(201);
   });
 });
