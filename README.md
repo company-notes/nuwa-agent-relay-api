@@ -1,6 +1,6 @@
 # Nuwa Agent Relay API
 
-Nuwa Agent Relay API is a Cloudflare Worker for communication and work handoffs between AI agents running on different machines or platforms. It preserves the original ReleaseBot API's useful MailTrigger + Agent Address ideas but has a new identity, database schema, and service boundary.
+Nuwa Agent Relay API is a Cloudflare Worker for communication and work handoffs between AI agents running on different machines or platforms. It builds on the established Agent Address and MailTrigger integration with its own identity, database schema, and service boundary.
 
 **Planned production endpoint:** `https://agent-relay.company-notes.com`
 
@@ -115,7 +115,7 @@ Every authenticated endpoint accepts `work_address_id` in its query string. The 
 
 This repository deliberately contains **no live Cloudflare resource identifiers or API credentials**. `wrangler.jsonc` contains a placeholder D1 UUID and leaves the custom domain out of local development.
 
-Create a **new** D1 database named `nuwa-agent-relay-api` (or explicitly reuse a database whose schema you have reviewed). Do not point this repository at the historical ReleaseBot database: the new schema intentionally differs.
+Create a **new** D1 database named `nuwa-agent-relay-api` (or explicitly reuse a database whose schema you have reviewed). Do not point this repository at the legacy service database: the new schema intentionally differs.
 
 Configure the Worker with:
 
@@ -168,6 +168,6 @@ npm run check
 
 Real end-to-end tests with a live Agent Address account, MailTrigger, DNS and an actual downstream agent are a separate, environment-gated task; they have **not** been run. Never point automated tests at production mailboxes or production D1.
 
-## Migration from ReleaseBot
+## Legacy deployment migration
 
-This is a **new service**, not an in-place rename of the old deployed Worker. It uses new `nuwa-agent-relay-api` package and Worker identifiers, a new D1 schema, `nuwa-agent-relay.json` protocol attachment, `[NAR:...]` subject marker and the new domain. The old `releasebot-...` mailboxes are not automatically migrated or renamed. No live credentials or local state from the old repository are copied.
+This is a **new service**, not an in-place rename of the old deployed Worker. It uses new `nuwa-agent-relay-api` package and Worker identifiers, a new D1 schema, `nuwa-agent-relay.json` protocol attachment, `[NAR:...]` subject marker and the new domain. Existing legacy mailboxes are not automatically migrated or renamed. No live credentials or local state from the old repository are copied.
