@@ -26,7 +26,7 @@ export class RelayTestClient {
     path: 'alpha',
     address: '@alpha',
     canonical: `${RelayTestClient.slug}/alpha`,
-    parentAddressId: null,,
+    parentAddressId: null,
   };
   private readonly hostB: AgentAddress = {
     id: 'host-b',
@@ -34,7 +34,7 @@ export class RelayTestClient {
     path: 'beta',
     address: '@beta',
     canonical: `${RelayTestClient.slug}/beta`,
-    parentAddressId: null,,
+    parentAddressId: null,
   };
   private readonly workA: AgentAddress = {
     id: 'work-a',
@@ -42,7 +42,7 @@ export class RelayTestClient {
     path: 'alpha/author',
     address: '@alpha/author',
     canonical: `${RelayTestClient.slug}/alpha/author`,
-    parentAddressId: 'host-a',,
+    parentAddressId: 'host-a',
   };
   private readonly workC: AgentAddress = {
     id: 'work-c',
@@ -50,7 +50,7 @@ export class RelayTestClient {
     path: 'beta/observer',
     address: '@beta/observer',
     canonical: `${RelayTestClient.slug}/beta/observer`,
-    parentAddressId: 'host-b',,
+    parentAddressId: 'host-b',
   };
 
   private readonly workB: AgentAddress = {
@@ -59,7 +59,7 @@ export class RelayTestClient {
     path: 'beta/reviewer',
     address: '@beta/reviewer',
     canonical: `${RelayTestClient.slug}/beta/reviewer`,
-    parentAddressId: 'host-b',,
+    parentAddressId: 'host-b',
   };
 
   private requestAgentAddress(url: URL, token: string | null): Response {
