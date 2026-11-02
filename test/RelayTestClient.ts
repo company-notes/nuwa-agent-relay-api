@@ -68,8 +68,14 @@ export class RelayTestClient {
     }
 
     const isAuthor = token === 'Bearer token-a';
-    const work = isAuthor ? this.workA : token === 'Bearer token-b' ? this.workB : this.workC;
     const host = isAuthor ? this.hostA : this.hostB;
+    let work = this.workC;
+
+    if (isAuthor) {
+      work = this.workA;
+    } else if (token === 'Bearer token-b') {
+      work = this.workB;
+    }
 
     if (url.pathname === '/v1/account/status') {
       if (this.failAddressStatus) {
@@ -115,7 +121,12 @@ export class RelayTestClient {
 
     if (url.pathname === '/api/v1/mailbox/' && init?.method === 'POST') {
       const data = JSON.parse(String(init.body)) as { username: string; userDomain: number };
-      const mailbox = { id: this.mailboxes.length + 1, username: data.username, userDomain: data.userDomain };
+      const mailbox = {
+        id: this.mailboxes.length + 1,
+        username: data.username,
+        userDomain: data.userDomain,
+      };
+
       this.mailboxes.push(mailbox);
 
       return Response.json(mailbox, { status: 201 });
