@@ -46,6 +46,7 @@ export class HTTP {
     if (value === undefined || value === null) {
       return null;
     }
+
     if (typeof value !== 'string' || value.length > maxLength) {
       throw new APIError(400, 'invalid_request', `${key} must be a string of at most ${maxLength} characters.`);
     }
@@ -59,6 +60,7 @@ export class HTTP {
     if (value === undefined) {
       return [];
     }
+
     if (!Array.isArray(value) || value.length > 20) {
       throw new APIError(400, 'invalid_artifact_links', 'artifactLinks must be an array of at most 20 HTTPS URLs.');
     }

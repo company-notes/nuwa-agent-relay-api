@@ -6,8 +6,6 @@ import { IdentityContext } from './IdentityContext';
 import { RelayService, type NewMessage } from './RelayService';
 
 export class RelayAPI {
-  constructor(private readonly env: Env) {}
-
   private static authorization(request: Request): string {
     const header = request.headers.get('authorization');
 
@@ -36,6 +34,8 @@ export class RelayAPI {
     return pathname.match(pattern)?.[1] ?? null;
   }
 
+  constructor(private readonly env: Env) {}
+
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
@@ -52,11 +52,13 @@ export class RelayAPI {
       });
     }
 
-    const addressClient = new AddressClient(this.env, RelayAPI.authorization(request));
+    const authorization = RelayAPI.authorization(request);
+    const addressClient = new AddressClient(this.env, authorization);
     const status = await addressClient.getStatus(
       url.searchParams.get('work_address_id') ?? undefined,
     );
     const identity = new IdentityContext(status);
+
     const relay = new RelayService(this.env, identity, addressClient);
     const aliases = new AliasService(this.env, identity);
 
