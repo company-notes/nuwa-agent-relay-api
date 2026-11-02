@@ -30,7 +30,7 @@ jobs:
 
   deploy:
     if: >-
-      github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || vars.RELAY_DEPLOY_ENABLED == 'true' || github.event.head_commit.message == 'ci: deploy verified relay API update (one-shot)')
+      github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || vars.RELAY_DEPLOY_ENABLED == 'true')
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
