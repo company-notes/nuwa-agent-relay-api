@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "nuwa-agent-relay-api",
+  "main": "src/Index.ts",
+  "compatibility_date": "2026-09-09",
+  "workers_dev": true,
+  "vars": {
+    "ADDRESS_API_URL": "https://address.company-notes.com",
+    "MAILTRIGGER_API_URL": "https://app.mailtrigger.app",
+    "MAILTRIGGER_AUTH_SCHEME": "Token"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nuwa-agent-relay-api",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

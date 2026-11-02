@@ -1,0 +1,3 @@
+MAILTRIGGER_API_TOKEN=replace-with-local-test-token
+MAILTRIGGER_MANAGED_DOMAIN=example.test
+ALIAS_VERIFICATION_KEY=replace-with-local-test-verification-key

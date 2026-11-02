@@ -1,0 +1,9 @@
+export interface Env {
+  DB: D1Database;
+  ADDRESS_API_URL: string;
+  MAILTRIGGER_API_URL: string;
+  MAILTRIGGER_AUTH_SCHEME?: string;
+  MAILTRIGGER_API_TOKEN?: string;
+  MAILTRIGGER_MANAGED_DOMAIN?: string;
+  ALIAS_VERIFICATION_KEY?: string;
+}
