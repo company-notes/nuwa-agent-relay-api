@@ -325,15 +325,26 @@ export class RelayService {
       throw new APIError(409, 'handoff_already_accepted', 'This handoff was accepted by another work identity.');
     }
 
-    const delivered = await this.deliver(
-      handoff,
-      handoff.sender_host_id,
-      handoff.sender_work_id,
-      'acceptance',
-      'Agent Relay handoff accepted',
-      `Accepted by ${this.identity.work.canonical}.`,
-      [],
-    );
+    let delivered: { id: string; threadId: string; messageId: string };
+
+    try {
+      delivered = await this.deliver(
+        handoff,
+        handoff.sender_host_id,
+        handoff.sender_work_id,
+        'acceptance',
+        'Agent Relay handoff accepted',
+        `Accepted by ${this.identity.work.canonical}.`,
+        [],
+      );
+    } catch (error) {
+      // The acknowledgement failed; release this host handoff for a safe retry.
+      await this.env.DB.prepare(
+        'UPDATE threads SET accepted_work_id = NULL WHERE id = ? AND accepted_work_id = ?',
+      ).bind(handoff.id, this.identity.work.id).run();
+
+      throw error;
+    }
 
     return { ...delivered, acceptedBy: this.identity.work.canonical };
   }

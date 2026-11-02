@@ -68,7 +68,12 @@ export class HTTP {
         throw new APIError(400, 'invalid_artifact_links', 'Each artifact link must be a URL string.');
       }
 
+      if (!URL.canParse(entry)) {
+        throw new APIError(400, 'invalid_artifact_links', 'Each artifact link must be a valid HTTPS URL.');
+      }
+
       const url = new URL(entry);
+
       if (url.protocol !== 'https:') {
         throw new APIError(400, 'invalid_artifact_links', 'Only HTTPS artifact links are supported.');
       }
