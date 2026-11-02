@@ -23,8 +23,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Typecheck
         run: npm run check
-      - name: Inspect dependency vulnerabilities
-        run: npm run audit:report
+      - name: Enforce dependency security (high/critical)
+        run: npm run audit:check
       - name: Test Worker and D1
         run: npm test
       - name: Test live smoke harness offline
