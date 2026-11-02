@@ -84,6 +84,41 @@ describe('External identity aliases', () => {
     expect(noLongerRoutable.status).toBe(404);
   });
 
+  it('refuses to deliver through an alias whose canonical target no longer matches its owner', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    const registered = await client.call('token-b', 'POST', '/v1/aliases?work_address_id=work-b', {
+      provider: 'grokbot',
+      externalId: 'moved-agent-id',
+    });
+    expect(registered.status).toBe(201);
+
+    const verified = await client.call(
+      'token-b',
+      'POST',
+      `/v1/aliases/${registered.body.data.id}/verification?work_address_id=work-b`,
+      undefined,
+      'test-alias-verification-key',
+    );
+    expect(verified.status).toBe(200);
+
+    // Simulate stale registry state after an external mapping changes.
+    await env.DB.prepare('UPDATE agent_aliases SET canonical_address = ? WHERE id = ?')
+      .bind('relay-test-org/alpha/author', registered.body.data.id)
+      .run();
+
+    const response = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: { provider: 'grokbot', externalId: 'moved-agent-id' },
+      body: 'Must not reach the wrong agent.',
+    });
+
+    expect(response.status, 'Aliases must never silently retarget another work identity').toBe(409);
+    expect(response.body.error.code).toBe('stale_alias');
+    expect(client.deliveries).toHaveLength(0);
+  });
+
   it('cannot claim an active email alias already owned by another work identity', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();

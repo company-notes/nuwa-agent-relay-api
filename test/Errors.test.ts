@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
 import { RelayTestClient } from './RelayTestClient';
@@ -28,6 +29,31 @@ describe('Relay API failure and access boundaries', () => {
     expect(invalid.status, 'Invalid user-supplied artifact URLs must return 400').toBe(400);
     expect(invalid.body.error.code).toBe('invalid_artifact_links');
     expect(client.deliveries).toHaveLength(0);
+  });
+
+  it('stores failed external deliveries without showing them in the recipient inbox', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    client.failNextMail = true;
+    const response = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: '@beta/reviewer',
+      body: 'This send should fail.',
+    });
+
+    expect(response.status, 'A transport failure must be visible to the sender').toBe(502);
+    expect(response.body.error.code).toBe('mailtrigger_send_failed');
+
+    const rows = await env.DB.prepare(
+      'SELECT delivery_status, body FROM messages WHERE body = ?',
+    ).bind('This send should fail.').all<{ delivery_status: string; body: string }>();
+
+    expect(rows.results, 'The failed delivery remains available for diagnosis').toHaveLength(1);
+    expect(rows.results[0].delivery_status).toBe('failed');
+
+    const inbox = await client.call('token-b', 'GET', '/v1/inbox?work_address_id=work-b');
+    expect(inbox.body.data, 'Failed messages must not be presented as delivered').toHaveLength(0);
   });
 
   it('does not disclose a thread to a nonparticipant in the same organization', async () => {

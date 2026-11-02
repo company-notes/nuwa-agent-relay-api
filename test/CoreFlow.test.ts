@@ -9,6 +9,14 @@ describe('Nuwa Agent Relay core messaging flow', () => {
     client.installExternalTestTransport();
     await client.provisionBothHosts();
 
+    const provisionedAgain = await client.call(
+      'token-b',
+      'POST',
+      '/v1/hosts/provision?work_address_id=work-b',
+    );
+    expect(provisionedAgain.status).toBe(201);
+    expect(provisionedAgain.body.data.created, 'Provisioning a host twice must reuse its mailbox').toBe(false);
+
     const outbound = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
       to: '@beta/reviewer',
       body: 'Please check the release build.',

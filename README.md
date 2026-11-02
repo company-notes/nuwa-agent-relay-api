@@ -158,7 +158,7 @@ The deployment workflow verifies all source tests, applies remote migrations, de
 
 ## Testing policy
 
-The test suite uses the real Cloudflare Workers runtime and a real isolated D1 database through Vitest Workers, with outbound Agent Address and MailTrigger calls replaced by local test doubles **only for those external services**. The focused `test/CoreFlow.test.ts` exercises alias registration and verification, message routing, D1 persistence, two-way replies, host acceptance and authorization failure. Each refactor must rerun the core flow and full suite.
+The test suite uses the real Cloudflare Workers runtime and a real isolated D1 database through Vitest Workers, with outbound Agent Address and MailTrigger calls replaced by local test doubles **only for those external services**. The focused `test/CoreFlow.test.ts` exercises mailbox provisioning, canonical address delivery, real D1 persistence and two-way replies. `test/Alias.test.ts`, `test/Handoff.test.ts` and `test/Errors.test.ts` cover independent identity, handoff and failure/authorization cases. The shared transport and API client live in `test/RelayTestClient.ts`; test hooks and D1 migrations are in `test/Setup.ts`. Each refactor must rerun the focused flow and full suite.
 
 ```bash
 npm run test:core
