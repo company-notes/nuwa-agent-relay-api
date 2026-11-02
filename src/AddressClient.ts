@@ -33,7 +33,9 @@ export class AddressClient {
     };
 
     if (!response.ok || !payload.ok || !payload.data) {
-      const status = response.status === 401 ? 401 : response.status === 404 ? 404 : 403;
+      const status = [401, 403, 404].includes(response.status)
+        ? response.status
+        : 502;
       throw new APIError(status, 'address_lookup_failed', payload.error?.message ?? 'Agent Address request failed.');
     }
 
