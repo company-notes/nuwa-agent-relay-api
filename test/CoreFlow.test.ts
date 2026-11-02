@@ -17,6 +17,7 @@ class RelayTestClient {
   private readonly mailboxes: Array<{ id: number; username: string; userDomain: number }> = [];
   readonly deliveries: Array<{ to: string[]; subject: string; body: string }> = [];
   failNextMail = false;
+  failAddressStatus = false;
 
   private readonly hostA: AgentAddress = {
     id: 'host-a', org: RelayTestClient.slug, path: 'alpha',
@@ -50,6 +51,10 @@ class RelayTestClient {
       const host = isAuthor ? this.hostA : this.hostB;
 
       if (url.pathname === '/v1/account/status') {
+        if (this.failAddressStatus) {
+          return Response.json({ ok: false, error: { message: 'Upstream unavailable' } }, { status: 503 });
+        }
+
         const requestedWorkId = url.searchParams.get('work_address_id');
 
         if (requestedWorkId && requestedWorkId !== work.id) {
@@ -164,6 +169,18 @@ afterEach(() => {
 });
 
 describe('Nuwa Agent Relay real Worker/D1 core flow', () => {
+  it('reports upstream Agent Address outages as a gateway failure, not a forbidden identity', async () => {
+    // Regression: Agent Address HTTP 503 must not be translated into a misleading HTTP 403.
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    client.failAddressStatus = true;
+
+    const response = await client.call('token-a', 'GET', '/v1/inbox?work_address_id=work-a');
+
+    expect(response.status, 'An Agent Address outage must be treated as an upstream failure').toBe(502);
+    expect(response.body.error.code).toBe('address_lookup_failed');
+  });
+
   it('routes verified email and platform IDs, persists messages, and supports bidirectional replies', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
