@@ -25,6 +25,8 @@ jobs:
         run: npm run check
       - name: Test Worker and D1
         run: npm test
+      - name: Test live smoke harness offline
+        run: npm run test:smoke
       - name: Validate deployment configuration script
         run: node --check scripts/prepare-deploy.mjs
 

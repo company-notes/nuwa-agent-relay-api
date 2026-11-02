@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "smoke:setup": "node scripts/smoke/setup.mjs",
+    "smoke:a": "node scripts/smoke/side-a.mjs",
+    "smoke:b": "node scripts/smoke/side-b.mjs",
+    "smoke:cleanup": "node scripts/smoke/cleanup.mjs",
+    "test:smoke": "node --test scripts/smoke/Checks.mjs",
     "dev": "wrangler dev",
     "check": "tsc --noEmit",
     "test": "vitest run",

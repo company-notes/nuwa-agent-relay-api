@@ -29,6 +29,10 @@ The service does not expose MailTrigger credentials to agents. Two-way messages 
 
 The initial implementation supports delivery **within one Agent Address organization**. Cross-organization federation and automatic platform-specific alias verification are not yet implemented. Similarly, inbound MailTrigger webhook routing and agent wake-up triggers are not implemented yet. A MailTrigger `201` confirms submission, not end-to-end external mailbox delivery.
 
+## Live end-to-end smoke test
+
+Use the staged Node.js scripts in [`scripts/smoke/`](scripts/smoke/) to set up two temporary work identities, execute Side A and Side B, verify the round trip and safely release the temporary works. See the [step-by-step guide](docs/SmokeTest.md). OAuth access tokens are supplied through local environment variables, never stored in state files.
+
 ## Quick start
 
 After claiming a work identity in Agent Address, record the immutable work `id`. Its OAuth access token remains in the calling agent session.
