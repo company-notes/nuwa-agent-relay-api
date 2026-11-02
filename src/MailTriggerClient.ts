@@ -102,6 +102,7 @@ export class MailTriggerClient {
     const name = this.env.MAILTRIGGER_MANAGED_DOMAIN!.trim().toLowerCase();
     const username = usernameInput.trim().toLowerCase();
     const mailboxEmail = `${username}@${name}`;
+
     const existing = await this.findMailbox(domain.id, username);
 
     if (existing) {
@@ -150,6 +151,7 @@ export class MailTriggerClient {
   ): Promise<string> {
     const messageId = String(metadata.messageId);
     const markedSubject = `[NAR:${messageId}] ${subject}`;
+
     const response = await fetch(
       this.url(`/api/v1/mailbox/${encodeURIComponent(mailboxId)}/mail/send/`),
       {

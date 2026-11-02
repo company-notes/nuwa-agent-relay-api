@@ -18,11 +18,6 @@ export type AliasTarget = { provider: string; externalId: string };
 export type Recipient = string | AliasTarget;
 
 export class AliasService {
-  constructor(
-    private readonly env: Env,
-    private readonly identity: IdentityContext,
-  ) {}
-
   private static normalizeProvider(provider: string): string {
     const result = provider.trim().toLowerCase();
 
@@ -87,6 +82,11 @@ export class AliasService {
 
     throw new APIError(400, 'invalid_recipient', 'to must be a canonical address, email, or provider/externalId object.');
   }
+
+  constructor(
+    private readonly env: Env,
+    private readonly identity: IdentityContext,
+  ) {}
 
   async create(providerInput: string, externalIdInput: string): Promise<JSONRecord> {
     const provider = AliasService.normalizeProvider(providerInput);
@@ -158,7 +158,12 @@ export class AliasService {
       `UPDATE agent_aliases
           SET verified_at = COALESCE(verified_at, ?)
         WHERE id = ? AND org_id = ? AND work_address_id = ? AND revoked_at IS NULL`,
-    ).bind(new Date().toISOString(), aliasId, this.identity.organization.id, this.identity.work.id).run();
+    ).bind(
+      new Date().toISOString(),
+      aliasId,
+      this.identity.organization.id,
+      this.identity.work.id,
+    ).run();
 
     if (!result.meta.changes) {
       throw new APIError(404, 'alias_not_found', 'Alias does not belong to the current work identity.');
@@ -171,7 +176,12 @@ export class AliasService {
     const result = await this.env.DB.prepare(
       `UPDATE agent_aliases SET revoked_at = ?
         WHERE id = ? AND org_id = ? AND work_address_id = ? AND revoked_at IS NULL`,
-    ).bind(new Date().toISOString(), aliasId, this.identity.organization.id, this.identity.work.id).run();
+    ).bind(
+      new Date().toISOString(),
+      aliasId,
+      this.identity.organization.id,
+      this.identity.work.id,
+    ).run();
 
     if (!result.meta.changes) {
       throw new APIError(404, 'alias_not_found', 'Alias does not belong to the current work identity.');
@@ -200,7 +210,8 @@ export class AliasService {
       throw new APIError(404, 'alias_not_verified', 'No verified agent identity is registered for this alias.');
     }
 
-    const resolved = this.identity.requireSameOrganization(await addressClient.resolve(alias.canonical_address));
+    const address = await addressClient.resolve(alias.canonical_address);
+    const resolved = this.identity.requireSameOrganization(address);
 
     if (resolved.id !== alias.work_address_id) {
       throw new APIError(409, 'stale_alias', 'Alias no longer identifies the registered active work address.');

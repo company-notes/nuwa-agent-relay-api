@@ -43,6 +43,30 @@ export class RelayService {
   private readonly mail: MailTriggerClient;
   private readonly aliases: AliasService;
 
+  private static mailboxUsername(hostId: string): string {
+    const stableId = hostId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+    if (!stableId) {
+      throw new APIError(409, 'invalid_host_id', 'Host identity cannot be used to provision a mailbox.');
+    }
+
+    return `nar-${stableId}`;
+  }
+
+  private static publicMessage(row: MessageRow): JSONRecord {
+    return {
+      id: row.id,
+      threadId: row.thread_id,
+      kind: row.kind,
+      senderWorkId: row.sender_work_id,
+      recipientWorkId: row.recipient_work_id,
+      subject: row.subject,
+      body: row.body,
+      artifactLinks: JSON.parse(row.artifacts_json) as string[],
+      createdAt: row.created_at,
+    };
+  }
+
   constructor(
     private readonly env: Env,
     private readonly identity: IdentityContext,
@@ -70,18 +94,9 @@ export class RelayService {
     return row;
   }
 
-  private static mailboxUsername(hostId: string): string {
-    const stableId = hostId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-
-    if (!stableId) {
-      throw new APIError(409, 'invalid_host_id', 'Host identity cannot be used to provision a mailbox.');
-    }
-
-    return `nar-${stableId}`;
-  }
-
   async provisionHost(): Promise<ManagedMailbox> {
     const hostId = this.identity.host.id;
+
     const existing = await this.env.DB.prepare(
       `SELECT mailbox_id, mailbox_email
          FROM paired_hosts
@@ -130,6 +145,7 @@ export class RelayService {
   ): Promise<{ id: string; threadId: string; messageId: string }> {
     const senderMailbox = await this.provisionHost();
     const recipientMailbox = await this.pairedHost(recipientHostId);
+
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
 
@@ -269,6 +285,7 @@ export class RelayService {
   async reply(threadId: string, body: string, subject: string | null, artifactLinks: string[]): Promise<JSONRecord> {
     const thread = await this.requireThread(threadId);
     const isSender = thread.sender_work_id === this.identity.work.id;
+
     const recipientWorkId = isSender
       ? thread.accepted_work_id ?? thread.recipient_work_id
       : thread.sender_work_id;
@@ -347,20 +364,6 @@ export class RelayService {
     }
 
     return { ...delivered, acceptedBy: this.identity.work.canonical };
-  }
-
-  private static publicMessage(row: MessageRow): JSONRecord {
-    return {
-      id: row.id,
-      threadId: row.thread_id,
-      kind: row.kind,
-      senderWorkId: row.sender_work_id,
-      recipientWorkId: row.recipient_work_id,
-      subject: row.subject,
-      body: row.body,
-      artifactLinks: JSON.parse(row.artifacts_json) as string[],
-      createdAt: row.created_at,
-    };
   }
 
   async history(threadId: string): Promise<JSONRecord[]> {

@@ -6,8 +6,6 @@ import { IdentityContext } from './IdentityContext';
 import { RelayService, type NewMessage } from './RelayService';
 
 export class RelayAPI {
-  constructor(private readonly env: Env) {}
-
   private static authorization(request: Request): string {
     const header = request.headers.get('authorization');
 
@@ -36,34 +34,13 @@ export class RelayAPI {
     return pathname.match(pattern)?.[1] ?? null;
   }
 
-  async handle(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const { pathname } = url;
+  constructor(private readonly env: Env) {}
 
-    if (request.method === 'GET' && pathname === '/health') {
-      return HTTP.response({ service: 'nuwa-agent-relay-api', status: 'ok' });
-    }
-
-    if (request.method === 'GET' && pathname === '/') {
-      return HTTP.response({
-        service: 'Nuwa Agent Relay API',
-        canonicalHost: url.host,
-        documentation: 'https://github.com/company-notes/nuwa-agent-relay-api',
-      });
-    }
-
-    const addressClient = new AddressClient(this.env, RelayAPI.authorization(request));
-    const status = await addressClient.getStatus(
-      url.searchParams.get('work_address_id') ?? undefined,
-    );
-    const identity = new IdentityContext(status);
-    const relay = new RelayService(this.env, identity, addressClient);
-    const aliases = new AliasService(this.env, identity);
-
-    if (request.method === 'POST' && pathname === '/v1/hosts/provision') {
-      return HTTP.response(await relay.provisionHost(), 201);
-    }
-
+  private async routeAliases(
+    request: Request,
+    pathname: string,
+    aliases: AliasService,
+  ): Promise<Response | null> {
     if (request.method === 'POST' && pathname === '/v1/aliases') {
       const data = await HTTP.json(request);
       const alias = await aliases.create(
@@ -92,6 +69,14 @@ export class RelayAPI {
       return HTTP.response(await aliases.verify(verificationId, key));
     }
 
+    return null;
+  }
+
+  private async routeMessages(
+    request: Request,
+    pathname: string,
+    relay: RelayService,
+  ): Promise<Response | null> {
     if (request.method === 'POST' && (pathname === '/v1/messages' || pathname === '/v1/handoffs')) {
       const data = await HTTP.json(request);
       const handoff = pathname === '/v1/handoffs';
@@ -108,6 +93,14 @@ export class RelayAPI {
       return HTTP.response(await relay.hostInbox());
     }
 
+    return null;
+  }
+
+  private async routeHandoffs(
+    request: Request,
+    pathname: string,
+    relay: RelayService,
+  ): Promise<Response | null> {
     const handoffAcceptanceId = RelayAPI.match(pathname, /^\/v1\/handoffs\/([^/]+)\/accept$/);
 
     if (request.method === 'POST' && handoffAcceptanceId) {
@@ -129,6 +122,14 @@ export class RelayAPI {
       );
     }
 
+    return null;
+  }
+
+  private async routeThreads(
+    request: Request,
+    pathname: string,
+    relay: RelayService,
+  ): Promise<Response | null> {
     const threadId = RelayAPI.match(pathname, /^\/v1\/threads\/([^/]+)$/);
 
     if (request.method === 'GET' && threadId) {
@@ -149,6 +150,59 @@ export class RelayAPI {
         ),
         201,
       );
+    }
+
+    return null;
+  }
+
+  async handle(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const { pathname } = url;
+
+    if (request.method === 'GET' && pathname === '/health') {
+      return HTTP.response({ service: 'nuwa-agent-relay-api', status: 'ok' });
+    }
+
+    if (request.method === 'GET' && pathname === '/') {
+      return HTTP.response({
+        service: 'Nuwa Agent Relay API',
+        canonicalHost: url.host,
+        documentation: 'https://github.com/company-notes/nuwa-agent-relay-api',
+      });
+    }
+
+    const authorization = RelayAPI.authorization(request);
+    const addressClient = new AddressClient(this.env, authorization);
+    const status = await addressClient.getStatus(
+      url.searchParams.get('work_address_id') ?? undefined,
+    );
+    const identity = new IdentityContext(status);
+
+    const relay = new RelayService(this.env, identity, addressClient);
+    const aliases = new AliasService(this.env, identity);
+
+    if (request.method === 'POST' && pathname === '/v1/hosts/provision') {
+      return HTTP.response(await relay.provisionHost(), 201);
+    }
+
+    const aliasResponse = await this.routeAliases(request, pathname, aliases);
+    if (aliasResponse) {
+      return aliasResponse;
+    }
+
+    const messageResponse = await this.routeMessages(request, pathname, relay);
+    if (messageResponse) {
+      return messageResponse;
+    }
+
+    const handoffResponse = await this.routeHandoffs(request, pathname, relay);
+    if (handoffResponse) {
+      return handoffResponse;
+    }
+
+    const threadResponse = await this.routeThreads(request, pathname, relay);
+    if (threadResponse) {
+      return threadResponse;
     }
 
     throw new APIError(404, 'not_found', 'Endpoint not found.');

@@ -28,6 +28,7 @@ class DeploymentConfiguration {
     }
 
     const config = JSON.parse(await readFile('wrangler.jsonc', 'utf8'));
+
     const db = config.d1_databases.find((database) => database.binding === 'DB');
 
     if (!db) {
