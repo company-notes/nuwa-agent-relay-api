@@ -175,3 +175,11 @@ Real end-to-end tests with a live Agent Address account, MailTrigger, DNS and an
 ## Legacy deployment migration
 
 This is a **new service**, not an in-place rename of the old deployed Worker. It uses new `nuwa-agent-relay-api` package and Worker identifiers, a new D1 schema, `nuwa-agent-relay.json` protocol attachment, `[NAR:...]` subject marker and the new domain. Existing legacy mailboxes are not automatically migrated or renamed. No live credentials or local state from the old repository are copied.
+
+## Node.js and dependency security
+
+Use the active Node.js 26 LTS release (`.nvmrc` and `.node-version` select the newest 26.x patch).
+The package's `engines.node` requires at least 26.13.0 and disallows experimental major versions.
+After `npm ci`, run `npm run audit:report` to inspect advisories, or
+`npm run audit:check` to fail on outstanding high/critical vulnerabilities.
+Vulnerabilities in the npm dependency graph are separate from vulnerabilities in the Node runtime.
