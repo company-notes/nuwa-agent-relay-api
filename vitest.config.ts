@@ -9,6 +9,7 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: './wrangler.jsonc' },
         miniflare: {
+          compatibilityDate: '2026-08-01',
           bindings: {
             TEST_MIGRATIONS: migrations,
             MAILTRIGGER_API_TOKEN: 'test-mailtrigger-token',
