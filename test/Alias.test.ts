@@ -83,7 +83,6 @@ describe('External identity aliases', () => {
     });
     expect(noLongerRoutable.status).toBe(404);
   });
-  });
 
   it('cannot claim an active email alias already owned by another work identity', async () => {
     const client = new RelayTestClient();
