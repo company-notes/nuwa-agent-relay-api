@@ -1,0 +1,39 @@
+name: Refresh compatible dependency fixes (temporary maintenance)
+
+on:
+  push:
+    branches: [maintenance/node-26-dependency-security]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.event.head_commit.message != 'chore: apply compatible npm security lockfile updates'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: maintenance/node-26-dependency-security
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Apply compatible npm audit fixes (no force)
+        shell: bash
+        run: npm audit fix --package-lock-only --ignore-scripts --no-fund || true
+      - name: Commit lockfile only, for PR review
+        shell: bash
+        run: |
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "No compatible lockfile updates were available."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: apply compatible npm security lockfile updates"
+          git push origin HEAD:maintenance/node-26-dependency-security
