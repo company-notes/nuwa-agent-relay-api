@@ -36,6 +36,125 @@ export class RelayAPI {
 
   constructor(private readonly env: Env) {}
 
+  private async routeAliases(
+    request: Request,
+    pathname: string,
+    aliases: AliasService,
+  ): Promise<Response | null> {
+    if (request.method === 'POST' && pathname === '/v1/aliases') {
+      const data = await HTTP.json(request);
+      const alias = await aliases.create(
+        HTTP.requiredString(data, 'provider', 32),
+        HTTP.requiredString(data, 'externalId', 255),
+      );
+
+      return HTTP.response(alias, 201);
+    }
+
+    if (request.method === 'GET' && pathname === '/v1/aliases') {
+      return HTTP.response(await aliases.list());
+    }
+
+    const aliasId = RelayAPI.match(pathname, /^\/v1\/aliases\/([^/]+)$/);
+
+    if (request.method === 'DELETE' && aliasId) {
+      return HTTP.response(await aliases.revoke(aliasId));
+    }
+
+    const verificationId = RelayAPI.match(pathname, /^\/v1\/aliases\/([^/]+)\/verification$/);
+
+    if (request.method === 'POST' && verificationId) {
+      const key = request.headers.get('x-relay-verification-key');
+
+      return HTTP.response(await aliases.verify(verificationId, key));
+    }
+
+    return null;
+  }
+
+  private async routeMessages(
+    request: Request,
+    pathname: string,
+    relay: RelayService,
+  ): Promise<Response | null> {
+    if (request.method === 'POST' && (pathname === '/v1/messages' || pathname === '/v1/handoffs')) {
+      const data = await HTTP.json(request);
+      const handoff = pathname === '/v1/handoffs';
+      const message = RelayAPI.readMessage(data, handoff);
+
+      return HTTP.response(await relay.send(handoff ? 'handoff' : 'message', message), 201);
+    }
+
+    if (request.method === 'GET' && pathname === '/v1/inbox') {
+      return HTTP.response(await relay.inbox());
+    }
+
+    if (request.method === 'GET' && pathname === '/v1/host-inbox') {
+      return HTTP.response(await relay.hostInbox());
+    }
+
+    return null;
+  }
+
+  private async routeHandoffs(
+    request: Request,
+    pathname: string,
+    relay: RelayService,
+  ): Promise<Response | null> {
+    const handoffAcceptanceId = RelayAPI.match(pathname, /^\/v1\/handoffs\/([^/]+)\/accept$/);
+
+    if (request.method === 'POST' && handoffAcceptanceId) {
+      return HTTP.response(await relay.acceptHandoff(handoffAcceptanceId), 201);
+    }
+
+    const handoffReplyId = RelayAPI.match(pathname, /^\/v1\/handoffs\/([^/]+)\/reply$/);
+
+    if (request.method === 'POST' && handoffReplyId) {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(
+        await relay.replyToHandoff(
+          handoffReplyId,
+          HTTP.requiredString(data, 'body', 100_000),
+          HTTP.artifacts(data),
+        ),
+        201,
+      );
+    }
+
+    return null;
+  }
+
+  private async routeThreads(
+    request: Request,
+    pathname: string,
+    relay: RelayService,
+  ): Promise<Response | null> {
+    const threadId = RelayAPI.match(pathname, /^\/v1\/threads\/([^/]+)$/);
+
+    if (request.method === 'GET' && threadId) {
+      return HTTP.response(await relay.history(threadId));
+    }
+
+    const threadReplyId = RelayAPI.match(pathname, /^\/v1\/threads\/([^/]+)\/messages$/);
+
+    if (request.method === 'POST' && threadReplyId) {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(
+        await relay.reply(
+          threadReplyId,
+          HTTP.requiredString(data, 'body', 100_000),
+          HTTP.optionalString(data, 'subject', 255),
+          HTTP.artifacts(data),
+        ),
+        201,
+      );
+    }
+
+    return null;
+  }
+
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
@@ -66,91 +185,24 @@ export class RelayAPI {
       return HTTP.response(await relay.provisionHost(), 201);
     }
 
-    if (request.method === 'POST' && pathname === '/v1/aliases') {
-      const data = await HTTP.json(request);
-      const alias = await aliases.create(
-        HTTP.requiredString(data, 'provider', 32),
-        HTTP.requiredString(data, 'externalId', 255),
-      );
-
-      return HTTP.response(alias, 201);
+    const aliasResponse = await this.routeAliases(request, pathname, aliases);
+    if (aliasResponse) {
+      return aliasResponse;
     }
 
-    if (request.method === 'GET' && pathname === '/v1/aliases') {
-      return HTTP.response(await aliases.list());
+    const messageResponse = await this.routeMessages(request, pathname, relay);
+    if (messageResponse) {
+      return messageResponse;
     }
 
-    const aliasId = RelayAPI.match(pathname, /^\/v1\/aliases\/([^/]+)$/);
-
-    if (request.method === 'DELETE' && aliasId) {
-      return HTTP.response(await aliases.revoke(aliasId));
+    const handoffResponse = await this.routeHandoffs(request, pathname, relay);
+    if (handoffResponse) {
+      return handoffResponse;
     }
 
-    const verificationId = RelayAPI.match(pathname, /^\/v1\/aliases\/([^/]+)\/verification$/);
-
-    if (request.method === 'POST' && verificationId) {
-      const key = request.headers.get('x-relay-verification-key');
-
-      return HTTP.response(await aliases.verify(verificationId, key));
-    }
-
-    if (request.method === 'POST' && (pathname === '/v1/messages' || pathname === '/v1/handoffs')) {
-      const data = await HTTP.json(request);
-      const handoff = pathname === '/v1/handoffs';
-      const message = RelayAPI.readMessage(data, handoff);
-
-      return HTTP.response(await relay.send(handoff ? 'handoff' : 'message', message), 201);
-    }
-
-    if (request.method === 'GET' && pathname === '/v1/inbox') {
-      return HTTP.response(await relay.inbox());
-    }
-
-    if (request.method === 'GET' && pathname === '/v1/host-inbox') {
-      return HTTP.response(await relay.hostInbox());
-    }
-
-    const handoffAcceptanceId = RelayAPI.match(pathname, /^\/v1\/handoffs\/([^/]+)\/accept$/);
-
-    if (request.method === 'POST' && handoffAcceptanceId) {
-      return HTTP.response(await relay.acceptHandoff(handoffAcceptanceId), 201);
-    }
-
-    const handoffReplyId = RelayAPI.match(pathname, /^\/v1\/handoffs\/([^/]+)\/reply$/);
-
-    if (request.method === 'POST' && handoffReplyId) {
-      const data = await HTTP.json(request);
-
-      return HTTP.response(
-        await relay.replyToHandoff(
-          handoffReplyId,
-          HTTP.requiredString(data, 'body', 100_000),
-          HTTP.artifacts(data),
-        ),
-        201,
-      );
-    }
-
-    const threadId = RelayAPI.match(pathname, /^\/v1\/threads\/([^/]+)$/);
-
-    if (request.method === 'GET' && threadId) {
-      return HTTP.response(await relay.history(threadId));
-    }
-
-    const threadReplyId = RelayAPI.match(pathname, /^\/v1\/threads\/([^/]+)\/messages$/);
-
-    if (request.method === 'POST' && threadReplyId) {
-      const data = await HTTP.json(request);
-
-      return HTTP.response(
-        await relay.reply(
-          threadReplyId,
-          HTTP.requiredString(data, 'body', 100_000),
-          HTTP.optionalString(data, 'subject', 255),
-          HTTP.artifacts(data),
-        ),
-        201,
-      );
+    const threadResponse = await this.routeThreads(request, pathname, relay);
+    if (threadResponse) {
+      return threadResponse;
     }
 
     throw new APIError(404, 'not_found', 'Endpoint not found.');
