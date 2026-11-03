@@ -9,6 +9,7 @@ import {
   assert,
   createRunId,
   execute,
+  loadState,
   relayOrigin,
   request,
   saveState,
@@ -73,13 +74,24 @@ async function chooseOrganization(runId) {
 }
 
 export async function setupSmokeTest() {
+  let previous = null;
+
   try {
     await access(statePath, constants.F_OK);
-    throw new Error('Active smoke-test state exists at ' + statePath + '. Run cleanup before setup.');
+    previous = await loadState();
   } catch (error) {
     if (error.code !== 'ENOENT') {
       throw error;
     }
+  }
+
+  if (previous) {
+    assert(previous.addressUrl === addressOrigin && previous.relayUrl === relayOrigin,
+      'The active smoke run belongs to different API origins. Refusing to resume.');
+    assert(!previous.cleanedAt && !previous.sides?.a?.released && !previous.sides?.b?.released,
+      'This smoke run was partially cleaned up. Finish cleanup before starting another setup.');
+
+    console.log('Resuming interrupted smoke run ' + previous.runId + '.');
   }
 
   const tokenA = await accessToken('a', addressOrigin);
@@ -91,7 +103,7 @@ export async function setupSmokeTest() {
 
   let statusA = await request(addressOrigin, '/v1/account/status', tokenA);
   let statusB = await request(addressOrigin, '/v1/account/status', tokenB);
-  const runId = createRunId();
+  const runId = previous?.runId ?? createRunId();
 
   const hasOrgA = Boolean(statusA.organization?.id);
   const hasOrgB = Boolean(statusB.organization?.id);
@@ -121,7 +133,7 @@ export async function setupSmokeTest() {
     process.env.RELAY_SMOKE_HOST_B,
   );
 
-  const state = {
+  const state = previous ?? {
     version: 1,
     runId,
     createdAt: new Date().toISOString(),
@@ -132,6 +144,20 @@ export async function setupSmokeTest() {
     message: null,
     handoff: null,
   };
+
+  if (previous) {
+    assert(state.organization?.id === statusA.organization?.id,
+      'The signed-in account no longer belongs to this smoke run Organization.');
+
+    for (const sideName of ['a', 'b']) {
+      const recorded = state.sides[sideName];
+
+      if (recorded) {
+        assert(recorded.hostPath === hosts[sideName].name,
+          'Host selection changed since the previous setup attempt. Refusing to resume.');
+      }
+    }
+  }
 
   console.log('Smoke run: ' + runId);
   console.log('Host A: ' + hosts.a.name + (hosts.a.existed ? ' (existing)' : ' (new, remains after cleanup)'));
@@ -151,48 +177,76 @@ export async function setupSmokeTest() {
       body.organizationDisplayName = 'Relay smoke test ' + runId;
     }
 
-    const claim = await request(addressOrigin, '/v1/account/work', token, {
-      method: 'POST',
-      expected: [201],
-      body,
-    });
+    let work;
 
-    const work = validateWork(claim.work, runId, name);
-    assert(claim.host?.id && claim.host.path === host.name,
-      'Claim created or selected an unexpected Host.');
-    assert(work.parentAddressId === claim.host.id, 'Work address has an unexpected Host.');
-    assert(claim.organization?.id, 'Work claim did not return an Organization.');
+    if (state.sides[name]) {
+      const recorded = state.sides[name];
 
-    if (state.organization) {
-      assert(claim.organization.id === state.organization.id, 'Organization changed during setup.');
+      // Existing state is an identifier, not authorization to create or impersonate.
+      const status = await request(
+        addressOrigin,
+        '/v1/account/status?work_address_id=' + encodeURIComponent(recorded.id),
+        token,
+      );
+
+      work = validateWork(status.work, runId, name);
+      assert(status.organization?.id === state.organization.id,
+        'Recorded smoke Work no longer belongs to the expected Organization.');
+      assert(work.id === recorded.id && work.parentAddressId === recorded.parentAddressId &&
+        work.path === recorded.path && work.canonical === recorded.canonical,
+        'Recorded smoke Work no longer matches Agent Address. Refusing to resume.');
+      assert(status.hosts.some((item) => item.id === recorded.parentAddressId &&
+        item.path === host.name),
+        'Recorded Host is no longer active for this Work.');
+
+      console.log('Side ' + name.toUpperCase() + ': reusing previously claimed Work ' + work.canonical);
+    } else {
+      const claim = await request(addressOrigin, '/v1/account/work', token, {
+        method: 'POST',
+        expected: [201],
+        body,
+      });
+
+      work = validateWork(claim.work, runId, name);
+      assert(claim.host?.id && claim.host.path === host.name,
+        'Claim created or selected an unexpected Host.');
+      assert(work.parentAddressId === claim.host.id, 'Work address has an unexpected Host.');
+      assert(claim.organization?.id, 'Work claim did not return an Organization.');
+
+      if (state.organization) {
+        assert(claim.organization.id === state.organization.id, 'Organization changed during setup.');
+      }
+
+      state.organization = claim.organization;
+      state.sides[name] = {
+        id: work.id,
+        path: work.path,
+        canonical: work.canonical,
+        parentAddressId: work.parentAddressId,
+        hostPath: claim.host.path,
+        hostCanonical: claim.host.canonical,
+        hostCreatedBySmoke: !host.existed,
+        released: false,
+      };
+
+      // Save as soon as a Work exists, so failed mailbox provisioning can be retried.
+      await saveState(state);
     }
 
-    state.organization = claim.organization;
-    state.sides[name] = {
-      id: work.id,
-      path: work.path,
-      canonical: work.canonical,
-      parentAddressId: work.parentAddressId,
-      hostPath: claim.host.path,
-      hostCanonical: claim.host.canonical,
-      hostCreatedBySmoke: !host.existed,
-      released: false,
-    };
+    if (!state.sides[name].mailboxEmail) {
+      const mailbox = await request(
+        relayOrigin, '/v1/hosts/provision?work_address_id=' + encodeURIComponent(work.id),
+        token, { method: 'POST', expected: [201] },
+      );
 
-    // Persist immediately: the second side or mailbox provisioning may fail.
-    await saveState(state);
-
-    const mailbox = await request(
-      relayOrigin, '/v1/hosts/provision?work_address_id=' + encodeURIComponent(work.id),
-      token, { method: 'POST', expected: [201] },
-    );
-
-    assert(mailbox.mailboxId && mailbox.mailboxEmail, 'Mailbox provisioning returned incomplete data.');
-    state.sides[name].mailboxEmail = mailbox.mailboxEmail;
-    await saveState(state);
+      assert(mailbox.mailboxId && mailbox.mailboxEmail,
+        'Mailbox provisioning returned incomplete data.');
+      state.sides[name].mailboxEmail = mailbox.mailboxEmail;
+      await saveState(state);
+    }
 
     console.log('Side ' + name.toUpperCase() + ': ' + work.canonical +
-      ' — mailbox ' + mailbox.mailboxEmail);
+      ' — mailbox ' + state.sides[name].mailboxEmail);
 
     // A newly created organization is visible to both sides only after first claim.
     if (name === 'a') {
