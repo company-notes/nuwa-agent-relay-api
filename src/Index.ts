@@ -3,6 +3,8 @@ import { AliasService } from './AliasService';
 import type { Env } from './Env';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { IdentityContext } from './IdentityContext';
+import { MailReceipt } from './MailReceipt';
+import { WakeService } from './WakeService';
 import { RelayService, type NewMessage } from './RelayService';
 
 export class RelayAPI {
@@ -163,6 +165,12 @@ export class RelayAPI {
       return HTTP.response({ service: 'nuwa-agent-relay-api', status: 'ok' });
     }
 
+    // MailTrigger uses a separate high-entropy key; never require Agent Address
+    // OAuth on a server-to-server inbound receipt.
+    if (request.method === 'POST' && pathname === '/v1/mailtrigger/receipt') {
+      return new MailReceipt(this.env).receive(request);
+    }
+
     if (request.method === 'GET' && pathname === '/') {
       return HTTP.response({
         service: 'Nuwa Agent Relay API',
@@ -180,6 +188,49 @@ export class RelayAPI {
 
     const relay = new RelayService(this.env, identity, addressClient);
     const aliases = new AliasService(this.env, identity);
+
+    if (request.method === 'POST' && pathname === '/v1/wake-subscription') {
+      const data = await HTTP.json(request);
+      const callback = HTTP.requiredString(data, 'callbackUrl', 2048);
+
+      return HTTP.response(await new WakeService(this.env, identity).subscribe(callback), 201);
+    }
+
+    if (pathname === '/v1/wake-subscription' && request.method === 'GET') {
+      return HTTP.response(await new WakeService(this.env, identity).getSubscription());
+    }
+
+    if (pathname === '/v1/wake-subscription' && request.method === 'DELETE') {
+      return HTTP.response(await new WakeService(this.env, identity).unsubscribe());
+    }
+
+    if (pathname === '/v1/wake-events' && request.method === 'GET') {
+      return HTTP.response(await new WakeService(this.env, identity).deliveries());
+    }
+
+    const messageId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)$/);
+
+    if (request.method === 'GET' && messageId) {
+      return HTTP.response(await relay.messageById(messageId));
+    }
+
+    const receiptId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/receipt$/);
+
+    if (request.method === 'GET' && receiptId) {
+      return new MailReceipt(this.env).status(
+        receiptId, identity.organization.id, identity.work.id,
+      );
+    }
+
+    if (request.method === 'DELETE' && pathname === '/v1/smoke/host') {
+      const runId = HTTP.requiredString(
+        { runId: url.searchParams.get('run_id') },
+        'runId',
+        10,
+      );
+
+      return HTTP.response(await relay.cleanupSmokeHost(runId));
+    }
 
     if (request.method === 'POST' && pathname === '/v1/hosts/provision') {
       return HTTP.response(await relay.provisionHost(), 201);
@@ -210,6 +261,10 @@ export class RelayAPI {
 }
 
 export default {
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await WakeService.dispatchDue(env);
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return new Response(null, {

@@ -1,3 +1,6 @@
+import { rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
 import { removeLocalAuth } from './Auth.mjs';
 
 import {
@@ -45,6 +48,21 @@ await execute(async () => {
   await askConfirmation(state.runId);
 
   for (const { name, token, side } of candidates) {
+    if (side.hostCreatedBySmoke && !side.relayCleaned) {
+      const result = await request(state.relayUrl,
+        '/v1/smoke/host?work_address_id=' + encodeURIComponent(side.id) +
+          '&run_id=' + encodeURIComponent(state.runId),
+        token,
+        { method: 'DELETE', expected: [200] },
+      );
+
+      assert(result.cleaned && result.hostId === side.parentAddressId,
+        'Relay did not confirm scoped test resource cleanup.');
+      side.relayCleaned = true;
+      await saveState(state);
+      console.log('Removed Relay D1 and MailTrigger mailbox resources for Side ' + name.toUpperCase());
+    }
+
     await request(state.addressUrl, '/v1/account/work/' + encodeURIComponent(side.id), token, {
       method: 'DELETE',
       expected: [200],
@@ -55,9 +73,51 @@ await execute(async () => {
     console.log('Released test work ' + name.toUpperCase() + ': ' + side.canonical);
   }
 
+  // A previous cleanup attempt may have already released the Work, then
+  // failed while revoking its Host. Resume from the persisted state.
+  for (const name of ['a', 'b']) {
+    const side = state.sides[name];
+
+    if (!side || !side.hostCreatedBySmoke || side.hostReleased) {
+      continue;
+    }
+
+    assert(side.released && side.relayCleaned,
+      'Cannot revoke a Host before scoped mailbox and Work cleanup.');
+
+    const token = await accessToken(name, state.addressUrl);
+    const status = await request(state.addressUrl, '/v1/account/status', token);
+
+    assert(status.organization?.id === state.organization.id,
+      'Organization changed before Host cleanup.');
+    assert(status.hosts.some((host) => host.id === side.parentAddressId &&
+      host.path === side.hostPath), 'Test Host no longer matches its recorded owner.');
+
+    const deleted = await request(
+      state.addressUrl,
+      '/v1/account/host/' + encodeURIComponent(side.parentAddressId) +
+        '?run_id=' + encodeURIComponent(state.runId),
+      token,
+      { method: 'DELETE', expected: [200] },
+    );
+
+    assert(deleted.id === side.parentAddressId && deleted.active === false,
+      'Agent Address did not confirm Host revocation.');
+    side.hostReleased = true;
+    await saveState(state);
+
+    console.log('Revoked empty test Host ' + name.toUpperCase() + ': ' + side.hostPath);
+  }
+
+  for (const side of Object.values(state.sides)) {
+    assert(side.released && (!side.hostCreatedBySmoke || side.hostReleased),
+      'Some test identities are not fully cleaned. Preserve the state for retry.');
+  }
+
   state.cleanedAt = new Date().toISOString();
   await saveState(state);
   const archive = await moveCompletedState(state);
+  await rm(join(dirname(statePath), 'wake-b.json'), { force: true });
 
   // Only clear local credentials after every recorded test work was released.
   if (process.env.RELAY_SMOKE_KEEP_LOGIN !== '1') {
@@ -66,6 +126,6 @@ await execute(async () => {
   }
 
   console.log('Cleanup complete: ' + archive);
-  console.log('Only test work addresses were revoked. Shared hosts, MailTrigger mailboxes,');
-  console.log('Relay D1 messages and threads remain; the API currently has no delete endpoints for these.');
+  console.log('Only run-scoped test Hosts / Works, their managed Mailboxes and related D1 records');
+  console.log('were removed. Existing shared Hosts and Organizations are not deleted.');
 });

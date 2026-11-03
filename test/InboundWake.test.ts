@@ -1,0 +1,180 @@
+import { env } from 'cloudflare:workers';
+import { describe, expect, it } from 'vitest';
+
+import { WakeService } from '../src/WakeService';
+import { RelayTestClient } from './RelayTestClient';
+
+describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
+  it('rejects spoofed receipts, tracks one authenticated mailbox arrival, and protects receipts by Work', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+
+    const readyA = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+    const readyB = await client.call('token-b', 'POST', '/v1/hosts/provision?work_address_id=work-b');
+
+    expect(readyA.status).toBe(201);
+    expect(readyB.status).toBe(201);
+
+    const mail = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: '@beta/reviewer',
+      body: 'Receipt tracking must only trust MailTrigger.',
+    });
+    expect(mail.status).toBe(201);
+
+    const owned = await client.call('token-b', 'GET',
+      '/v1/messages/' + mail.body.data.id + '?work_address_id=work-b');
+    expect(owned.status).toBe(200);
+    expect(owned.body.data.body).toBe('Receipt tracking must only trust MailTrigger.');
+
+    const noMessage = await client.call('token-c', 'GET',
+      '/v1/messages/' + mail.body.data.id + '?work_address_id=work-c');
+    expect(noMessage.status).toBe(404);
+
+    const receiptPath = '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-a';
+    const initial = await client.call('token-a', 'GET', receiptPath);
+    expect(initial.body.data).toMatchObject({
+      submissionStatus: 'sent',
+      arrivedInMailTrigger: false,
+      receivedAt: null,
+    });
+
+    const payload = {
+      from: readyA.body.data.mailboxEmail,
+      receiver: readyB.body.data.mailboxEmail,
+      subject: '[NAR:' + mail.body.data.id + '] Relay message',
+    };
+
+    const unauthenticated = await client.call(
+      null, 'POST', '/v1/mailtrigger/receipt', payload,
+    );
+    expect(unauthenticated.status).toBe(401);
+
+    const wrongSender = await client.callWithHeaders('POST', '/v1/mailtrigger/receipt', {
+      ...payload,
+      from: 'attacker@example.test',
+    }, { 'x-relay-inbound-key': 'test-inbound-key' });
+    expect(wrongSender.status).toBe(200);
+    expect(wrongSender.body.data.matched).toBe(false);
+
+    const noLeak = await client.call('token-c', 'GET',
+      '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-c');
+    expect(noLeak.status).toBe(404);
+
+    const valid = await client.callWithHeaders('POST', '/v1/mailtrigger/receipt', payload, {
+      'x-relay-inbound-key': 'test-inbound-key',
+    });
+    expect(valid.status).toBe(200);
+    expect(valid.body.data).toMatchObject({
+      matched: true,
+      duplicate: false,
+      messageId: mail.body.data.id,
+    });
+
+    const duplicate = await client.callWithHeaders('POST', '/v1/mailtrigger/receipt', payload, {
+      'x-relay-inbound-key': 'test-inbound-key',
+    });
+    expect(duplicate.body.data.duplicate).toBe(true);
+
+    const confirmed = await client.call('token-b', 'GET',
+      '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-b');
+    expect(confirmed.body.data.arrivedInMailTrigger).toBe(true);
+    expect(confirmed.body.data.receivedAt).toBeTruthy();
+  });
+
+  it('delivers an HMAC-signed wake to the registered work and reports durable success', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    const blocked = await client.call('token-b', 'POST',
+      '/v1/wake-subscription?work_address_id=work-b', {
+        callbackUrl: 'https://localhost/internal',
+      });
+    expect(blocked.status).toBe(400);
+
+    const subscribed = await client.call('token-b', 'POST',
+      '/v1/wake-subscription?work_address_id=work-b', {
+        callbackUrl: 'https://agent-hook.example.com/wake',
+      });
+    expect(subscribed.status).toBe(201);
+    const secret = subscribed.body.data.signingSecret as string;
+    expect(secret.length).toBeGreaterThan(48);
+
+    const sent = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: '@beta/reviewer',
+      body: 'Wake me without leaking the message body.',
+    });
+    expect(sent.status).toBe(201);
+
+    const before = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
+    expect(before.body.data[0].status).toBe('pending');
+
+    await WakeService.dispatchDue(env);
+
+    expect(client.wakeCallbacks).toHaveLength(1);
+    const callback = client.wakeCallbacks[0];
+    expect(callback.body).toEqual({
+      event: 'nuwa.message.available',
+      messageId: sent.body.data.id,
+      workAddressId: 'work-b',
+    });
+    expect(JSON.stringify(callback.body)).not.toContain('Wake me');
+
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const signed = await crypto.subtle.sign('HMAC', key,
+      new TextEncoder().encode(JSON.stringify(callback.body)));
+    const hex = Array.from(new Uint8Array(signed), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    expect(callback.signature).toBe('sha256=' + hex);
+
+    const after = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
+    expect(after.body.data[0].status).toBe('delivered');
+
+    await WakeService.dispatchDue(env);
+    expect(client.wakeCallbacks).toHaveLength(1);
+
+    const removed = await client.call('token-b', 'DELETE',
+      '/v1/wake-subscription?work_address_id=work-b');
+    expect(removed.status).toBe(200);
+  });
+
+  it('retries rejected callback notifications and does not disclose other Work deliveries', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    const subscribed = await client.call('token-b', 'POST',
+      '/v1/wake-subscription?work_address_id=work-b', {
+        callbackUrl: 'https://agent-hook.example.com/wake',
+      });
+    expect(subscribed.status).toBe(201);
+
+    client.failNextWake = true;
+
+    const sent = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: '@beta/reviewer',
+      body: 'Retry the webhook without re-sending an email.',
+    });
+    expect(sent.status).toBe(201);
+
+    await WakeService.dispatchDue(env);
+    const history = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
+    expect(history.body.data[0]).toMatchObject({ status: 'pending', attempts: 1 });
+
+    const hidden = await client.call('token-a', 'GET', '/v1/wake-events?work_address_id=work-a');
+    expect(hidden.body.data).toHaveLength(0);
+
+    const body = await env.DB.prepare(
+      "SELECT next_attempt_at AS due FROM wake_events WHERE message_id = ?",
+    ).bind(sent.body.data.id).first<{ due: string }>();
+    expect(new Date(body!.due).getTime()).toBeGreaterThan(Date.now());
+
+    await env.DB.prepare(
+      'UPDATE wake_events SET next_attempt_at = ? WHERE message_id = ?',
+    ).bind(new Date(Date.now() - 1000).toISOString(), sent.body.data.id).run();
+    await WakeService.dispatchDue(env);
+
+    const completed = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
+    expect(completed.body.data[0]).toMatchObject({ status: 'delivered', attempts: 2 });
+  });
+});

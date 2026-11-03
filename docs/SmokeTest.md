@@ -78,3 +78,7 @@ npm run audit:check
 | Active smoke-test state exists | 請先執行 Cleanup，不要直接刪除狀態檔 |
 
 進階用法仍允許以 `RELAY_SMOKE_TOKEN_A` / `RELAY_SMOKE_TOKEN_B` 環境變數覆蓋本機 Login。
+
+## True inbound receipt and wake testing
+
+After `npm run smoke:a -- send`, use `npm run smoke:receipts` to verify that MailTrigger actually executed the inbound Route. The new smoke Cleanup removes only this run's Host mailbox and Relay data, then revokes the Work and empty test Host (both Workers must be updated before using it). See [detailed setup](InboundWake.md).

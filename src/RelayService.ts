@@ -3,6 +3,7 @@ import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
 import { APIError, type JSONRecord } from './HTTP';
 import { IdentityContext } from './IdentityContext';
+import { WakeService } from './WakeService';
 import { MailTriggerClient, type ManagedMailbox } from './MailTriggerClient';
 
 type HostRow = { mailbox_id: string; mailbox_email: string };
@@ -134,6 +135,65 @@ export class RelayService {
     };
   }
 
+  async cleanupSmokeHost(runId: string): Promise<JSONRecord> {
+    const hostName = this.identity.host.path;
+    const expected = 'relay-smoke-' + runId + '-';
+    const safeRun = /^[a-f0-9]{10}$/.test(runId);
+    const safeHost = hostName === expected + 'a' || hostName === expected + 'b';
+    const safeWork = this.identity.work.path === hostName + '/' + hostName;
+
+    if (!safeRun || !safeHost || !safeWork ||
+      this.identity.work.parentAddressId !== this.identity.host.id) {
+      throw new APIError(403, 'smoke_cleanup_forbidden',
+        'Only the exact run-scoped Work may clean its test Host.');
+    }
+
+    const org = this.identity.organization.id;
+    const host = this.identity.host.id;
+    const work = this.identity.work.id;
+    const existing = await this.env.DB.prepare(
+      `SELECT mailbox_id AS mailboxId FROM paired_hosts
+        WHERE org_id = ? AND host_address_id = ?`,
+    ).bind(org, host).first<{ mailboxId: string }>();
+
+    if (existing) {
+      await this.mail.deleteManagedMailbox(
+        existing.mailboxId, RelayService.mailboxUsername(host),
+      );
+    }
+
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `DELETE FROM wake_events WHERE work_address_id = ? OR message_id IN (
+          SELECT m.id FROM messages m JOIN threads t ON t.id = m.thread_id
+          WHERE t.org_id = ? AND (t.sender_host_id = ? OR t.recipient_host_id = ?)
+        )`,
+      ).bind(work, org, host, host),
+      this.env.DB.prepare(
+        `DELETE FROM messages WHERE thread_id IN (
+          SELECT id FROM threads WHERE org_id = ?
+            AND (sender_host_id = ? OR recipient_host_id = ?)
+        )`,
+      ).bind(org, host, host),
+      this.env.DB.prepare(
+        'DELETE FROM threads WHERE org_id = ? AND (sender_host_id = ? OR recipient_host_id = ?)',
+      ).bind(org, host, host),
+      this.env.DB.prepare(
+        'DELETE FROM wake_subscriptions WHERE work_address_id = ? AND org_id = ?',
+      ).bind(work, org),
+      this.env.DB.prepare(
+        'DELETE FROM paired_hosts WHERE org_id = ? AND host_address_id = ?',
+      ).bind(org, host),
+    ]);
+
+    return {
+      cleaned: true,
+      hostId: host,
+      mailboxRemoved: Boolean(existing),
+      scope: 'This smoke Host MailTrigger mailbox and Relay D1 records only',
+    };
+  }
+
   private async deliver(
     thread: ThreadRow,
     recipientHostId: string,
@@ -205,6 +265,8 @@ export class RelayService {
     await this.env.DB.prepare(
       "UPDATE messages SET delivery_status = 'sent', external_delivery_id = ? WHERE id = ?",
     ).bind(deliveryId, id).run();
+
+    await WakeService.enqueue(this.env, id, recipientWorkId);
 
     return { id, threadId: thread.id, messageId: deliveryId };
   }
@@ -364,6 +426,30 @@ export class RelayService {
     }
 
     return { ...delivered, acceptedBy: this.identity.work.canonical };
+  }
+
+  async messageById(messageId: string): Promise<JSONRecord> {
+    const row = await this.env.DB.prepare(
+      `SELECT m.id, m.thread_id, m.kind, m.sender_host_id, m.sender_work_id,
+              m.recipient_host_id, m.recipient_work_id, m.subject, m.body,
+              m.artifacts_json, m.created_at
+         FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+        WHERE m.id = ? AND t.org_id = ? AND m.delivery_status = 'sent'
+          AND (t.sender_work_id = ? OR t.recipient_work_id = ? OR t.accepted_work_id = ?)`,
+    ).bind(
+      messageId,
+      this.identity.organization.id,
+      this.identity.work.id,
+      this.identity.work.id,
+      this.identity.work.id,
+    ).first<MessageRow>();
+
+    if (!row) {
+      throw new APIError(404, 'message_not_found', 'Message is unavailable to this work identity.');
+    }
+
+    return RelayService.publicMessage(row);
   }
 
   async history(threadId: string): Promise<JSONRecord[]> {

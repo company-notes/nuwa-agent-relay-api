@@ -16,8 +16,10 @@ export class RelayTestClient {
 
   private readonly mailboxes: Array<{ id: number; username: string; userDomain: number }> = [];
   readonly deliveries: Array<{ to: string[]; subject: string; body: string }> = [];
+  readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
 
   failNextMail = false;
+  failNextWake = false;
   failAddressStatus = false;
 
   private readonly hostA: AgentAddress = {
@@ -136,6 +138,27 @@ export class RelayTestClient {
       return Response.json(this.mailboxes);
     }
 
+    const mailboxRoute = url.pathname.match(/^\/api\/v1\/mailbox\/(\d+)\/$/);
+
+    if (mailboxRoute) {
+      const id = Number(mailboxRoute[1]);
+      const found = this.mailboxes.find((item) => item.id === id);
+
+      if (!found) {
+        return new Response(null, { status: 404 });
+      }
+
+      if (init?.method === 'DELETE') {
+        this.mailboxes.splice(this.mailboxes.indexOf(found), 1);
+
+        return new Response(null, { status: 204 });
+      }
+
+      if (!init?.method) {
+        return Response.json(found);
+      }
+    }
+
     if (url.pathname.endsWith('/mail/send/') && init?.method === 'POST') {
       if (this.failNextMail) {
         this.failNextMail = false;
@@ -163,6 +186,21 @@ export class RelayTestClient {
 
     if (url.hostname === 'app.mailtrigger.app') {
       return this.requestMailTrigger(url, init);
+    }
+
+    if (url.hostname === 'agent-hook.example.com') {
+      this.wakeCallbacks.push({
+        body: JSON.parse(String(init?.body)),
+        signature: new Headers(init?.headers).get('x-nuwa-wake-signature'),
+      });
+
+      if (this.failNextWake) {
+        this.failNextWake = false;
+
+        return new Response(null, { status: 503 });
+      }
+
+      return new Response(null, { status: 204 });
     }
 
     throw new Error(`Unexpected external request: ${url.toString()}`);
@@ -198,6 +236,38 @@ export class RelayTestClient {
         method,
         headers,
         body: data === undefined ? undefined : JSON.stringify(data),
+      }),
+    );
+
+    return { status: response.status, body: await response.json() };
+  }
+
+  enableSmokeIdentities(runId: string): void {
+    for (const side of [
+      { host: this.hostA, work: this.workA, suffix: 'a' },
+      { host: this.hostB, work: this.workB, suffix: 'b' },
+    ]) {
+      const name = 'relay-smoke-' + runId + '-' + side.suffix;
+      side.host.path = name;
+      side.host.address = '@' + name;
+      side.host.canonical = RelayTestClient.slug + '/' + name;
+      side.work.path = name + '/' + name;
+      side.work.address = '@' + side.work.path;
+      side.work.canonical = RelayTestClient.slug + '/' + side.work.path;
+    }
+  }
+
+  async callWithHeaders(
+    method: string,
+    path: string,
+    data: object,
+    headers: Record<string, string>,
+  ): Promise<{ status: number; body: any }> {
+    const response = await exports.default.fetch(
+      new Request(`${RelayTestClient.origin}${path}`, {
+        method,
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify(data),
       }),
     );
 

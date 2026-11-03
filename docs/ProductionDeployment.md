@@ -23,3 +23,7 @@ Never reuse an existing Agent Address or legacy service D1 database, and never c
 7. Enable `RELAY_DEPLOY_ENABLED=true` for subsequent verified push-to-main deployments.
 
 The automated Worker/D1 tests use external-service substitutes; they are not a live MailTrigger integration test.
+
+## Inbound receipts and wake callbacks
+
+See [inbound, wake and scoped cleanup instructions](InboundWake.md). The optional Worker Secret `MAILTRIGGER_INBOUND_KEY` and optional Variable `WAKE_ALLOWED_HOSTS` enable these features after a manual deployment. The new D1 migration, Cron and Agent Address restricted Host cleanup API are required for the updated smoke scripts.
