@@ -39,6 +39,10 @@ describe('Scoped Smoke resource deletion', () => {
       });
     expect(message.status).toBe(201);
 
+    const acknowledged = await client.call('token-b', 'POST',
+      '/v1/messages/' + message.body.data.id + '/read?work_address_id=work-b');
+    expect(acknowledged.status).toBe(201);
+
     const deletedA = await client.call('token-a', 'DELETE',
       '/v1/smoke/host?work_address_id=work-a&run_id=aabbccddee');
     expect(deletedA.status).toBe(200);
@@ -48,6 +52,11 @@ describe('Scoped Smoke resource deletion', () => {
       'SELECT id FROM threads WHERE id = ?',
     ).bind(message.body.data.threadId).first();
     expect(remaining).toBeNull();
+
+    const readReceipts = await env.DB.prepare(
+      'SELECT message_id FROM message_read_receipts WHERE message_id = ?',
+    ).bind(message.body.data.id).all();
+    expect(readReceipts.results).toHaveLength(0);
 
     const again = await client.call('token-a', 'DELETE',
       '/v1/smoke/host?work_address_id=work-a&run_id=aabbccddee');
