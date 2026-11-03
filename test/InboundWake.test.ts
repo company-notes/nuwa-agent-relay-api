@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
 import { WakeService } from '../src/WakeService';
+import { MailReceipt } from '../src/MailReceipt';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
@@ -79,6 +80,65 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
       '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-b');
     expect(confirmed.body.data.arrivedInMailTrigger).toBe(true);
     expect(confirmed.body.data.receivedAt).toBeTruthy();
+    expect(confirmed.body.data.receiptSource).toBe('webhook');
+    expect(confirmed.body.data.readBy).toHaveLength(0);
+
+    const unauthorizedRead = await client.call('token-a', 'POST',
+      '/v1/messages/' + mail.body.data.id + '/read?work_address_id=work-a');
+    expect(unauthorizedRead.status).toBe(404);
+
+    const outsiderRead = await client.call('token-c', 'POST',
+      '/v1/messages/' + mail.body.data.id + '/read?work_address_id=work-c');
+    expect(outsiderRead.status).toBe(404);
+
+    const read = await client.call('token-b', 'POST',
+      '/v1/messages/' + mail.body.data.id + '/read?work_address_id=work-b');
+    expect(read.status).toBe(201);
+    expect(read.body.data.workAddressId).toBe('work-b');
+
+    const againRead = await client.call('token-b', 'POST',
+      '/v1/messages/' + mail.body.data.id + '/read?work_address_id=work-b');
+    expect(againRead.body.data.readAt).toBe(read.body.data.readAt);
+
+    const senderSeesReceipt = await client.call('token-a', 'GET', receiptPath);
+    expect(senderSeesReceipt.body.data.readBy).toEqual([{
+      workAddressId: 'work-b',
+      readAt: read.body.data.readAt,
+    }]);
+  });
+
+  it('does not confuse an unrelated archive entry or outbound 201 with mailbox receipt', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    const mail = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: '@beta/reviewer',
+      body: 'Must not become received unless its actual recipient mailbox archives the marker.',
+    });
+    expect(mail.status).toBe(201);
+
+    const second = await client.call('token-b', 'POST', '/v1/hosts/provision?work_address_id=work-b');
+    client.archiveDeliveredEmail(
+      second.body.data.mailboxId, '[NAR:00000000-0000-0000-0000-000000000000] Unrelated',
+    );
+    await MailReceipt.reconcileArchives(env);
+    const receipt = await client.call('token-a', 'GET',
+      '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-a');
+
+    expect(receipt.body.data.arrivedInMailTrigger).toBe(false);
+    expect(receipt.body.data.receiptSource).toBeNull();
+
+    client.archiveDeliveredEmail(
+      second.body.data.mailboxId, '[NAR:' + mail.body.data.id + '] Agent Relay message',
+    );
+    await env.DB.prepare(
+      'UPDATE messages SET archive_checked_at = NULL WHERE id = ?',
+    ).bind(mail.body.data.id).run();
+    await MailReceipt.reconcileArchives(env);
+    const nowReceived = await client.call('token-a', 'GET',
+      '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-a');
+    expect(nowReceived.body.data.receiptSource).toBe('archive');
   });
 
   it('delivers an HMAC-signed wake to the registered work and reports durable success', async () => {
@@ -106,8 +166,28 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     });
     expect(sent.status).toBe(201);
 
+    // The MailTrigger send endpoint returned 201, but the recipient mailbox
+    // archive has not yet observed the message: no Wake may be queued.
     const before = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
-    expect(before.body.data[0].status).toBe('pending');
+    expect(before.body.data).toHaveLength(0);
+    await WakeService.dispatchDue(env);
+    expect(client.wakeCallbacks).toHaveLength(0);
+
+    const b = await client.call('token-b', 'POST', '/v1/hosts/provision?work_address_id=work-b');
+    client.archiveDeliveredEmail(
+      b.body.data.mailboxId,
+      '[NAR:' + sent.body.data.id + '] Agent Relay message',
+    );
+    await MailReceipt.reconcileArchives(env);
+
+    const receipt = await client.call('token-b', 'GET',
+      '/v1/messages/' + sent.body.data.id + '/receipt?work_address_id=work-b');
+    expect(receipt.body.data).toMatchObject({
+      arrivedInMailTrigger: true,
+      receiptSource: 'archive',
+    });
+    const ready = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
+    expect(ready.body.data[0].status).toBe('pending');
 
     await WakeService.dispatchDue(env);
 
@@ -156,6 +236,21 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
       body: 'Retry the webhook without re-sending an email.',
     });
     expect(sent.status).toBe(201);
+
+    // A signed MailTrigger inbound Route receipt confirms provider arrival
+    // and queues the Work, rather than the outbound send response doing so.
+    const sender = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+    const recipient = await client.call('token-b', 'POST',
+      '/v1/hosts/provision?work_address_id=work-b');
+    const confirmation = await client.callWithHeaders(
+      'POST', '/v1/mailtrigger/receipt', {
+        from: sender.body.data.mailboxEmail,
+        receiver: recipient.body.data.mailboxEmail,
+        subject: '[NAR:' + sent.body.data.id + '] Agent Relay message',
+      }, { 'x-relay-inbound-key': 'test-inbound-key' },
+    );
+    expect(confirmation.body.data.matched).toBe(true);
 
     await WakeService.dispatchDue(env);
     const history = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
