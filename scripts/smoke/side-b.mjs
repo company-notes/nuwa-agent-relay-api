@@ -26,6 +26,16 @@ await execute(async () => {
   assert(inbox.some((item) => item.id === state.message.id && item.body === state.message.body),
     'Side B inbox does not contain the message from Side A.');
 
+  // Only the recipient's explicit acknowledgement is a read receipt.
+  const readMessage = await request(
+    state.relayUrl,
+    '/v1/messages/' + encodeURIComponent(state.message.id) + '/read' + workQuery(b),
+    token,
+    { method: 'POST', expected: [201] },
+  );
+  assert(readMessage.workAddressId === b.id && readMessage.readAt,
+    'The receiving Work did not record its read acknowledgement.');
+
   if (!state.message.replyId) {
     const body = '[relay-smoke:' + state.runId + '] B to A: acknowledged';
     const reply = await request(
@@ -58,6 +68,16 @@ await execute(async () => {
     state.handoff.acceptId = acceptance.id;
     await saveState(state);
   }
+
+  // Host handoff cannot be read by an individual Work until it accepts.
+  const readHandoff = await request(
+    state.relayUrl,
+    '/v1/messages/' + encodeURIComponent(state.handoff.id) + '/read' + workQuery(b),
+    token,
+    { method: 'POST', expected: [201] },
+  );
+  assert(readHandoff.workAddressId === b.id && readHandoff.readAt,
+    'Accepted handoff has no recipient read acknowledgement.');
 
   if (!state.handoff.replyId) {
     const body = '[relay-smoke:' + state.runId + '] B to A: handoff done';

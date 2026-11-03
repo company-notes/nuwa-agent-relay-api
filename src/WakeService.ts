@@ -103,18 +103,6 @@ export class WakeService {
     return result.results as Record<string, unknown>[];
   }
 
-  static async enqueue(env: Env, messageId: string, recipientWorkId: string | null): Promise<void> {
-    if (!recipientWorkId) {
-      return;
-    }
-
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO wake_events (message_id, work_address_id, next_attempt_at)
-       SELECT ?, work_address_id, ? FROM wake_subscriptions
-       WHERE work_address_id = ?`,
-    ).bind(messageId, new Date().toISOString(), recipientWorkId).run();
-  }
-
   private static async signature(secret: string, body: string): Promise<string> {
     const key = await crypto.subtle.importKey(
       'raw', new TextEncoder().encode(secret),
