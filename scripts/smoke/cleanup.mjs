@@ -70,11 +70,25 @@ await execute(async () => {
     console.log('Released test work ' + name.toUpperCase() + ': ' + side.canonical);
   }
 
-  // Revoke only empty run-scoped test Hosts, never existing or shared Hosts.
-  for (const { name, token, side } of candidates) {
-    if (!side.hostCreatedBySmoke || side.hostReleased) {
+  // A previous cleanup attempt may have already released the Work, then
+  // failed while revoking its Host. Resume from the persisted state.
+  for (const name of ['a', 'b']) {
+    const side = state.sides[name];
+
+    if (!side || !side.hostCreatedBySmoke || side.hostReleased) {
       continue;
     }
+
+    assert(side.released && side.relayCleaned,
+      'Cannot revoke a Host before scoped mailbox and Work cleanup.');
+
+    const token = await accessToken(name, state.addressUrl);
+    const status = await request(state.addressUrl, '/v1/account/status', token);
+
+    assert(status.organization?.id === state.organization.id,
+      'Organization changed before Host cleanup.');
+    assert(status.hosts.some((host) => host.id === side.parentAddressId &&
+      host.path === side.hostPath), 'Test Host no longer matches its recorded owner.');
 
     const deleted = await request(
       state.addressUrl,
@@ -90,6 +104,11 @@ await execute(async () => {
     await saveState(state);
 
     console.log('Revoked empty test Host ' + name.toUpperCase() + ': ' + side.hostPath);
+  }
+
+  for (const side of Object.values(state.sides)) {
+    assert(side.released && (!side.hostCreatedBySmoke || side.hostReleased),
+      'Some test identities are not fully cleaned. Preserve the state for retry.');
   }
 
   state.cleanedAt = new Date().toISOString();
