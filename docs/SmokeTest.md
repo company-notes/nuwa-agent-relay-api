@@ -82,3 +82,7 @@ npm run audit:check
 ## True inbound receipt and wake testing
 
 After `npm run smoke:a -- send`, use `npm run smoke:receipts` to verify that MailTrigger actually executed the inbound Route. The new smoke Cleanup removes only this run's Host mailbox and Relay data, then revokes the Work and empty test Host (both Workers must be updated before using it). See [detailed setup](InboundWake.md).
+
+## 新版收件與已讀語意
+
+`smoke:a -- send` 只測到 MailTrigger 接受寄送。`smoke:b -- reply` 在讀取 D1 訊息後明確提交 Work 的已讀回條（包含已接受的 Host Handoff）；`smoke:a -- verify` 會核對兩張已讀回條。真正的 MailTrigger 收件則另外使用 `npm run smoke:receipts` 查驗，可由 MailTrigger Archive（舊 ReleaseBot 用法）或已設定的 Incoming Webhook 確認。**只有後者兩種方式之一確立收件，才有 Wake。** 每分鐘 Cron 先核對未確認的 Archive，再重試 Wake，而不是在寄送 API 201 後直接叫醒 Agent。更多細節：[InboundWake.md](InboundWake.md)。
