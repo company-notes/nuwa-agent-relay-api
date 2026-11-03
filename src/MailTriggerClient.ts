@@ -144,18 +144,32 @@ export class MailTriggerClient {
 
   async deleteManagedMailbox(mailboxId: string, expectedUsername: string): Promise<void> {
     const domain = await this.verifiedDomain();
-    const mailbox = await this.findMailbox(domain.id, expectedUsername);
+    const url = this.url('/api/v1/mailbox/' + encodeURIComponent(mailboxId) + '/');
+    const details = await fetch(url, { headers: this.headers() });
 
-    if (!mailbox) {
-      // Already removed by a partially completed cleanup.
+    if (details.status === 404) {
+      // Remote cleanup already completed in a previous partial attempt.
       return;
     }
 
-    if (String(mailbox.id) !== mailboxId) {
-      throw new APIError(409, 'mailbox_mismatch', 'Refusing to delete a mismatched MailTrigger mailbox.');
+    if (!details.ok) {
+      throw new APIError(502, 'mailtrigger_cleanup_lookup_failed',
+        'Unable to verify test mailbox ownership before deletion.');
     }
 
-    const response = await fetch(this.url('/api/v1/mailbox/' + encodeURIComponent(mailboxId) + '/'), {
+    const mailbox = await details.json() as MailboxRow;
+    const actualDomain = typeof mailbox.userDomain === 'object'
+      ? mailbox.userDomain?.id
+      : mailbox.userDomain;
+
+    if (String(mailbox.id) !== mailboxId ||
+      String(actualDomain) !== String(domain.id) ||
+      mailbox.username?.trim().toLowerCase() !== expectedUsername) {
+      throw new APIError(409, 'mailbox_mismatch',
+        'Refusing to delete a MailTrigger mailbox that does not exactly match this Host.');
+    }
+
+    const response = await fetch(url, {
       method: 'DELETE',
       headers: this.headers(),
     });
