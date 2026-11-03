@@ -21,6 +21,15 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     });
     expect(mail.status).toBe(201);
 
+    const owned = await client.call('token-b', 'GET',
+      '/v1/messages/' + mail.body.data.id + '?work_address_id=work-b');
+    expect(owned.status).toBe(200);
+    expect(owned.body.data.body).toBe('Receipt tracking must only trust MailTrigger.');
+
+    const noMessage = await client.call('token-c', 'GET',
+      '/v1/messages/' + mail.body.data.id + '?work_address_id=work-c');
+    expect(noMessage.status).toBe(404);
+
     const receiptPath = '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-a';
     const initial = await client.call('token-a', 'GET', receiptPath);
     expect(initial.body.data).toMatchObject({
