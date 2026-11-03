@@ -27,7 +27,7 @@ npm run smoke:setup
 - 若沒有 Organization，腳本會提示輸入名稱，並要求確認建立。新 Organization 無法由本工具刪除。
 - 預設建立 `relay-smoke-<runId>-a` 和 `relay-smoke-<runId>-b` 兩個 Host，在各 Host 下建立臨時 `relay-smoke-<runId>-a|b` Work Identity。
 - 透過 Relay 為兩個 Host 建立／取得 MailTrigger Mailbox；Mailbox 建立可能真的產生遠端資源。
-- 中途失敗時，已成功建立的 Work 會保存在 `.relay-smoke/session.json`，以便執行 Cleanup。
+- 中途失敗時，已成功建立的 Work 會保存在 `.relay-smoke/session.json`。**修正外部服務設定後直接重跑 `npm run smoke:setup`**，腳本會重新向 Agent Address 驗證先前的 Work 身分，沿用原 Run ID，只重試尚未完成的 Mailbox Provision；也可選擇執行 Cleanup。請不要刪除狀態檔或自行重建帳號。
 
 如果希望沿用既有 Host，可預先設定 `RELAY_SMOKE_HOST_A` 和 `RELAY_SMOKE_HOST_B`。非互動模式若必須新增 Organization，需要 `RELAY_SMOKE_ORG=<slug>` 及 `RELAY_SMOKE_CREATE_ORG=yes` 兩個變數，表示明確允許建立永久資源。
 
