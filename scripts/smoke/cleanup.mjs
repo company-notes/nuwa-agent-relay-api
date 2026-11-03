@@ -45,6 +45,21 @@ await execute(async () => {
   await askConfirmation(state.runId);
 
   for (const { name, token, side } of candidates) {
+    if (side.hostCreatedBySmoke && !side.relayCleaned) {
+      const result = await request(state.relayUrl,
+        '/v1/smoke/host?work_address_id=' + encodeURIComponent(side.id) +
+          '&run_id=' + encodeURIComponent(state.runId),
+        token,
+        { method: 'DELETE', expected: [200] },
+      );
+
+      assert(result.cleaned && result.hostId === side.parentAddressId,
+        'Relay did not confirm scoped test resource cleanup.');
+      side.relayCleaned = true;
+      await saveState(state);
+      console.log('Removed Relay D1 and MailTrigger mailbox resources for Side ' + name.toUpperCase());
+    }
+
     await request(state.addressUrl, '/v1/account/work/' + encodeURIComponent(side.id), token, {
       method: 'DELETE',
       expected: [200],
@@ -53,6 +68,28 @@ await execute(async () => {
     side.released = true;
     await saveState(state);
     console.log('Released test work ' + name.toUpperCase() + ': ' + side.canonical);
+  }
+
+  // Revoke only empty run-scoped test Hosts, never existing or shared Hosts.
+  for (const { name, token, side } of candidates) {
+    if (!side.hostCreatedBySmoke || side.hostReleased) {
+      continue;
+    }
+
+    const deleted = await request(
+      state.addressUrl,
+      '/v1/account/host/' + encodeURIComponent(side.parentAddressId) +
+        '?run_id=' + encodeURIComponent(state.runId),
+      token,
+      { method: 'DELETE', expected: [200] },
+    );
+
+    assert(deleted.id === side.parentAddressId && deleted.active === false,
+      'Agent Address did not confirm Host revocation.');
+    side.hostReleased = true;
+    await saveState(state);
+
+    console.log('Revoked empty test Host ' + name.toUpperCase() + ': ' + side.hostPath);
   }
 
   state.cleanedAt = new Date().toISOString();
@@ -66,6 +103,6 @@ await execute(async () => {
   }
 
   console.log('Cleanup complete: ' + archive);
-  console.log('Only test work addresses were revoked. Shared hosts, MailTrigger mailboxes,');
-  console.log('Relay D1 messages and threads remain; the API currently has no delete endpoints for these.');
+  console.log('Only run-scoped test Hosts / Works, their managed Mailboxes and related D1 records');
+  console.log('were removed. Existing shared Hosts and Organizations are not deleted.');
 });
