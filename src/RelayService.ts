@@ -3,6 +3,7 @@ import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
 import { APIError, type JSONRecord } from './HTTP';
 import { IdentityContext } from './IdentityContext';
+import { WakeService } from './WakeService';
 import { MailTriggerClient, type ManagedMailbox } from './MailTriggerClient';
 
 type HostRow = { mailbox_id: string; mailbox_email: string };
@@ -205,6 +206,10 @@ export class RelayService {
     await this.env.DB.prepare(
       "UPDATE messages SET delivery_status = 'sent', external_delivery_id = ? WHERE id = ?",
     ).bind(deliveryId, id).run();
+
+    // A successful MailTrigger API submission is not proof of mailbox arrival.
+    // Wake callbacks are advisory; only signed-in agents may fetch the content.
+    await WakeService.enqueue(this.env, id, recipientWorkId);
 
     return { id, threadId: thread.id, messageId: deliveryId };
   }

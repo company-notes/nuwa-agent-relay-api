@@ -6,4 +6,6 @@ export interface Env {
   MAILTRIGGER_API_TOKEN?: string;
   MAILTRIGGER_MANAGED_DOMAIN?: string;
   ALIAS_VERIFICATION_KEY?: string;
+  MAILTRIGGER_INBOUND_KEY?: string;
+  WAKE_ALLOWED_HOSTS?: string;
 }
