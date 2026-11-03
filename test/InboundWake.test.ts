@@ -122,9 +122,10 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     client.archiveDeliveredEmail(
       second.body.data.mailboxId, '[NAR:00000000-0000-0000-0000-000000000000] Unrelated',
     );
-    await MailReceipt.reconcileArchives(env);
+    // No wake subscription here, so there is no background Archive polling.
+    // The signed-in sender can explicitly check the recipient's provider Archive.
     const receipt = await client.call('token-a', 'GET',
-      '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-a');
+      '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-a&refresh=archive');
 
     expect(receipt.body.data.arrivedInMailTrigger).toBe(false);
     expect(receipt.body.data.receiptSource).toBeNull();
@@ -135,9 +136,8 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     await env.DB.prepare(
       'UPDATE messages SET archive_checked_at = NULL WHERE id = ?',
     ).bind(mail.body.data.id).run();
-    await MailReceipt.reconcileArchives(env);
     const nowReceived = await client.call('token-a', 'GET',
-      '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-a');
+      '/v1/messages/' + mail.body.data.id + '/receipt?work_address_id=work-a&refresh=archive');
     expect(nowReceived.body.data.receiptSource).toBe('archive');
   });
 

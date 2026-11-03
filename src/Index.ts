@@ -225,6 +225,7 @@ export class RelayAPI {
     if (request.method === 'GET' && receiptId) {
       return new MailReceipt(this.env).status(
         receiptId, identity.organization.id, identity.work.id,
+        url.searchParams.get('refresh') === 'archive',
       );
     }
 

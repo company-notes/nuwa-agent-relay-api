@@ -154,7 +154,9 @@ export class MailReceipt {
    * Unmatched or unarchived mail never triggers a Wake.
    */
   static async reconcileArchives(env: Env): Promise<void> {
-    if (!env.MAILTRIGGER_API_TOKEN) {
+    // Archive reconciliation is an Agent wake feature. With no configured
+    // receiving callbacks, do not poll every unconfirmed historical mailbox.
+    if (!env.MAILTRIGGER_API_TOKEN || !env.WAKE_ALLOWED_HOSTS) {
       return;
     }
 
@@ -166,7 +168,10 @@ export class MailReceipt {
          JOIN threads t ON t.id = m.thread_id
          JOIN paired_hosts recipient
            ON recipient.org_id = t.org_id AND recipient.host_address_id = m.recipient_host_id
+         JOIN wake_subscriptions subscription
+           ON subscription.work_address_id = COALESCE(m.recipient_work_id, t.accepted_work_id)
         WHERE m.delivery_status = 'sent' AND m.received_at IS NULL
+          AND subscription.created_at <= m.created_at
           AND m.created_at >= ?
           AND (m.archive_checked_at IS NULL OR m.archive_checked_at < ?)
         ORDER BY COALESCE(m.archive_checked_at, ''), m.created_at
@@ -205,11 +210,18 @@ export class MailReceipt {
     }
   }
 
-  async status(messageId: string, organizationId: string, workId: string): Promise<Response> {
+  async status(
+    messageId: string, organizationId: string, workId: string,
+    refreshArchive = false,
+  ): Promise<Response> {
     const row = await this.env.DB.prepare(
       `SELECT m.id, m.delivery_status AS deliveryStatus,
-              m.received_at AS receivedAt, m.receipt_source AS receiptSource
+              m.received_at AS receivedAt, m.receipt_source AS receiptSource,
+              m.archive_checked_at AS archiveCheckedAt,
+              recipient.mailbox_id AS archiveMailboxId
          FROM messages m JOIN threads t ON t.id = m.thread_id
+         LEFT JOIN paired_hosts recipient
+           ON recipient.org_id = t.org_id AND recipient.host_address_id = m.recipient_host_id
         WHERE m.id = ? AND t.org_id = ?
           AND (t.sender_work_id = ? OR t.recipient_work_id = ? OR t.accepted_work_id = ?)`,
     ).bind(messageId, organizationId, workId, workId, workId).first<{
@@ -217,10 +229,29 @@ export class MailReceipt {
       deliveryStatus: string;
       receivedAt: string | null;
       receiptSource: 'archive' | 'webhook' | null;
+      archiveCheckedAt: string | null;
+      archiveMailboxId: string | null;
     }>();
 
     if (!row) {
       throw new APIError(404, 'message_not_found', 'Message does not belong to this work identity.');
+    }
+
+    if (refreshArchive && row.deliveryStatus === 'sent' && !row.receivedAt &&
+      row.archiveMailboxId &&
+      (!row.archiveCheckedAt || row.archiveCheckedAt < new Date(Date.now() - 2 * 60_000).toISOString())) {
+      await this.env.DB.prepare(
+        'UPDATE messages SET archive_checked_at = ? WHERE id = ? AND received_at IS NULL',
+      ).bind(new Date().toISOString(), messageId).run();
+
+      const archived = await new MailTriggerClient(this.env)
+        .archivedProtocolMessageIds(row.archiveMailboxId);
+      if (archived.has(messageId.toLowerCase())) {
+        await MailReceipt.confirmArrival(this.env, messageId, 'archive');
+
+        // Re-read status through the same authorized query. No second archive call.
+        return this.status(messageId, organizationId, workId, false);
+      }
     }
 
     const read = await this.env.DB.prepare(

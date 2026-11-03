@@ -94,3 +94,7 @@ npm run smoke:cleanup
 ### 舊資料的安全處理
 
 Migration `0003_delivery_and_read_receipts.sql` 清除過去僅憑寄送 API 成功建立、但尚無 MailTrigger 收件證據的 Wake 佇列項目，不會刪除 Message、Thread 或原始寄送紀錄。之後 Cron 可重新用 Archive 對帳；**不會追溯補發舊的已讀回條**。
+
+### 節省 MailTrigger API 查詢
+
+背景 Cron 只會為**有啟用 Wake 訂閱且白名單已設定**的 Work，查詢最近 7 天尚未確認的 Archive；沒有 Agent Callback 的其他信件不會持續輪詢。若要只檢查指定 Message 的 MailTrigger 收件證據，可用已登入的 Work 呼叫 `GET /v1/messages/<id>/receipt?work_address_id=<id>&refresh=archive`；每個 Message 的 Archive 查詢最多約兩分鐘一次。 `npm run smoke:receipts` 已內建此按需查詢，不必設定 Webhook Secret 也能使用 MailTrigger Archive 查驗。

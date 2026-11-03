@@ -14,7 +14,8 @@ await execute(async () => {
   ]) {
     const receipt = await request(
       state.relayUrl,
-      '/v1/messages/' + encodeURIComponent(messageId) + '/receipt' + workQuery(a),
+      '/v1/messages/' + encodeURIComponent(messageId) + '/receipt' + workQuery(a) +
+        '&refresh=archive',
       token,
     );
 
