@@ -1,6 +1,5 @@
 import {
   accessToken,
-  addressOrigin,
   askConfirmation,
   assert,
   execute,
@@ -28,9 +27,7 @@ await execute(async () => {
       continue;
     }
 
-    const token = name === 'b'
-      ? process.env.RELAY_SMOKE_TOKEN_B || accessToken('a')
-      : accessToken('a');
+    const token = await accessToken(name, state.addressUrl);
     const status = await request(state.addressUrl, '/v1/account/status' + workQuery(side), token);
 
     assert(status.organization?.id === state.organization.id, 'Organization changed; refusing cleanup.');

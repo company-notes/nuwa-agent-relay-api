@@ -15,7 +15,7 @@ await execute(async () => {
   const state = await loadState();
   const a = state.sides.a;
   const b = state.sides.b;
-  const token = accessToken('a');
+  const token = await accessToken('a', state.addressUrl);
 
   assert(a && b && !a.released && !b.released, 'Setup is incomplete or already cleaned up.');
   await request(state.addressUrl, '/v1/account/status' + workQuery(a), token);

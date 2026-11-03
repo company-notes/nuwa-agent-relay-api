@@ -13,12 +13,17 @@ export function assert(condition, description) {
   }
 }
 
-export function accessToken(side) {
+export async function accessToken(side, expectedOrigin = addressOrigin) {
   const value = process.env['RELAY_SMOKE_TOKEN_' + side.toUpperCase()];
 
-  assert(value, 'RELAY_SMOKE_TOKEN_' + side.toUpperCase() + ' must be set in this terminal.');
+  if (value) {
+    return value;
+  }
 
-  return value;
+  // Lazy import avoids a cycle: Auth uses shared state-path and validation helpers.
+  const { readSavedToken } = await import('./Auth.mjs');
+
+  return readSavedToken(side, expectedOrigin);
 }
 
 export function createRunId() {
