@@ -1,3 +1,6 @@
+import { rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
 import { removeLocalAuth } from './Auth.mjs';
 
 import {
@@ -114,6 +117,7 @@ await execute(async () => {
   state.cleanedAt = new Date().toISOString();
   await saveState(state);
   const archive = await moveCompletedState(state);
+  await rm(join(dirname(statePath), 'wake-b.json'), { force: true });
 
   // Only clear local credentials after every recorded test work was released.
   if (process.env.RELAY_SMOKE_KEEP_LOGIN !== '1') {
