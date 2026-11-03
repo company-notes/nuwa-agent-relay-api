@@ -77,7 +77,20 @@ await execute(async () => {
     assert(handoffs.some((item) => item.id === state.handoff.replyId),
       'Handoff reply is missing.');
 
+    // Verify distinct, sender-readable Agent read receipts without mistaking
+    // MailTrigger submission for receipt/delivery/reading.
+    for (const id of [state.message.id, state.handoff.id]) {
+      const receipt = await request(
+        state.relayUrl,
+        '/v1/messages/' + encodeURIComponent(id) + '/receipt' + workQuery(a),
+        token,
+      );
+      assert(receipt.readBy?.some((item) => item.workAddressId === b.id && item.readAt),
+        'Side B did not explicitly acknowledge reading message ' + id);
+    }
+
     console.log('PASS — Side A can read original message, reply, host acceptance and handoff reply.');
+    console.log('PASS — Side A verified distinct read receipts from Side B.');
     console.log('Message thread: ' + state.message.threadId);
     console.log('Handoff thread: ' + state.handoff.threadId);
     console.log('Next: npm run smoke:cleanup');

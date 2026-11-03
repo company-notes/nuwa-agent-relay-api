@@ -187,3 +187,5 @@ Vulnerabilities in the npm dependency graph are separate from vulnerabilities in
 ## MailTrigger incoming receipts and signed Agent wake
 
 See [MailTrigger inbox arrival verification, signed wake callbacks and smoke cleanup](docs/InboundWake.md). API submission success is not proof of actual receipt; inbound Route, public DNS, and wake HTTPS ingress require independent configuration.
+
+Message lifecycle: MailTrigger send API acceptance ≠ provider Archive/Webhook confirmed mailbox arrival ≠ explicit recipient Agent read acknowledgement. Only confirmed arrival queues an Agent Wake. See [receipt semantics](docs/InboundWake.md).

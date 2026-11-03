@@ -214,11 +214,18 @@ export class RelayAPI {
       return HTTP.response(await relay.messageById(messageId));
     }
 
+    const readId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/read$/);
+
+    if (request.method === 'POST' && readId) {
+      return HTTP.response(await relay.acknowledgeRead(readId), 201);
+    }
+
     const receiptId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/receipt$/);
 
     if (request.method === 'GET' && receiptId) {
       return new MailReceipt(this.env).status(
         receiptId, identity.organization.id, identity.work.id,
+        url.searchParams.get('refresh') === 'archive',
       );
     }
 
@@ -262,10 +269,18 @@ export class RelayAPI {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await WakeService.dispatchDue(env);
+    try {
+      await MailReceipt.reconcileArchives(env);
+    } finally {
+      // Failed archive lookups must not prevent retrying existing Wake events.
+      await WakeService.dispatchDue(env);
+    }
   },
 
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(
+    request: Request, env: Env,
+    context?: { waitUntil(promise: Promise<unknown>): void },
+  ): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
@@ -281,6 +296,14 @@ export default {
     try {
       const response = await new RelayAPI(env).handle(request);
       response.headers.set('access-control-allow-origin', '*');
+
+      // The authenticated MailTrigger Route can accelerate wake delivery.
+      // Cron remains the durable retry/fallback. Never dispatch on send-201.
+      if (request.method === 'POST' &&
+        new URL(request.url).pathname === '/v1/mailtrigger/receipt' &&
+        response.ok && context && env.WAKE_ALLOWED_HOSTS) {
+        context.waitUntil(WakeService.dispatchDue(env));
+      }
 
       return response;
     } catch (error) {

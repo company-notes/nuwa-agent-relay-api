@@ -3,7 +3,6 @@ import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
 import { APIError, type JSONRecord } from './HTTP';
 import { IdentityContext } from './IdentityContext';
-import { WakeService } from './WakeService';
 import { MailTriggerClient, type ManagedMailbox } from './MailTriggerClient';
 
 type HostRow = { mailbox_id: string; mailbox_email: string };
@@ -266,8 +265,6 @@ export class RelayService {
       "UPDATE messages SET delivery_status = 'sent', external_delivery_id = ? WHERE id = ?",
     ).bind(deliveryId, id).run();
 
-    await WakeService.enqueue(this.env, id, recipientWorkId);
-
     return { id, threadId: thread.id, messageId: deliveryId };
   }
 
@@ -426,6 +423,48 @@ export class RelayService {
     }
 
     return { ...delivered, acceptedBy: this.identity.work.canonical };
+  }
+
+  /**
+   * Unlike SMTP submission or MailTrigger mailbox arrival, this is an
+   * explicit acknowledgement by the receiving active Work identity.
+   * Reading an inbox listing alone never generates a read receipt.
+   */
+  async acknowledgeRead(messageId: string): Promise<JSONRecord> {
+    const row = await this.env.DB.prepare(
+      `SELECT m.id FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+        WHERE m.id = ? AND t.org_id = ? AND m.delivery_status = 'sent'
+          AND (
+            m.recipient_work_id = ? OR
+            (m.recipient_work_id IS NULL AND t.accepted_work_id = ?)
+          )`,
+    ).bind(
+      messageId, this.identity.organization.id,
+      this.identity.work.id, this.identity.work.id,
+    ).first<{ id: string }>();
+
+    if (!row) {
+      throw new APIError(404, 'message_not_found',
+        'Only the intended receiving Work may acknowledge this message.');
+    }
+
+    const recorded = new Date().toISOString();
+    await this.env.DB.prepare(
+      `INSERT OR IGNORE INTO message_read_receipts
+        (message_id, work_address_id, read_at) VALUES (?, ?, ?)`,
+    ).bind(messageId, this.identity.work.id, recorded).run();
+
+    const receipt = await this.env.DB.prepare(
+      `SELECT read_at AS readAt FROM message_read_receipts
+        WHERE message_id = ? AND work_address_id = ?`,
+    ).bind(messageId, this.identity.work.id).first<{ readAt: string }>();
+
+    return {
+      messageId,
+      workAddressId: this.identity.work.id,
+      readAt: receipt?.readAt,
+    };
   }
 
   async messageById(messageId: string): Promise<JSONRecord> {

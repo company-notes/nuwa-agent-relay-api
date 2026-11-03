@@ -103,18 +103,6 @@ export class WakeService {
     return result.results as Record<string, unknown>[];
   }
 
-  static async enqueue(env: Env, messageId: string, recipientWorkId: string | null): Promise<void> {
-    if (!recipientWorkId) {
-      return;
-    }
-
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO wake_events (message_id, work_address_id, next_attempt_at)
-       SELECT ?, work_address_id, ? FROM wake_subscriptions
-       WHERE work_address_id = ?`,
-    ).bind(messageId, new Date().toISOString(), recipientWorkId).run();
-  }
-
   private static async signature(secret: string, body: string): Promise<string> {
     const key = await crypto.subtle.importKey(
       'raw', new TextEncoder().encode(secret),
@@ -136,11 +124,27 @@ export class WakeService {
               e.attempts, s.callback_url AS callbackUrl, s.signing_secret AS signingSecret
          FROM wake_events e
          JOIN wake_subscriptions s ON s.work_address_id = e.work_address_id
+         JOIN messages m ON m.id = e.message_id
         WHERE e.status = 'pending' AND e.next_attempt_at <= ?
+          AND m.received_at IS NOT NULL
+          AND (e.lease_until IS NULL OR e.lease_until <= ?)
         ORDER BY e.next_attempt_at LIMIT 25`,
-    ).bind(now).all<WakeRow>();
+    ).bind(now, now).all<WakeRow>();
 
     for (const event of rows.results) {
+      // Webhook waitUntil and Cron may both run: atomically lease each event.
+      const leaseOwner = crypto.randomUUID();
+      const leaseUntil = new Date(Date.now() + 30_000).toISOString();
+      const claimed = await env.DB.prepare(
+        `UPDATE wake_events SET lease_owner = ?, lease_until = ?
+          WHERE message_id = ? AND status = 'pending' AND next_attempt_at <= ?
+            AND (lease_until IS NULL OR lease_until <= ?)`,
+      ).bind(leaseOwner, leaseUntil, event.messageId, now, now).run();
+
+      if (claimed.meta.changes !== 1) {
+        continue;
+      }
+
       // Enforce the current operator allowlist again, including migrated D1 rows.
       let callback: string;
 
@@ -148,8 +152,10 @@ export class WakeService {
         callback = WakeService.allowedURL(event.callbackUrl, env.WAKE_ALLOWED_HOSTS);
       } catch {
         await env.DB.prepare(
-          "UPDATE wake_events SET status = 'failed', last_error = 'url_not_allowed' WHERE message_id = ?",
-        ).bind(event.messageId).run();
+          `UPDATE wake_events SET status = 'failed', last_error = 'url_not_allowed',
+                lease_owner = NULL, lease_until = NULL
+            WHERE message_id = ? AND lease_owner = ?`,
+        ).bind(event.messageId, leaseOwner).run();
         continue;
       }
 
@@ -189,8 +195,9 @@ export class WakeService {
       await env.DB.prepare(
         `UPDATE wake_events
             SET attempts = ?, status = ?, next_attempt_at = ?,
-                notified_at = ?, last_error = ?
-          WHERE message_id = ? AND status = 'pending'`,
+                notified_at = ?, last_error = ?,
+                lease_owner = NULL, lease_until = NULL
+          WHERE message_id = ? AND status = 'pending' AND lease_owner = ?`,
       ).bind(
         attempts,
         state,
@@ -198,6 +205,7 @@ export class WakeService {
         success ? new Date().toISOString() : null,
         success ? null : reason,
         event.messageId,
+        leaseOwner,
       ).run();
     }
   }

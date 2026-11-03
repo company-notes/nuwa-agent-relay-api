@@ -16,6 +16,7 @@ export class RelayTestClient {
 
   private readonly mailboxes: Array<{ id: number; username: string; userDomain: number }> = [];
   readonly deliveries: Array<{ to: string[]; subject: string; body: string }> = [];
+  private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
 
   failNextMail = false;
@@ -138,6 +139,12 @@ export class RelayTestClient {
       return Response.json(this.mailboxes);
     }
 
+    const archiveRoute = url.pathname.match(/^\/api\/v1\/mailbox\/(\d+)\/archives\/$/);
+
+    if (archiveRoute && !init?.method) {
+      return Response.json(this.mailboxArchives.get(Number(archiveRoute[1])) || []);
+    }
+
     const mailboxRoute = url.pathname.match(/^\/api\/v1\/mailbox\/(\d+)\/$/);
 
     if (mailboxRoute) {
@@ -240,6 +247,13 @@ export class RelayTestClient {
     );
 
     return { status: response.status, body: await response.json() };
+  }
+
+  archiveDeliveredEmail(mailboxId: string, subject: string): void {
+    const id = Number(mailboxId);
+    const archive = this.mailboxArchives.get(id) || [];
+    archive.push({ id: 'mailtrigger-archive-' + archive.length, subject, body: 'archived provider content' });
+    this.mailboxArchives.set(id, archive);
   }
 
   enableSmokeIdentities(runId: string): void {
