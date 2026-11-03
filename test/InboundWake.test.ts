@@ -218,6 +218,32 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     expect(removed.status).toBe(200);
   });
 
+  it('serializes simultaneous Cron and webhook wake dispatch using D1 leases', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    await client.call('token-b', 'POST', '/v1/wake-subscription?work_address_id=work-b', {
+      callbackUrl: 'https://agent-hook.example.com/wake',
+    });
+
+    const mail = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: '@beta/reviewer',
+      body: 'One provider receipt, one concurrent dispatch.',
+    });
+    const recipient = await client.call('token-b', 'POST',
+      '/v1/hosts/provision?work_address_id=work-b');
+    client.archiveDeliveredEmail(
+      recipient.body.data.mailboxId, '[NAR:' + mail.body.data.id + '] Hello',
+    );
+    await MailReceipt.reconcileArchives(env);
+
+    await Promise.all([WakeService.dispatchDue(env), WakeService.dispatchDue(env)]);
+    const state = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
+    expect(state.body.data[0]).toMatchObject({ status: 'delivered', attempts: 1 });
+    expect(client.wakeCallbacks).toHaveLength(1);
+  });
+
   it('retries rejected callback notifications and does not disclose other Work deliveries', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
@@ -237,20 +263,15 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     });
     expect(sent.status).toBe(201);
 
-    // A signed MailTrigger inbound Route receipt confirms provider arrival
-    // and queues the Work, rather than the outbound send response doing so.
-    const sender = await client.call('token-a', 'POST',
-      '/v1/hosts/provision?work_address_id=work-a');
+    // The retry path is tested after Archive evidence rather than after a
+    // Webhook, so no independent waitUntil races this controlled retry test.
     const recipient = await client.call('token-b', 'POST',
       '/v1/hosts/provision?work_address_id=work-b');
-    const confirmation = await client.callWithHeaders(
-      'POST', '/v1/mailtrigger/receipt', {
-        from: sender.body.data.mailboxEmail,
-        receiver: recipient.body.data.mailboxEmail,
-        subject: '[NAR:' + sent.body.data.id + '] Agent Relay message',
-      }, { 'x-relay-inbound-key': 'test-inbound-key' },
+    client.archiveDeliveredEmail(
+      recipient.body.data.mailboxId,
+      '[NAR:' + sent.body.data.id + '] Agent Relay message',
     );
-    expect(confirmation.body.data.matched).toBe(true);
+    await MailReceipt.reconcileArchives(env);
 
     await WakeService.dispatchDue(env);
     const history = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
