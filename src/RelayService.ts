@@ -428,6 +428,30 @@ export class RelayService {
     return { ...delivered, acceptedBy: this.identity.work.canonical };
   }
 
+  async messageById(messageId: string): Promise<JSONRecord> {
+    const row = await this.env.DB.prepare(
+      `SELECT m.id, m.thread_id, m.kind, m.sender_host_id, m.sender_work_id,
+              m.recipient_host_id, m.recipient_work_id, m.subject, m.body,
+              m.artifacts_json, m.created_at
+         FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+        WHERE m.id = ? AND t.org_id = ? AND m.delivery_status = 'sent'
+          AND (t.sender_work_id = ? OR t.recipient_work_id = ? OR t.accepted_work_id = ?)`,
+    ).bind(
+      messageId,
+      this.identity.organization.id,
+      this.identity.work.id,
+      this.identity.work.id,
+      this.identity.work.id,
+    ).first<MessageRow>();
+
+    if (!row) {
+      throw new APIError(404, 'message_not_found', 'Message is unavailable to this work identity.');
+    }
+
+    return RelayService.publicMessage(row);
+  }
+
   async history(threadId: string): Promise<JSONRecord[]> {
     await this.requireThread(threadId);
 

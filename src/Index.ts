@@ -208,6 +208,12 @@ export class RelayAPI {
       return HTTP.response(await new WakeService(this.env, identity).deliveries());
     }
 
+    const messageId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)$/);
+
+    if (request.method === 'GET' && messageId) {
+      return HTTP.response(await relay.messageById(messageId));
+    }
+
     const receiptId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/receipt$/);
 
     if (request.method === 'GET' && receiptId) {
