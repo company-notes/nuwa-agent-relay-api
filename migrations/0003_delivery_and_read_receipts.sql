@@ -3,6 +3,10 @@ ALTER TABLE messages ADD COLUMN receipt_source TEXT
   CHECK (receipt_source IN ('webhook', 'archive'));
 ALTER TABLE messages ADD COLUMN archive_checked_at TEXT;
 
+-- At-most-one concurrent worker may deliver a Wake until its short lease expires.
+ALTER TABLE wake_events ADD COLUMN lease_owner TEXT;
+ALTER TABLE wake_events ADD COLUMN lease_until TEXT;
+
 CREATE INDEX messages_archive_scan
   ON messages(delivery_status, received_at, archive_checked_at);
 
