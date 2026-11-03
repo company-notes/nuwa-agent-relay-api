@@ -183,3 +183,7 @@ The package's `engines.node` requires at least 26.13.0 and disallows experimenta
 After `npm ci`, run `npm run audit:report` to inspect advisories, or
 `npm run audit:check` to fail on outstanding high/critical vulnerabilities.
 Vulnerabilities in the npm dependency graph are separate from vulnerabilities in the Node runtime.
+
+## MailTrigger incoming receipts and signed Agent wake
+
+See [MailTrigger inbox arrival verification, signed wake callbacks and smoke cleanup](docs/InboundWake.md). API submission success is not proof of actual receipt; inbound Route, public DNS, and wake HTTPS ingress require independent configuration.
