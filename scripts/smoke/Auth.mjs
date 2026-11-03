@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
+import { readFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -119,7 +119,6 @@ async function saveAuth(side, auth) {
     });
     await rename(temp, file);
   } catch (error) {
-    const { rm } = await import('node:fs/promises');
     await rm(temp, { force: true });
 
     throw error;
@@ -153,6 +152,10 @@ export async function listenForCallback(state, timeoutMs = AUTH_TIMEOUT_MS) {
     accept = resolve;
     reject = fail;
   });
+
+  // If client registration fails before the browser opens, close() rejects this
+  // pending promise. Attach a rejection handler before any external request.
+  received.catch(() => {});
   const server = createServer((req, res) => {
     const host = req.headers.host;
     const localAddress = server.address();
@@ -185,10 +188,12 @@ export async function listenForCallback(state, timeoutMs = AUTH_TIMEOUT_MS) {
       });
       res.end('Authorization response was rejected.');
 
-      // Ignore stray/invalid requests rather than terminating the valid login.
-      if (req.url?.startsWith('/oauth/callback?') && req.url.includes('error=')
-        && req.url.includes('state=')) {
-        // The timer remains active; a denied login will eventually exit.
+      // Ignore invalid local callbacks; PKCE state must not be bypassed.
+      if (error instanceof Error && error.message.startsWith('OAuth authorization was denied')) {
+        if (!finished) {
+          finished = true;
+          reject(error);
+        }
       }
     }
   });
@@ -315,4 +320,10 @@ export async function readSavedToken(side, expectedOrigin = addressOrigin) {
   await saveAuth(side, auth);
 
   return auth.accessToken;
+}
+
+export async function removeLocalAuth() {
+  for (const side of ['a', 'b']) {
+    await rm(authFile(side), { force: true });
+  }
 }

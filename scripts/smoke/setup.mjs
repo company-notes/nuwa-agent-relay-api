@@ -1,5 +1,7 @@
 import { access, constants } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   accessToken,
@@ -207,6 +209,6 @@ export async function setupSmokeTest() {
   console.log('Next: npm run smoke:a -- send');
 }
 
-if (process.argv[1] && import.meta.url === new URL('file://' + process.argv[1]).href) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   await execute(setupSmokeTest);
 }
