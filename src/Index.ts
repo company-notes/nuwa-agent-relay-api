@@ -216,6 +216,16 @@ export class RelayAPI {
       );
     }
 
+    if (request.method === 'DELETE' && pathname === '/v1/smoke/host') {
+      const runId = HTTP.requiredString(
+        { runId: url.searchParams.get('run_id') },
+        'runId',
+        10,
+      );
+
+      return HTTP.response(await relay.cleanupSmokeHost(runId));
+    }
+
     if (request.method === 'POST' && pathname === '/v1/hosts/provision') {
       return HTTP.response(await relay.provisionHost(), 201);
     }

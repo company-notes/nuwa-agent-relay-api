@@ -142,6 +142,30 @@ export class MailTriggerClient {
     throw new APIError(502, 'mailtrigger_mailbox_failed', `Mailbox provisioning failed (HTTP ${response.status}).`);
   }
 
+  async deleteManagedMailbox(mailboxId: string, expectedUsername: string): Promise<void> {
+    const domain = await this.verifiedDomain();
+    const mailbox = await this.findMailbox(domain.id, expectedUsername);
+
+    if (!mailbox) {
+      // Already removed by a partially completed cleanup.
+      return;
+    }
+
+    if (String(mailbox.id) !== mailboxId) {
+      throw new APIError(409, 'mailbox_mismatch', 'Refusing to delete a mismatched MailTrigger mailbox.');
+    }
+
+    const response = await fetch(this.url('/api/v1/mailbox/' + encodeURIComponent(mailboxId) + '/'), {
+      method: 'DELETE',
+      headers: this.headers(),
+    });
+
+    if (![200, 204, 404].includes(response.status)) {
+      throw new APIError(502, 'mailtrigger_cleanup_failed',
+        'MailTrigger rejected test mailbox removal (HTTP ' + response.status + ').');
+    }
+  }
+
   async send(
     mailboxId: string,
     recipientEmail: string,
