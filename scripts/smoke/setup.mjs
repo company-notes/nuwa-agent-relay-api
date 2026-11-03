@@ -189,6 +189,7 @@ export async function setupSmokeTest() {
         token,
       );
 
+      assert(status.work?.id, 'Recorded smoke Work no longer matches Agent Address.');
       work = validateWork(status.work, runId, name);
       assert(status.organization?.id === state.organization.id,
         'Recorded smoke Work no longer belongs to the expected Organization.');
