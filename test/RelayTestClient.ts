@@ -138,6 +138,27 @@ export class RelayTestClient {
       return Response.json(this.mailboxes);
     }
 
+    const mailboxRoute = url.pathname.match(/^\/api\/v1\/mailbox\/(\d+)\/$/);
+
+    if (mailboxRoute) {
+      const id = Number(mailboxRoute[1]);
+      const found = this.mailboxes.find((item) => item.id === id);
+
+      if (!found) {
+        return new Response(null, { status: 404 });
+      }
+
+      if (init?.method === 'DELETE') {
+        this.mailboxes.splice(this.mailboxes.indexOf(found), 1);
+
+        return new Response(null, { status: 204 });
+      }
+
+      if (!init?.method) {
+        return Response.json(found);
+      }
+    }
+
     if (url.pathname.endsWith('/mail/send/') && init?.method === 'POST') {
       if (this.failNextMail) {
         this.failNextMail = false;
@@ -219,6 +240,21 @@ export class RelayTestClient {
     );
 
     return { status: response.status, body: await response.json() };
+  }
+
+  enableSmokeIdentities(runId: string): void {
+    for (const side of [
+      { host: this.hostA, work: this.workA, suffix: 'a' },
+      { host: this.hostB, work: this.workB, suffix: 'b' },
+    ]) {
+      const name = 'relay-smoke-' + runId + '-' + side.suffix;
+      side.host.path = name;
+      side.host.address = '@' + name;
+      side.host.canonical = RelayTestClient.slug + '/' + name;
+      side.work.path = name + '/' + name;
+      side.work.address = '@' + side.work.path;
+      side.work.canonical = RelayTestClient.slug + '/' + side.work.path;
+    }
   }
 
   async callWithHeaders(
