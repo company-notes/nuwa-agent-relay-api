@@ -214,6 +214,12 @@ export class RelayAPI {
       return HTTP.response(await relay.messageById(messageId));
     }
 
+    const readId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/read$/);
+
+    if (request.method === 'POST' && readId) {
+      return HTTP.response(await relay.acknowledgeRead(readId), 201);
+    }
+
     const receiptId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/receipt$/);
 
     if (request.method === 'GET' && receiptId) {
@@ -262,7 +268,12 @@ export class RelayAPI {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await WakeService.dispatchDue(env);
+    try {
+      await MailReceipt.reconcileArchives(env);
+    } finally {
+      // Failed archive lookups must not prevent retrying existing Wake events.
+      await WakeService.dispatchDue(env);
+    }
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {

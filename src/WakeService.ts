@@ -136,7 +136,9 @@ export class WakeService {
               e.attempts, s.callback_url AS callbackUrl, s.signing_secret AS signingSecret
          FROM wake_events e
          JOIN wake_subscriptions s ON s.work_address_id = e.work_address_id
+         JOIN messages m ON m.id = e.message_id
         WHERE e.status = 'pending' AND e.next_attempt_at <= ?
+          AND m.received_at IS NOT NULL
         ORDER BY e.next_attempt_at LIMIT 25`,
     ).bind(now).all<WakeRow>();
 
