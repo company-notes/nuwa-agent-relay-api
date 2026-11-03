@@ -31,7 +31,7 @@ The initial implementation supports delivery **within one Agent Address organiza
 
 ## Live end-to-end smoke test
 
-Use the staged Node.js scripts in [`scripts/smoke/`](scripts/smoke/) to set up two temporary work identities, execute Side A and Side B, verify the round trip and safely release the temporary works. See the [step-by-step guide](docs/SmokeTest.md). OAuth access tokens are supplied through local environment variables, never stored in state files.
+Use `npm run smoke:login` for a local browser OAuth + PKCE login, then `smoke:setup` to create two test Host/Work identities and Mailboxes automatically. Run Side A and Side B, verify the round trip, then safely release temporary Work identities with Cleanup. See the [step-by-step guide](docs/SmokeTest.md). OAuth credentials are stored in private, Git-ignored local files; no tokens are written into the shared smoke-test state.
 
 ## Quick start
 

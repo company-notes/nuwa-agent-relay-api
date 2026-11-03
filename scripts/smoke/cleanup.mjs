@@ -1,6 +1,7 @@
+import { removeLocalAuth } from './Auth.mjs';
+
 import {
   accessToken,
-  addressOrigin,
   askConfirmation,
   assert,
   execute,
@@ -28,9 +29,7 @@ await execute(async () => {
       continue;
     }
 
-    const token = name === 'b'
-      ? process.env.RELAY_SMOKE_TOKEN_B || accessToken('a')
-      : accessToken('a');
+    const token = await accessToken(name, state.addressUrl);
     const status = await request(state.addressUrl, '/v1/account/status' + workQuery(side), token);
 
     assert(status.organization?.id === state.organization.id, 'Organization changed; refusing cleanup.');
@@ -59,6 +58,12 @@ await execute(async () => {
   state.cleanedAt = new Date().toISOString();
   await saveState(state);
   const archive = await moveCompletedState(state);
+
+  // Only clear local credentials after every recorded test work was released.
+  if (process.env.RELAY_SMOKE_KEEP_LOGIN !== '1') {
+    await removeLocalAuth();
+    console.log('本機 OAuth 憑證已刪除。下次測試請重新 smoke:login。');
+  }
 
   console.log('Cleanup complete: ' + archive);
   console.log('Only test work addresses were revoked. Shared hosts, MailTrigger mailboxes,');

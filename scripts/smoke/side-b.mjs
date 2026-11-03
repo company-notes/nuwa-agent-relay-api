@@ -15,7 +15,7 @@ await execute(async () => {
 
   const state = await loadState();
   const b = state.sides.b;
-  const token = process.env.RELAY_SMOKE_TOKEN_B || accessToken('a');
+  const token = await accessToken('b', state.addressUrl);
 
   assert(b && !b.released && state.message && state.handoff,
     'Run Side A send first and copy the state file to Side B.');

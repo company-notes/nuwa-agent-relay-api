@@ -17,7 +17,9 @@
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "deploy": "wrangler deploy",
     "audit:report": "node scripts/audit-report.mjs",
-    "audit:check": "node scripts/audit-report.mjs --enforce"
+    "audit:check": "node scripts/audit-report.mjs --enforce",
+    "smoke:login": "node scripts/smoke/login.mjs",
+    "smoke:logout": "node scripts/smoke/logout.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260921.1",

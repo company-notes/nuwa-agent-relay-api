@@ -5,6 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  buildAuthorizationURL,
+  checkCallback,
+  listenForCallback,
+  oauthChallenge,
+} from './Auth.mjs';
+import { planHosts } from './setup.mjs';
+
+import {
   chooseHosts,
   loadState,
   moveCompletedState,
@@ -136,4 +144,65 @@ test('upstream non-success responses are rejected, not mistaken for successful s
   } finally {
     globalThis.fetch = original;
   }
+});
+
+
+test('PKCE challenge matches RFC 7636 and authorization carries state', () => {
+  const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+  assert.equal(oauthChallenge(verifier), 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+
+  const url = new URL(buildAuthorizationURL(
+    'https://address.example.com', 'local-public-client',
+    'http://127.0.0.1:34343/oauth/callback', verifier, 'secure-state',
+  ));
+
+  assert.equal(url.origin, 'https://address.example.com');
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(url.searchParams.get('state'), 'secure-state');
+  assert.equal(url.searchParams.get('redirect_uri'), 'http://127.0.0.1:34343/oauth/callback');
+  assert.equal(url.searchParams.get('code_challenge'), oauthChallenge(verifier));
+});
+
+test('OAuth callback rejects wrong, missing or duplicate state and code', () => {
+  assert.equal(checkCallback('/oauth/callback?state=expected&code=abc', 'expected'), 'abc');
+  assert.throws(() => checkCallback('/oauth/callback?state=forged&code=abc', 'expected'), /state mismatch/);
+  assert.throws(() => checkCallback('/oauth/callback?code=abc', 'expected'), /Unexpected OAuth/);
+  assert.throws(() => checkCallback('/oauth/callback?state=expected&state=expected&code=abc', 'expected'),
+    /Unexpected OAuth/);
+  assert.throws(() => checkCallback('/oauth/callback?state=expected&code=abc&code=other', 'expected'),
+    /one authorization code/);
+  assert.throws(() => checkCallback('/oauth/callback?state=expected&error=access_denied', 'expected'),
+    /denied/);
+});
+
+test('OAuth loopback callback ignores forged state and accepts a valid callback', async () => {
+  const receiver = await listenForCallback('correct-state', 5000);
+
+  try {
+    const bad = await fetch(receiver.redirectURI + '?state=bad-state&code=stolen');
+    assert.equal(bad.status, 400);
+
+    const good = await fetch(receiver.redirectURI + '?state=correct-state&code=good-code');
+    assert.equal(good.status, 200);
+    assert.equal(await receiver.received, 'good-code');
+  } finally {
+    await receiver.close();
+  }
+});
+
+test('automatic setup plans distinct run-scoped hosts or uses explicit existing hosts', () => {
+  const status = { organization: org, hosts: [a, b] };
+  const planned = planHosts('aabbccddee', status, status);
+
+  assert.deepEqual(planned.a, { name: 'relay-smoke-aabbccddee-a', existed: false, id: null });
+  assert.deepEqual(planned.b, { name: 'relay-smoke-aabbccddee-b', existed: false, id: null });
+
+  const existing = planHosts('aabbccddee', status, status, 'machine-a', 'machine-b');
+  assert.deepEqual(existing.a, { name: 'machine-a', existed: true, id: 'host-a' });
+  assert.deepEqual(existing.b, { name: 'machine-b', existed: true, id: 'host-b' });
+
+  assert.throws(() => planHosts('aabbccddee', status, status, 'machine-a', 'machine-a'),
+    /different Host/);
+  assert.throws(() => planHosts('aabbccddee', status, status, 'bad\/name', 'machine-b'),
+    /Host handles/);
 });
