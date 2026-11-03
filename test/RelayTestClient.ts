@@ -16,8 +16,10 @@ export class RelayTestClient {
 
   private readonly mailboxes: Array<{ id: number; username: string; userDomain: number }> = [];
   readonly deliveries: Array<{ to: string[]; subject: string; body: string }> = [];
+  readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
 
   failNextMail = false;
+  failNextWake = false;
   failAddressStatus = false;
 
   private readonly hostA: AgentAddress = {
@@ -165,6 +167,21 @@ export class RelayTestClient {
       return this.requestMailTrigger(url, init);
     }
 
+    if (url.hostname === 'agent-hook.example.com') {
+      this.wakeCallbacks.push({
+        body: JSON.parse(String(init?.body)),
+        signature: new Headers(init?.headers).get('x-nuwa-wake-signature'),
+      });
+
+      if (this.failNextWake) {
+        this.failNextWake = false;
+
+        return new Response(null, { status: 503 });
+      }
+
+      return new Response(null, { status: 204 });
+    }
+
     throw new Error(`Unexpected external request: ${url.toString()}`);
   }
 
@@ -198,6 +215,23 @@ export class RelayTestClient {
         method,
         headers,
         body: data === undefined ? undefined : JSON.stringify(data),
+      }),
+    );
+
+    return { status: response.status, body: await response.json() };
+  }
+
+  async callWithHeaders(
+    method: string,
+    path: string,
+    data: object,
+    headers: Record<string, string>,
+  ): Promise<{ status: number; body: any }> {
+    const response = await exports.default.fetch(
+      new Request(`${RelayTestClient.origin}${path}`, {
+        method,
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify(data),
       }),
     );
 
