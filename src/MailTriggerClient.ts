@@ -28,7 +28,7 @@ export class MailTriggerClient {
     this.routes = new MailTriggerRouteProvisioner({
       list: (path, code) => this.getRows(path, code),
       write: (method, path, body, code) => this.writeResource(method, path, body, code),
-    }, env.MAILTRIGGER_ROUTE_PROFILE);
+    });
   }
 
   private headers(): HeadersInit {

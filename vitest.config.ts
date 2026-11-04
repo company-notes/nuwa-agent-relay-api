@@ -14,14 +14,6 @@ export default defineConfig(async () => {
             TEST_MIGRATIONS: migrations,
             MAILTRIGGER_API_TOKEN: 'test-mailtrigger-token',
             MAILTRIGGER_MANAGED_DOMAIN: 'relay-test.example',
-            // Fixture IDs only; Swagger does not define numeric enum meanings.
-            MAILTRIGGER_ROUTE_PROFILE: JSON.stringify({
-              senderTarget: 1,
-              equalsRuleType: 1,
-              filterOption: 1,
-              ruleGroupId: 19,
-              smtpActionTemplateId: 17,
-            }),
             ALIAS_VERIFICATION_KEY: 'test-alias-verification-key',
             MAILTRIGGER_INBOUND_KEY: 'test-inbound-key',
             WAKE_ALLOWED_HOSTS: 'agent-hook.example.com',
