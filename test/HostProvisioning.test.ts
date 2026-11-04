@@ -49,7 +49,7 @@ describe('automatic managed SMTP provisioning', () => {
     await client.provisionBothHosts();
 
     expect(client.routes).toHaveLength(4);
-    expect(client.routes.filter((route) => route.name === 'SMTP to Origin')).toHaveLength(0);
+    expect(client.routes.filter((route) => route.name === 'SMTP to Origin Router')).toHaveLength(0);
     expect(client.routes.filter((route) => route.name === 'Relay to Origin')).toHaveLength(2);
     expect(client.routes.filter((route) => String(route.name).startsWith('NAR route '))).toHaveLength(2);
 
@@ -59,12 +59,39 @@ describe('automatic managed SMTP provisioning', () => {
     expect(client.routes).toHaveLength(4);
   });
 
+  it('also cleans up the legacy SMTP to Origin default for the same mailbox', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+
+    const first = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+    expect(first.status).toBe(201);
+
+    client.routes.push({
+      id: 901,
+      name: 'SMTP to Origin',
+      mailbox: 1,
+      ruleGroup: 1,
+      filterOption: 3,
+      ruleConfigs: [],
+      actions: [],
+      isActive: true,
+    });
+
+    const repaired = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+
+    expect(repaired.status).toBe(201);
+    expect(client.routes.some((route) => route.id === 901)).toBe(false);
+    expect(client.routes.find((route) => route.name === 'NAR route 1')?.isActive).toBe(true);
+  });
+
   it('keeps unrelated custom routes and another mailbox default untouched', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     client.routes.push({
       id: 100,
-      name: 'SMTP to Origin',
+      name: 'SMTP to Origin Router',
       mailbox: 9999,
       ruleGroup: 1,
       filterOption: 3,
@@ -112,7 +139,7 @@ describe('automatic managed SMTP provisioning', () => {
 
     expect(failure.status).toBe(502);
     expect(failure.body.error.code).toBe('mailtrigger_cleanup_failed');
-    expect(client.routes.some((route) => route.name === 'SMTP to Origin')).toBe(true);
+    expect(client.routes.some((route) => route.name === 'SMTP to Origin Router')).toBe(true);
 
     const paired = await env.DB.prepare(
       'SELECT mailbox_id FROM paired_hosts WHERE host_address_id = ?',
@@ -122,7 +149,7 @@ describe('automatic managed SMTP provisioning', () => {
     const retry = await client.call('token-a', 'POST',
       '/v1/hosts/provision?work_address_id=work-a');
     expect(retry.status).toBe(201);
-    expect(client.routes.some((route) => route.name === 'SMTP to Origin')).toBe(false);
+    expect(client.routes.some((route) => route.name === 'SMTP to Origin Router')).toBe(false);
   });
 
   it('refuses ambiguous or Nuwa-linked SMTP to Origin routes without deleting them', async () => {
@@ -135,7 +162,7 @@ describe('automatic managed SMTP provisioning', () => {
     const managed = client.routes.find((route) => route.name === 'NAR route 1')!;
     client.routes.push({
       id: 900,
-      name: 'SMTP to Origin',
+      name: 'SMTP to Origin Router',
       mailbox: 1,
       ruleGroup: 1,
       filterOption: 1,
@@ -165,7 +192,7 @@ describe('automatic managed SMTP provisioning', () => {
       '/v1/hosts/provision?work_address_id=work-a');
     expect(ambiguous.status).toBe(502);
     expect(ambiguous.body.error.code).toBe('mailtrigger_origin_route_ambiguous');
-    expect(client.routes.filter((route) => route.name === 'SMTP to Origin')).toHaveLength(2);
+    expect(client.routes.filter((route) => ['SMTP to Origin', 'SMTP to Origin Router'].includes(String(route.name)))).toHaveLength(2);
   });
 
   it('re-provisioning a Host reuses resources and repairs a missing or disabled route', async () => {

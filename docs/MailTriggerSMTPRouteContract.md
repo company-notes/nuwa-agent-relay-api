@@ -61,7 +61,8 @@ Calling `POST /v1/hosts/provision` now:
    recording a new Host in D1.
 6. Rechecks and repairs missing/disabled routes for existing Hosts.
 7. Once the NAR SMTP Route is verified active, looks for the provider-default
-   **`SMTP to Origin`** Route attached to this **exact mailbox**. If present,
+   **`SMTP to Origin Router`** Route (or the legacy name
+   **`SMTP to Origin`**) attached to this **exact mailbox**. If present,
    deletes only that default and reads Routes back to confirm its removal.
    Does not delete `Relay to Origin` or unrelated/custom Routes. Duplicate
    matching defaults, incomplete provider listings, conflicting NAR resource

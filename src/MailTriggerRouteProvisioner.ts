@@ -256,6 +256,12 @@ export class MailTriggerRouteProvisioner {
    * Never touch "Relay to Origin", user-named routes, or routes referencing
    * Nuwa's own Rule/Action. Fail closed on duplicates/truncated lists.
    */
+  // MailTrigger currently uses "SMTP to Origin Router". Older provider
+  // versions use "SMTP to Origin"; require one of these exact names.
+  private static isDefaultSMTPToOriginName(value: unknown): boolean {
+    return value === 'SMTP to Origin Router' || value === 'SMTP to Origin';
+  }
+
   private async removeDefaultSMTPToOrigin(
     mailboxId: number,
     ruleId: number,
@@ -271,7 +277,7 @@ export class MailTriggerRouteProvisioner {
         'MailTrigger route listing may be truncated; cannot safely remove an origin route.');
     }
 
-    const matches = rows.filter((route) => route.name === 'SMTP to Origin' &&
+    const matches = rows.filter((route) => MailTriggerRouteProvisioner.isDefaultSMTPToOriginName(route.name) &&
       MailTriggerRouteProvisioner.positiveId(route.mailbox) === mailboxId);
 
     if (matches.length > 1) {
@@ -298,7 +304,7 @@ export class MailTriggerRouteProvisioner {
     // A DELETE 204/404 is not sufficient proof that the default route is gone.
     const after = await this.resources.list(path, code);
 
-    if (after.length >= 1000 || after.some((route) => route.name === 'SMTP to Origin' &&
+    if (after.length >= 1000 || after.some((route) => MailTriggerRouteProvisioner.isDefaultSMTPToOriginName(route.name) &&
       MailTriggerRouteProvisioner.positiveId(route.mailbox) === mailboxId)) {
       throw new APIError(502, 'mailtrigger_origin_route_not_removed',
         'The default SMTP to Origin route still exists after deletion.');
