@@ -28,6 +28,7 @@ export class MailTriggerClient {
     this.routes = new MailTriggerRouteProvisioner({
       list: (path, code) => this.getRows(path, code),
       write: (method, path, body, code) => this.writeResource(method, path, body, code),
+      delete: (kind, id) => this.deleteResource(kind, id),
     });
   }
 
@@ -91,6 +92,21 @@ export class MailTriggerClient {
     }
 
     return data as Record<string, unknown>;
+  }
+
+  private async deleteResource(
+    kind: 'rules' | 'actions' | 'routes',
+    id: number,
+  ): Promise<void> {
+    const response = await fetch(this.url('/api/v1/' + kind + '/' + id + '/'), {
+      method: 'DELETE',
+      headers: this.headers(),
+    });
+
+    if (![200, 204, 404].includes(response.status)) {
+      throw new APIError(502, 'mailtrigger_cleanup_failed',
+        'MailTrigger rejected managed resource deletion (HTTP ' + response.status + ').');
+    }
   }
 
   async ensureManagedSMTPRoute(mailbox: ManagedMailbox): Promise<void> {
@@ -225,7 +241,19 @@ export class MailTriggerClient {
     const details = await fetch(url, { headers: this.headers() });
 
     if (details.status === 404) {
-      // Remote cleanup already completed in a previous partial attempt.
+      // Retry cleanup of NAR resources after a partially completed mailbox delete.
+      if (!Number.isSafeInteger(domain.user) || (domain.user ?? 0) < 1) {
+        throw new APIError(503, 'mailtrigger_owner_missing',
+          'Cannot verify routing ownership for a missing mailbox.');
+      }
+
+      await this.routes.cleanupForMailbox({
+        mailboxId,
+        mailboxEmail: expectedUsername + '@' +
+          this.env.MAILTRIGGER_MANAGED_DOMAIN!.trim().toLowerCase(),
+        created: false,
+      }, domain.user!);
+
       return;
     }
 
@@ -245,6 +273,18 @@ export class MailTriggerClient {
       throw new APIError(409, 'mailbox_mismatch',
         'Refusing to delete a MailTrigger mailbox that does not exactly match this Host.');
     }
+
+    if (!Number.isSafeInteger(domain.user) || (domain.user ?? 0) < 1) {
+      throw new APIError(503, 'mailtrigger_owner_missing',
+        'Cannot safely remove routing resources without their owner ID.');
+    }
+
+    await this.routes.cleanupForMailbox({
+      mailboxId,
+      mailboxEmail: expectedUsername + '@' +
+        this.env.MAILTRIGGER_MANAGED_DOMAIN!.trim().toLowerCase(),
+      created: false,
+    }, domain.user!);
 
     const response = await fetch(url, {
       method: 'DELETE',

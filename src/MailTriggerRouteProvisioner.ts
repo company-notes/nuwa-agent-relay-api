@@ -5,6 +5,7 @@ type Resource = Record<string, unknown>;
 
 export type MailTriggerResources = {
   list(path: string, code: string): Promise<Resource[]>;
+  delete(kind: 'rules' | 'actions' | 'routes', id: number): Promise<void>;
   write(
     method: 'POST' | 'PATCH',
     path: string,
@@ -151,6 +152,94 @@ export class MailTriggerRouteProvisioner {
       !MailTriggerRouteProvisioner.includesID(route.actions, actionId)) {
       throw new APIError(502, 'mailtrigger_route_mismatch',
         'The managed Route does not link its mailbox, Rule, Action, and rule group.');
+    }
+  }
+
+  /**
+   * Delete only resources with deterministic NAR names and exact ownership.
+   * The provider's internal mailbox user is deliberately not deleted: the
+   * public API does not expose a safe ownership-checked user deletion method.
+   */
+  async cleanupForMailbox(mailbox: ManagedMailbox, ownerId: number): Promise<void> {
+    const mailboxId = MailTriggerRouteProvisioner.positiveId(mailbox.mailboxId);
+    const rule = await this.named('rules', 'note', 'NAR sender ' + mailbox.mailboxId);
+    const action = await this.named('actions', 'name', 'NAR SMTP ' + mailbox.mailboxId);
+    const route = await this.named('routes', 'name', 'NAR route ' + mailbox.mailboxId);
+
+    if (!rule && !action && !route) {
+      return;
+    }
+
+    const templateId = await this.relaySMTPTemplate();
+    const pattern = MailTriggerRouteProvisioner.senderRegex(mailbox.mailboxEmail);
+
+    if (rule && (rule.user !== ownerId || rule.target !== 1 ||
+      rule.ruleType !== 1 || rule.value !== pattern)) {
+      throw new APIError(409, 'mailtrigger_cleanup_rule_mismatch',
+        'Refusing to remove a managed Rule with unexpected ownership or pattern.');
+    }
+
+    if (action && (action.user !== ownerId || action.action !== templateId)) {
+      throw new APIError(409, 'mailtrigger_cleanup_action_mismatch',
+        'Refusing to remove a managed Action that does not belong to this Host.');
+    }
+
+    const ruleId = rule ? MailTriggerRouteProvisioner.positiveId(rule.id) : null;
+    const actionId = action ? MailTriggerRouteProvisioner.positiveId(action.id) : null;
+
+    if (route) {
+      if (ruleId === null || actionId === null) {
+        throw new APIError(409, 'mailtrigger_cleanup_route_mismatch',
+          'The managed Route references resources that cannot be verified.');
+      }
+
+      MailTriggerRouteProvisioner.validateRoute(route, mailboxId, ruleId, actionId);
+    }
+
+    // Rule/Action configs must not be removed while some other Route uses them.
+    const allRoutes = await this.resources.list(
+      '/api/v1/routes/?page_size=1000', 'mailtrigger_route_lookup_failed',
+    );
+
+    if (allRoutes.length >= 1000) {
+      throw new APIError(502, 'mailtrigger_cleanup_incomplete',
+        'The Route list may be truncated; refusing an unsafe cleanup.');
+    }
+
+    for (const candidate of allRoutes) {
+      if (route && MailTriggerRouteProvisioner.positiveId(candidate.id) ===
+        MailTriggerRouteProvisioner.positiveId(route.id)) {
+        continue;
+      }
+
+      if ((ruleId !== null && MailTriggerRouteProvisioner.includesID(candidate.ruleConfigs, ruleId)) ||
+        (actionId !== null && MailTriggerRouteProvisioner.includesID(candidate.actions, actionId))) {
+        throw new APIError(409, 'mailtrigger_cleanup_shared_resource',
+          'Another Route references the managed Rule or Action.');
+      }
+    }
+
+    if (route) {
+      await this.resources.delete('routes', MailTriggerRouteProvisioner.positiveId(route.id));
+    }
+
+    if (action) {
+      await this.resources.delete('actions', actionId!);
+    }
+
+    if (rule) {
+      await this.resources.delete('rules', ruleId!);
+    }
+
+    const remaining = await Promise.all([
+      this.named('routes', 'name', 'NAR route ' + mailbox.mailboxId),
+      this.named('actions', 'name', 'NAR SMTP ' + mailbox.mailboxId),
+      this.named('rules', 'note', 'NAR sender ' + mailbox.mailboxId),
+    ]);
+
+    if (remaining.some((row) => row !== null)) {
+      throw new APIError(502, 'mailtrigger_cleanup_incomplete',
+        'Managed routing resources remain after deletion.');
     }
   }
 

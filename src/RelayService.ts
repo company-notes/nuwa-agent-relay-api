@@ -198,7 +198,9 @@ export class RelayService {
       cleaned: true,
       hostId: host,
       mailboxRemoved: Boolean(existing),
-      scope: 'This smoke Host MailTrigger mailbox and Relay D1 records only',
+      managedRoutingChecked: Boolean(existing),
+      providerUserCleanup: 'not_verified',
+      scope: 'This smoke Host managed routing, mailbox, and Relay D1 records only',
     };
   }
 
