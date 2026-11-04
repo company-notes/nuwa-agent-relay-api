@@ -14,19 +14,20 @@ describe('automatic managed SMTP provisioning', () => {
     expect(client.routes).toHaveLength(2);
 
     for (const route of client.routes) {
-      const mailbox = client.rules.find((rule) => rule.id === (route.rules as number[])[0]);
+      const mailbox = client.rules.find((rule) => rule.id === (route.ruleConfigs as number[])[0]);
       const action = client.actions.find((candidate) => candidate.id === (route.actions as number[])[0]);
 
       expect(mailbox).toMatchObject({
-        target: 'sender',
-        ruleType: 'equals',
+        target: 1,
+        ruleType: 1,
+        user: 31,
       });
       expect((mailbox?.value as string)).toMatch(/^nar-host[a-b]@relay-test\.example$/);
-      expect(action).toMatchObject({ actionType: 'mailtrigger_smtp' });
+      expect(action).toMatchObject({ action: 17, user: 31 });
       expect(route).toMatchObject({
-        isEnabled: true,
-        mailFilterOption: 'all',
-        executionMechanism: 'sequential',
+        isActive: true,
+        filterOption: 1,
+        ruleGroup: 19,
       });
     }
   });
@@ -51,16 +52,16 @@ describe('automatic managed SMTP provisioning', () => {
     expect(client.actions).toHaveLength(2);
     expect(client.routes).toHaveLength(2);
 
-    const damaged = client.routes.find((route) => route.mailbox === '1');
+    const damaged = client.routes.find((route) => route.mailbox === 1);
 
     expect(damaged).toBeDefined();
 
-    damaged!.isEnabled = false;
+    damaged!.isActive = false;
 
     const repaired = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
 
     expect(repaired.status).toBe(201);
-    expect(damaged!.isEnabled).toBe(true);
+    expect(damaged!.isActive).toBe(true);
   });
 
   it('does not persist Host readiness when route creation fails, and retries safely', async () => {
@@ -90,6 +91,19 @@ describe('automatic managed SMTP provisioning', () => {
     expect(client.rules).toHaveLength(1);
     expect(client.actions).toHaveLength(1);
     expect(client.routes).toHaveLength(1);
+  });
+
+  it('rejects an action template that is not MailTrigger SMTP', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    client.templates[0].displayName = 'SMTP to Origin';
+    client.templates[0].actionName = 'SMTPOrigin';
+
+    const invalid = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+
+    expect(invalid.status).toBe(503);
+    expect(invalid.body.error.code).toBe('mailtrigger_smtp_template_invalid');
+    expect(client.routes).toHaveLength(0);
   });
 
   it('does not report an existing Host ready if the upstream Route cannot be checked', async () => {

@@ -18,6 +18,12 @@ export class RelayTestClient {
   readonly deliveries: Array<{ to: string[]; subject: string; body: string }> = [];
   readonly rules: Array<Record<string, unknown>> = [];
   readonly actions: Array<Record<string, unknown>> = [];
+  readonly templates: Array<Record<string, unknown>> = [{
+    id: 17,
+    actionName: 'MailTriggerSMTP',
+    displayName: 'MailTrigger SMTP',
+    isActive: true,
+  }];
   readonly routes: Array<Record<string, unknown>> = [];
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
@@ -123,6 +129,10 @@ export class RelayTestClient {
   }
 
   private requestRoutingResource(url: URL, init?: RequestInit): Response | null {
+    if (url.pathname === '/api/v1/action-templates/' && !init?.method) {
+      return Response.json(this.templates);
+    }
+
     const collections: Record<string, Array<Record<string, unknown>>> = {
       '/api/v1/rules/': this.rules,
       '/api/v1/actions/': this.actions,
@@ -149,6 +159,31 @@ export class RelayTestClient {
         }
 
         const value = JSON.parse(String(init.body)) as Record<string, unknown>;
+
+        // Match the uploaded Swagger 2.0 serializer instead of accepting
+        // arbitrary JSON that a real MailTrigger API would reject.
+        if (url.pathname === '/api/v1/rules/' &&
+          (!Number.isInteger(value.target) || !Number.isInteger(value.ruleType) ||
+            typeof value.value !== 'string' || !Number.isInteger(value.user) ||
+            typeof value.note !== 'string' || 'name' in value)) {
+          return Response.json({ error: 'Invalid Rule serializer' }, { status: 400 });
+        }
+
+        if (url.pathname === '/api/v1/actions/' &&
+          (typeof value.name !== 'string' || !Number.isInteger(value.user) ||
+            !Number.isInteger(value.action) || 'actionType' in value ||
+            'parameters' in value)) {
+          return Response.json({ error: 'Invalid Action serializer' }, { status: 400 });
+        }
+
+        if (url.pathname === '/api/v1/routes/' &&
+          (!Number.isInteger(value.filterOption) || !Number.isInteger(value.mailbox) ||
+            !Number.isInteger(value.ruleGroup) || !Array.isArray(value.ruleConfigs) ||
+            !Array.isArray(value.actions) || typeof value.isActive !== 'boolean' ||
+            'rules' in value || 'isEnabled' in value || 'mailFilterOption' in value)) {
+          return Response.json({ error: 'Invalid Route serializer' }, { status: 400 });
+        }
+
         const nextId = Math.max(0, ...collection.map((entry) => Number(entry.id))) + 1;
         const row = { id: nextId, ...value };
         collection.push(row);
@@ -182,7 +217,7 @@ export class RelayTestClient {
     }
 
     if (url.pathname === '/api/v1/domains/') {
-      return Response.json([{ id: 1, domainName: 'relay-test.example', isVerified: true }]);
+      return Response.json([{ id: 1, domainName: 'relay-test.example', isVerified: true, user: 31 }]);
     }
 
     if (url.pathname === '/api/v1/mailbox/' && init?.method === 'POST') {
