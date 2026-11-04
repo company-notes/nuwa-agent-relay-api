@@ -53,7 +53,7 @@ npm run smoke:cleanup
 
 清理前須確認本次 Run ID。程式會核對臨時 Work 的 Organization、Parent Host、ID 和帶 Run ID 的名稱，只撤銷本次建立的 Work。全部成功後會封存狀態檔，並移除本機儲存的 OAuth 憑證（需要保留登入時可設定 `RELAY_SMOKE_KEEP_LOGIN=1`）。**本機刪檔不等於撤銷遠端 OAuth Grant／Token**，仍須遵守服務端的權杖有效期與撤銷機制。若中途失敗，狀態檔與 Token 會保留，以便安全重試。
 
-**清理限制：** 目前 Agent Address 沒有 OAuth Account API 來安全刪除 Host 或 Organization；Relay／MailTrigger 也沒有相應的刪除管理 API。本工具**不會刪除**已建立的 Host、Organization、Mailbox、D1 Thread 或 Message。請在測試隔離的帳號／MailTrigger 網域使用，不要假設 Cleanup 是完整遠端資料清除。
+**清理限制：** 最新流程僅會清除精確符合本次 `relay-smoke-<runId>-a/b` 的新建 Host／Work、對應的 MailTrigger mailbox、Nuwa 管理的 Route／Action／Rule 與 Relay D1 記錄。已有的 Organization、非本次測試建立的 Host／Work，以及其他 Route 均不得刪除。MailTrigger 在建立 mailbox 時可能額外建立 Rule、Action Config 或使用者；其中無法證明獨佔的資源不會自動刪除，必須對測試帳號另外做孤兒資源稽核。Cleanup 失敗會保留狀態與 D1 記錄以利重試，請勿直接刪除本機狀態檔。
 
 如果只執行了 Login、還沒有任何 Setup，也可以使用 `npm run smoke:logout` 清除本機 OAuth 檔案；它不會操作遠端 Work／Host，也不會撤銷遠端 OAuth Token。
 
