@@ -42,6 +42,132 @@ describe('automatic managed SMTP provisioning', () => {
     expect(client.routeCreationBodies.every((body) => !('ruleGroup' in body))).toBe(true);
   });
 
+  it('removes only SMTP to Origin defaults after verifying each managed Route', async () => {
+    const client = new RelayTestClient();
+    client.providerCreatesOriginRoutes = true;
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    expect(client.routes).toHaveLength(4);
+    expect(client.routes.filter((route) => route.name === 'SMTP to Origin')).toHaveLength(0);
+    expect(client.routes.filter((route) => route.name === 'Relay to Origin')).toHaveLength(2);
+    expect(client.routes.filter((route) => String(route.name).startsWith('NAR route '))).toHaveLength(2);
+
+    const again = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+    expect(again.status).toBe(201);
+    expect(client.routes).toHaveLength(4);
+  });
+
+  it('keeps unrelated custom routes and another mailbox default untouched', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    client.routes.push({
+      id: 100,
+      name: 'SMTP to Origin',
+      mailbox: 9999,
+      ruleGroup: 1,
+      filterOption: 3,
+      ruleConfigs: [],
+      actions: [],
+      isActive: true,
+    });
+    client.routes.push({
+      id: 101,
+      name: 'smtp to origin',
+      mailbox: 1,
+      ruleGroup: 1,
+      filterOption: 3,
+      ruleConfigs: [],
+      actions: [],
+      isActive: true,
+    });
+    client.routes.push({
+      id: 102,
+      name: 'Custom outbound route',
+      mailbox: 1,
+      ruleGroup: 1,
+      filterOption: 3,
+      ruleConfigs: [],
+      actions: [],
+      isActive: true,
+    });
+
+    const created = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+
+    expect(created.status).toBe(201);
+    expect(client.routes.map((route) => route.id)).toEqual(expect.arrayContaining([100, 101, 102]));
+  });
+
+  it('keeps Host unready if removing the default origin Route fails, and can retry', async () => {
+    const client = new RelayTestClient();
+    client.providerCreatesOriginRoutes = true;
+    client.installExternalTestTransport();
+    await env.DB.prepare('DELETE FROM paired_hosts WHERE host_address_id = ?').bind('host-a').run();
+    client.failNextRouteDeletion = true;
+
+    const failure = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+
+    expect(failure.status).toBe(502);
+    expect(failure.body.error.code).toBe('mailtrigger_cleanup_failed');
+    expect(client.routes.some((route) => route.name === 'SMTP to Origin')).toBe(true);
+
+    const paired = await env.DB.prepare(
+      'SELECT mailbox_id FROM paired_hosts WHERE host_address_id = ?',
+    ).bind('host-a').first();
+    expect(paired).toBeNull();
+
+    const retry = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+    expect(retry.status).toBe(201);
+    expect(client.routes.some((route) => route.name === 'SMTP to Origin')).toBe(false);
+  });
+
+  it('refuses ambiguous or Nuwa-linked SMTP to Origin routes without deleting them', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const initial = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+    expect(initial.status).toBe(201);
+
+    const managed = client.routes.find((route) => route.name === 'NAR route 1')!;
+    client.routes.push({
+      id: 900,
+      name: 'SMTP to Origin',
+      mailbox: 1,
+      ruleGroup: 1,
+      filterOption: 1,
+      ruleConfigs: managed.ruleConfigs,
+      actions: managed.actions,
+      isActive: true,
+    });
+
+    const protectedResult = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+    expect(protectedResult.status).toBe(409);
+    expect(protectedResult.body.error.code).toBe('mailtrigger_origin_route_conflict');
+    expect(client.routes.find((route) => route.id === 900)).toBeDefined();
+
+    client.routes.push({
+      id: 901,
+      name: 'SMTP to Origin',
+      mailbox: 1,
+      ruleGroup: 1,
+      filterOption: 3,
+      ruleConfigs: [],
+      actions: [],
+      isActive: true,
+    });
+
+    const ambiguous = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+    expect(ambiguous.status).toBe(502);
+    expect(ambiguous.body.error.code).toBe('mailtrigger_origin_route_ambiguous');
+    expect(client.routes.filter((route) => route.name === 'SMTP to Origin')).toHaveLength(2);
+  });
+
   it('re-provisioning a Host reuses resources and repairs a missing or disabled route', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
