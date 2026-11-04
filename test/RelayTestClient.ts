@@ -36,6 +36,7 @@ export class RelayTestClient {
   failNextRouteCreation = false;
   failNextRouteLookup = false;
   failNextRouteDeletion = false;
+  providerCreatesOriginRoutes = false;
   failNextActionDeletion = false;
 
   private readonly hostA: AgentAddress = {
@@ -267,6 +268,32 @@ export class RelayTestClient {
       };
 
       this.mailboxes.push(mailbox);
+
+      if (this.providerCreatesOriginRoutes) {
+        // MailTrigger's mailbox provisioning can create multiple defaults
+        // before Nuwa's own SMTP route is configured.
+        const next = Math.max(0, ...this.routes.map((route) => Number(route.id))) + 1;
+        this.routes.push({
+          id: next,
+          name: 'SMTP to Origin',
+          mailbox: mailbox.id,
+          ruleGroup: 1,
+          filterOption: 3,
+          ruleConfigs: [],
+          actions: [],
+          isActive: true,
+        });
+        this.routes.push({
+          id: next + 1,
+          name: 'Relay to Origin',
+          mailbox: mailbox.id,
+          ruleGroup: 1,
+          filterOption: 3,
+          ruleConfigs: [],
+          actions: [],
+          isActive: true,
+        });
+      }
 
       return Response.json(mailbox, { status: 201 });
     }

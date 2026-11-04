@@ -248,6 +248,63 @@ export class MailTriggerRouteProvisioner {
     }
   }
 
+  /**
+   * The provider may create an external SMTP-to-Origin route alongside its
+   * mailbox. It is unsuitable for a fully MailTrigger-managed domain.
+   *
+   * Delete only the exactly named provider default attached to THIS mailbox.
+   * Never touch "Relay to Origin", user-named routes, or routes referencing
+   * Nuwa's own Rule/Action. Fail closed on duplicates/truncated lists.
+   */
+  private async removeDefaultSMTPToOrigin(
+    mailboxId: number,
+    ruleId: number,
+    actionId: number,
+    managedRouteId: number,
+  ): Promise<void> {
+    const path = '/api/v1/routes/?page_size=1000';
+    const code = 'mailtrigger_origin_route_lookup_failed';
+    const rows = await this.resources.list(path, code);
+
+    if (rows.length >= 1000) {
+      throw new APIError(502, 'mailtrigger_origin_route_ambiguous',
+        'MailTrigger route listing may be truncated; cannot safely remove an origin route.');
+    }
+
+    const matches = rows.filter((route) => route.name === 'SMTP to Origin' &&
+      MailTriggerRouteProvisioner.positiveId(route.mailbox) === mailboxId);
+
+    if (matches.length > 1) {
+      throw new APIError(502, 'mailtrigger_origin_route_ambiguous',
+        'Multiple SMTP to Origin routes belong to this mailbox; refusing ambiguous deletion.');
+    }
+
+    if (matches.length === 0) {
+      return;
+    }
+
+    const defaultRoute = matches[0];
+    const defaultId = MailTriggerRouteProvisioner.positiveId(defaultRoute.id);
+
+    if (defaultId === managedRouteId ||
+      MailTriggerRouteProvisioner.includesID(defaultRoute.ruleConfigs, ruleId) ||
+      MailTriggerRouteProvisioner.includesID(defaultRoute.actions, actionId)) {
+      throw new APIError(409, 'mailtrigger_origin_route_conflict',
+        'SMTP to Origin route refers to Nuwa-managed resources; refusing to delete it.');
+    }
+
+    await this.resources.delete('routes', defaultId);
+
+    // A DELETE 204/404 is not sufficient proof that the default route is gone.
+    const after = await this.resources.list(path, code);
+
+    if (after.length >= 1000 || after.some((route) => route.name === 'SMTP to Origin' &&
+      MailTriggerRouteProvisioner.positiveId(route.mailbox) === mailboxId)) {
+      throw new APIError(502, 'mailtrigger_origin_route_not_removed',
+        'The default SMTP to Origin route still exists after deletion.');
+    }
+  }
+
   async ensureForMailbox(mailbox: ManagedMailbox, ownerId: number): Promise<void> {
     const mailboxId = MailTriggerRouteProvisioner.positiveId(mailbox.mailboxId);
     const templateId = await this.relaySMTPTemplate();
@@ -293,5 +350,11 @@ export class MailTriggerRouteProvisioner {
       throw new APIError(502, 'mailtrigger_route_unavailable',
         'The managed SMTP Route is inactive.');
     }
+
+    // Ready only when the built-in SMTP path is verified and the conflicting
+    // external-origin default for this same mailbox has been removed.
+    await this.removeDefaultSMTPToOrigin(
+      mailboxId, ruleId, actionId, MailTriggerRouteProvisioner.positiveId(verified.id),
+    );
   }
 }
