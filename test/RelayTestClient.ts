@@ -16,12 +16,17 @@ export class RelayTestClient {
 
   private readonly mailboxes: Array<{ id: number; username: string; userDomain: number }> = [];
   readonly deliveries: Array<{ to: string[]; subject: string; body: string }> = [];
+  readonly rules: Array<Record<string, unknown>> = [];
+  readonly actions: Array<Record<string, unknown>> = [];
+  readonly routes: Array<Record<string, unknown>> = [];
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
 
   failNextMail = false;
   failNextWake = false;
   failAddressStatus = false;
+  failNextRouteCreation = false;
+  failNextRouteLookup = false;
 
   private readonly hostA: AgentAddress = {
     id: 'host-a',
@@ -117,7 +122,64 @@ export class RelayTestClient {
     throw new Error(`Unexpected Agent Address request: ${url.pathname}`);
   }
 
+  private requestRoutingResource(url: URL, init?: RequestInit): Response | null {
+    const collections: Record<string, Array<Record<string, unknown>>> = {
+      '/api/v1/rules/': this.rules,
+      '/api/v1/actions/': this.actions,
+      '/api/v1/routes/': this.routes,
+    };
+    const collection = collections[url.pathname];
+
+    if (collection) {
+      if (!init?.method) {
+        if (url.pathname === '/api/v1/routes/' && this.failNextRouteLookup) {
+          this.failNextRouteLookup = false;
+
+          return new Response(null, { status: 503 });
+        }
+
+        return Response.json(collection);
+      }
+
+      if (init.method === 'POST') {
+        if (url.pathname === '/api/v1/routes/' && this.failNextRouteCreation) {
+          this.failNextRouteCreation = false;
+
+          return new Response(null, { status: 503 });
+        }
+
+        const value = JSON.parse(String(init.body)) as Record<string, unknown>;
+        const row = { id: collection.length + 1, ...value };
+        collection.push(row);
+
+        return Response.json(row, { status: 201 });
+      }
+    }
+
+    const route = url.pathname.match(/^\/api\/v1\/routes\/(\d+)\/$/);
+
+    if (route && init?.method === 'PATCH') {
+      const existing = this.routes.find((entry) => String(entry.id) === route[1]);
+
+      if (!existing) {
+        return new Response(null, { status: 404 });
+      }
+
+      Object.assign(existing, JSON.parse(String(init.body)));
+
+      return Response.json(existing);
+    }
+
+    return null;
+  }
+
   private requestMailTrigger(url: URL, init?: RequestInit): Response {
+    const routingResponse = this.requestRoutingResource(url, init);
+
+    if (routingResponse) {
+      return routingResponse;
+    }
+
     if (url.pathname === '/api/v1/domains/') {
       return Response.json([{ id: 1, domainName: 'relay-test.example', isVerified: true }]);
     }
