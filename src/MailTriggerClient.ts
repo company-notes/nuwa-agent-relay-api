@@ -1,5 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
+import { MailTriggerRouteProvisioner } from './MailTriggerRouteProvisioner';
 
 export type ManagedMailbox = {
   mailboxId: string;
@@ -20,7 +21,14 @@ type MailboxRow = {
 };
 
 export class MailTriggerClient {
-  constructor(private readonly env: Env) {}
+  private readonly routes: MailTriggerRouteProvisioner;
+
+  constructor(private readonly env: Env) {
+    this.routes = new MailTriggerRouteProvisioner({
+      list: (path, code) => this.getRows(path, code),
+      write: (method, path, body, code) => this.writeResource(method, path, body, code),
+    });
+  }
 
   private headers(): HeadersInit {
     if (!this.env.MAILTRIGGER_API_TOKEN) {
@@ -57,6 +65,35 @@ export class MailTriggerClient {
     return rows.filter((row): row is Record<string, unknown> => (
       row !== null && typeof row === 'object' && !Array.isArray(row)
     ));
+  }
+
+  private async writeResource(
+    method: 'POST' | 'PATCH',
+    path: string,
+    body: Record<string, unknown>,
+    code: string,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(this.url(path), {
+      method,
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new APIError(502, code, `MailTrigger resource write failed (HTTP ${response.status}).`);
+    }
+
+    const data: unknown = await response.json();
+
+    if (!data || typeof data !== 'object' || Array.isArray(data) || !('id' in data)) {
+      throw new APIError(502, code, 'MailTrigger did not return a resource ID.');
+    }
+
+    return data as Record<string, unknown>;
+  }
+
+  async ensureManagedSMTPRoute(mailbox: ManagedMailbox): Promise<void> {
+    await this.routes.ensureForMailbox(mailbox);
   }
 
   private async verifiedDomain(): Promise<DomainRow> {

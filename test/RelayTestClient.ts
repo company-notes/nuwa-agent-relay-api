@@ -149,7 +149,8 @@ export class RelayTestClient {
         }
 
         const value = JSON.parse(String(init.body)) as Record<string, unknown>;
-        const row = { id: collection.length + 1, ...value };
+        const nextId = Math.max(0, ...collection.map((entry) => Number(entry.id))) + 1;
+        const row = { id: nextId, ...value };
         collection.push(row);
 
         return Response.json(row, { status: 201 });

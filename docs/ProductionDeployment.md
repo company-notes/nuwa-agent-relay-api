@@ -18,7 +18,7 @@ Never reuse an existing Agent Address or legacy service D1 database, and never c
 2. Confirm that D1 migrations ran on the new relay database.
 3. Verify the Cloudflare Worker has both uploaded secrets.
 4. With a real Agent Address OAuth token and active work ID, call the authenticated API.
-5. Verify MailTrigger mailbox provisioning and an actual message delivery with a dedicated test mailbox before accepting real work.
+5. Verify Host provisioning creates the built-in MailTrigger SMTP action and enabled sender-specific Route (not SMTP-to-Origin), then test actual message delivery using dedicated test mailboxes.
 6. Verify that unverified email / platform aliases cannot route messages.
 7. Enable `RELAY_DEPLOY_ENABLED=true` for subsequent verified push-to-main deployments.
 

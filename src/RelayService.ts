@@ -103,6 +103,17 @@ export class RelayService {
         WHERE org_id = ? AND host_address_id = ?`,
     ).bind(this.identity.organization.id, hostId).first<HostRow>();
 
+    const created = await this.mail.ensureManagedMailbox(RelayService.mailboxUsername(hostId));
+
+    if (existing && (existing.mailbox_id !== created.mailboxId ||
+      existing.mailbox_email !== created.mailboxEmail)) {
+      throw new APIError(409, 'mailbox_mismatch',
+        'The stored Host mailbox does not match the remote managed mailbox.');
+    }
+
+    // Re-provision existing Hosts too: their managed delivery route may be missing.
+    await this.mail.ensureManagedSMTPRoute(created);
+
     if (existing) {
       return {
         mailboxId: existing.mailbox_id,
@@ -110,8 +121,6 @@ export class RelayService {
         created: false,
       };
     }
-
-    const created = await this.mail.ensureManagedMailbox(RelayService.mailboxUsername(hostId));
 
     await this.env.DB.prepare(
       `INSERT OR IGNORE INTO paired_hosts
