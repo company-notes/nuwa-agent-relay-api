@@ -91,7 +91,7 @@ export class MailTriggerRouteProvisioner {
     field: 'note' | 'name',
     name: string,
   ): Promise<Resource | null> {
-    const code = `mailtrigger_${kind}_lookup_failed`;
+    const code = `mailtrigger_${kind === 'routes' ? 'route' : kind}_lookup_failed`;
     const rows = await this.resources.list(`/api/v1/${kind}/?page_size=1000`, code);
     const matches = rows.filter((row) => row[field] === name);
 
