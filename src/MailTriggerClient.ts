@@ -12,6 +12,7 @@ type DomainRow = {
   id: string | number;
   domainName?: string;
   isVerified?: boolean;
+  user?: number;
 };
 
 type MailboxRow = {
@@ -27,7 +28,7 @@ export class MailTriggerClient {
     this.routes = new MailTriggerRouteProvisioner({
       list: (path, code) => this.getRows(path, code),
       write: (method, path, body, code) => this.writeResource(method, path, body, code),
-    });
+    }, env.MAILTRIGGER_ROUTE_PROFILE);
   }
 
   private headers(): HeadersInit {
@@ -93,7 +94,14 @@ export class MailTriggerClient {
   }
 
   async ensureManagedSMTPRoute(mailbox: ManagedMailbox): Promise<void> {
-    await this.routes.ensureForMailbox(mailbox);
+    const domain = await this.verifiedDomain();
+
+    if (!Number.isSafeInteger(domain.user) || (domain.user ?? 0) < 1) {
+      throw new APIError(503, 'mailtrigger_owner_missing',
+        'The managed domain must expose its provider user ID.');
+    }
+
+    await this.routes.ensureForMailbox(mailbox, domain.user!);
   }
 
   private async verifiedDomain(): Promise<DomainRow> {
