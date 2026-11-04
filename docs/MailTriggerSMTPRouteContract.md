@@ -60,7 +60,13 @@ Calling `POST /v1/hosts/provision` now:
    exact single Rule/Action links, filter mode and active state before
    recording a new Host in D1.
 6. Rechecks and repairs missing/disabled routes for existing Hosts.
-   Fails closed on ambiguous or conflicting named resources.
+7. Once the NAR SMTP Route is verified active, looks for the provider-default
+   **`SMTP to Origin`** Route attached to this **exact mailbox**. If present,
+   deletes only that default and reads Routes back to confirm its removal.
+   Does not delete `Relay to Origin` or unrelated/custom Routes. Duplicate
+   matching defaults, incomplete provider listings, conflicting NAR resource
+   references and deletion failures fail provisioning rather than silently
+   marking a new Host ready.
 
 No account-wide `MAILTRIGGER_ROUTE_PROFILE` is required. In particular,
 the temporary staging template ID `21` and Rule Group ID `1` are **not**
@@ -102,4 +108,12 @@ test doubles, but is not a live MailTrigger integration test.
   Config/User records. Do not delete unknown/shared objects automatically.
 - Confirm all provider records are absent or document remaining orphans.
 
-Keep the PR in Draft and unmerged until these end-to-end checks are done.
+The current change is designed to prevent default SMTP-to-Origin processing
+from interfering with MailTrigger-managed delivery. This does **not** prove
+that the missing handoff Archive was caused by the default origin Route.
+Inspect provider SMTP/queue/route logs if handoff delivery still fails.
+
+The production deployment workflow deploys automatically after successful
+`main` verification, without the old `RELAY_DEPLOY_ENABLED` toggle.
+Deploy requires the repository's existing Cloudflare/D1/MailTrigger
+credentials and does not populate missing secrets.
