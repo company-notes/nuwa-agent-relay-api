@@ -66,6 +66,10 @@ describe('automatic managed SMTP provisioning', () => {
   it('does not persist Host readiness when route creation fails, and retries safely', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
+
+    // The isolated D1 database can retain an earlier test case's Host.
+    await env.DB.prepare('DELETE FROM paired_hosts WHERE host_address_id = ?').bind('host-a').run();
+
     client.failNextRouteCreation = true;
 
     const rejected = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');

@@ -45,7 +45,7 @@ export class MailTriggerRouteProvisioner {
       throw new APIError(502, 'mailtrigger_route_invalid', `Missing managed ${kind} ID.`);
     }
 
-    return id;
+    return row.id as ResourceID;
   }
 
   private async named(
