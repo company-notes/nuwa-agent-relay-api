@@ -45,6 +45,34 @@ class DeploymentConfiguration {
     }
 
     config.vars.MAILTRIGGER_MANAGED_DOMAIN = managedDomain;
+
+    // MailTrigger publishes integer enum ranges but not their meanings.
+    // Require an explicitly verified account-level routing profile.
+    const profileText = this.required('MAILTRIGGER_ROUTE_PROFILE');
+    let profile;
+
+    try {
+      profile = JSON.parse(profileText);
+    } catch {
+      throw new Error('MAILTRIGGER_ROUTE_PROFILE must be valid JSON');
+    }
+
+    const bounds = {
+      senderTarget: 7,
+      equalsRuleType: 6,
+      filterOption: 3,
+      ruleGroupId: Number.MAX_SAFE_INTEGER,
+      smtpActionTemplateId: Number.MAX_SAFE_INTEGER,
+    };
+
+    for (const [key, upper] of Object.entries(bounds)) {
+      if (!Number.isSafeInteger(profile?.[key]) || profile[key] < 1 ||
+        profile[key] > upper) {
+        throw new Error('MAILTRIGGER_ROUTE_PROFILE.' + key + ' must be a valid integer');
+      }
+    }
+
+    config.vars.MAILTRIGGER_ROUTE_PROFILE = JSON.stringify(profile);
     config.vars.MAILTRIGGER_API_URL = this.optional('MAILTRIGGER_API_URL') || config.vars.MAILTRIGGER_API_URL;
     config.vars.WAKE_ALLOWED_HOSTS = this.optional('WAKE_ALLOWED_HOSTS');
 

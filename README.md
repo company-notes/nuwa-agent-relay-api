@@ -154,6 +154,7 @@ At **Settings → Secrets and variables → Actions**, configure:
 | Secret | `ALIAS_VERIFICATION_KEY` | Operator-managed verification credential |
 | Variable | `CLOUDFLARE_D1_DATABASE_ID` | **New** D1 database UUID |
 | Variable | `MAILTRIGGER_MANAGED_DOMAIN` | Existing MailTrigger-verified mail domain |
+| `MAILTRIGGER_ROUTE_PROFILE` | Account-wide JSON mapping for provider numeric enums, rule group ID, and MailTrigger SMTP Action template ID; see [routing contract](docs/MailTriggerSMTPRouteContract.md) |
 | Variable (optional) | `MAILTRIGGER_API_URL` | Override MailTrigger API origin, e.g. an isolated test tunnel |
 | Variable (optional) | `CLOUDFLARE_CUSTOM_DOMAIN` | Must equal `agent-relay.company-notes.com` |
 | Variable | `RELAY_DEPLOY_ENABLED` | Set to `true` when ready for automatic deploys |

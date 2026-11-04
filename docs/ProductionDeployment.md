@@ -7,7 +7,7 @@ The GitHub Actions workflow checks TypeScript, isolated Cloudflare Workers/D1 te
 ## Required GitHub Actions configuration
 
 - Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `MAILTRIGGER_API_TOKEN`, `ALIAS_VERIFICATION_KEY`
-- Variables: `CLOUDFLARE_D1_DATABASE_ID` (an existing new D1 UUID), `MAILTRIGGER_MANAGED_DOMAIN` (a verified mailbox domain)
+- Variables: `CLOUDFLARE_D1_DATABASE_ID` (an existing new D1 UUID), `MAILTRIGGER_MANAGED_DOMAIN` (a verified mailbox domain), `MAILTRIGGER_ROUTE_PROFILE` (account-level numeric mapping validated against the MailTrigger UI; see [contract](MailTriggerSMTPRouteContract.md))
 - Optional variables: `CLOUDFLARE_D1_DATABASE_NAME`, `MAILTRIGGER_API_URL`, `CLOUDFLARE_CUSTOM_DOMAIN` (must match `agent-relay.company-notes.com`), `RELAY_DEPLOY_ENABLED`
 
 Never reuse an existing Agent Address or legacy service D1 database, and never commit credentials or secret values.
