@@ -8,7 +8,7 @@
     "smoke:a": "node scripts/smoke/side-a.mjs",
     "smoke:b": "node scripts/smoke/side-b.mjs",
     "smoke:cleanup": "node scripts/smoke/cleanup.mjs",
-    "test:smoke": "node --test scripts/smoke/Checks.mjs scripts/smoke/ResumeCheck.mjs scripts/smoke/WakeAuthChecks.mjs",
+    "test:smoke": "node --test scripts/smoke/Checks.mjs scripts/smoke/ResumeCheck.mjs scripts/smoke/WakeAuthChecks.mjs scripts/PrepareDeployChecks.mjs",
     "dev": "wrangler dev",
     "check": "tsc --noEmit",
     "test": "vitest run",
