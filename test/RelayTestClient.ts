@@ -19,12 +19,14 @@ export class RelayTestClient {
   readonly rules: Array<Record<string, unknown>> = [];
   readonly actions: Array<Record<string, unknown>> = [];
   readonly templates: Array<Record<string, unknown>> = [{
-    id: 17,
-    actionName: 'MailTriggerSMTP',
+    id: 21,
+    actionName: 'RelaySMTP',
     displayName: 'MailTrigger SMTP',
+    version: 1,
     isActive: true,
   }];
   readonly routes: Array<Record<string, unknown>> = [];
+  readonly routeCreationBodies: Array<Record<string, unknown>> = [];
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
 
@@ -177,15 +179,22 @@ export class RelayTestClient {
         }
 
         if (url.pathname === '/api/v1/routes/' &&
-          (!Number.isInteger(value.filterOption) || !Number.isInteger(value.mailbox) ||
-            !Number.isInteger(value.ruleGroup) || !Array.isArray(value.ruleConfigs) ||
-            !Array.isArray(value.actions) || typeof value.isActive !== 'boolean' ||
+          (value.filterOption !== 1 || !Number.isInteger(value.mailbox) ||
+            !Array.isArray(value.ruleConfigs) || !Array.isArray(value.actions) ||
+            typeof value.isActive !== 'boolean' || 'ruleGroup' in value ||
             'rules' in value || 'isEnabled' in value || 'mailFilterOption' in value)) {
           return Response.json({ error: 'Invalid Route serializer' }, { status: 400 });
         }
 
         const nextId = Math.max(0, ...collection.map((entry) => Number(entry.id))) + 1;
-        const row = { id: nextId, ...value };
+        const row = url.pathname === '/api/v1/routes/'
+          ? { id: nextId, ...value, ruleGroup: 1 }
+          : { id: nextId, ...value };
+
+        if (url.pathname === '/api/v1/routes/') {
+          this.routeCreationBodies.push(value);
+        }
+
         collection.push(row);
 
         return Response.json(row, { status: 201 });
