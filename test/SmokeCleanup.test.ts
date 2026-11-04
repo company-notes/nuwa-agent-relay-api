@@ -112,4 +112,69 @@ describe('Scoped Smoke resource deletion', () => {
     expect(client.actions).toHaveLength(1);
     expect(client.rules).toHaveLength(1);
   });
+
+  it('refuses to remove a managed resource shared with an unrelated Route', async () => {
+    const client = new RelayTestClient();
+    client.enableSmokeIdentities('ccddee1122');
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    client.routes.push({
+      id: 999,
+      name: 'External Route',
+      mailbox: 2,
+      ruleGroup: 1,
+      filterOption: 1,
+      ruleConfigs: [client.rules[0].id],
+      actions: [client.actions[0].id],
+      isActive: true,
+    });
+
+    const blocked = await client.call('token-a', 'DELETE',
+      '/v1/smoke/host?work_address_id=work-a&run_id=ccddee1122');
+
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error.code).toBe('mailtrigger_cleanup_shared_resource');
+    expect(client.routes).toHaveLength(3);
+    expect(client.actions).toHaveLength(2);
+    expect(client.rules).toHaveLength(2);
+
+    const paired = await env.DB.prepare(
+      'SELECT mailbox_id FROM paired_hosts WHERE host_address_id = ?',
+    ).bind('host-a').first();
+
+    expect(paired).not.toBeNull();
+  });
+
+  it('retries after a partial Route delete without losing the D1 Host', async () => {
+    const client = new RelayTestClient();
+    client.enableSmokeIdentities('ddeeff1122');
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    client.failNextActionDeletion = true;
+
+    const failed = await client.call('token-a', 'DELETE',
+      '/v1/smoke/host?work_address_id=work-a&run_id=ddeeff1122');
+
+    expect(failed.status).toBe(502);
+    expect(failed.body.error.code).toBe('mailtrigger_cleanup_failed');
+    expect(client.routes).toHaveLength(1);
+    expect(client.actions).toHaveLength(2);
+    expect(client.rules).toHaveLength(2);
+
+    const pending = await env.DB.prepare(
+      'SELECT mailbox_id FROM paired_hosts WHERE host_address_id = ?',
+    ).bind('host-a').first();
+
+    expect(pending).not.toBeNull();
+
+    const retried = await client.call('token-a', 'DELETE',
+      '/v1/smoke/host?work_address_id=work-a&run_id=ddeeff1122');
+
+    expect(retried.status).toBe(200);
+    expect(client.routes).toHaveLength(1);
+    expect(client.actions).toHaveLength(1);
+    expect(client.rules).toHaveLength(1);
+  });
 });

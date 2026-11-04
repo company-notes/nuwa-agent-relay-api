@@ -36,6 +36,7 @@ export class RelayTestClient {
   failNextRouteCreation = false;
   failNextRouteLookup = false;
   failNextRouteDeletion = false;
+  failNextActionDeletion = false;
 
   private readonly hostA: AgentAddress = {
     id: 'host-a',
@@ -207,6 +208,12 @@ export class RelayTestClient {
     if (resource && init?.method === 'DELETE') {
       if (resource[1] === 'routes' && this.failNextRouteDeletion) {
         this.failNextRouteDeletion = false;
+
+        return new Response(null, { status: 503 });
+      }
+
+      if (resource[1] === 'actions' && this.failNextActionDeletion) {
+        this.failNextActionDeletion = false;
 
         return new Response(null, { status: 503 });
       }
