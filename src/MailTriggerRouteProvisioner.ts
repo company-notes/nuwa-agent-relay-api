@@ -146,9 +146,14 @@ export class MailTriggerRouteProvisioner {
     ruleId: number,
     actionId: number,
   ): void {
+    // The provider determines the Rule Group. Verify it exists, not a fixed ID.
+    MailTriggerRouteProvisioner.positiveId(route.ruleGroup);
+
     if (MailTriggerRouteProvisioner.positiveId(route.mailbox) !== mailboxId ||
       route.filterOption !== 1 ||
+      !Array.isArray(route.ruleConfigs) || route.ruleConfigs.length !== 1 ||
       !MailTriggerRouteProvisioner.includesID(route.ruleConfigs, ruleId) ||
+      !Array.isArray(route.actions) || route.actions.length !== 1 ||
       !MailTriggerRouteProvisioner.includesID(route.actions, actionId)) {
       throw new APIError(502, 'mailtrigger_route_mismatch',
         'The managed Route does not link its mailbox, Rule, Action, and rule group.');

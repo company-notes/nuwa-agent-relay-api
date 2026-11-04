@@ -1,103 +1,105 @@
-# MailTrigger SMTP routing contract
+# MailTrigger managed SMTP routing contract
 
-The source of this summary is the MailTrigger Swagger 2.0 JSON supplied for
-review on 2026-11-04. The provider lists the endpoint paths and serializer
-properties, **but not the semantic labels for its numeric enums**.
+Source basis: the uploaded MailTrigger Swagger 2.0 JSON plus the MailTrigger
+source-code review and temporary staging verification reported on 2026-11-04.
+The latter covered Route create/read/enable/disable in `route.mxnodes.com`,
+**not** the whole Nuwa Relay end-to-end flow.
 
-This adapter treats MailTrigger as a managed mail transport, not an upstream
-SMTP proxy. Default **SMTP to Origin** routing is inappropriate when there is
-no external Origin SMTP server.
+The managed mail domain does not have an external Origin SMTP server. Route
+actions must use the provider's built-in `RelaySMTP` action template, not
+**SMTP to Origin**.
 
-## Verified serializer shapes
+## Confirmed MailTrigger semantics
 
-| Resource | Endpoint | Fields relevant to creation |
-| --- | --- | --- |
-| Sender Rule | `POST /api/v1/rules/` | required `target` (integer 1–7), `value` (string), `user` (integer); optional `ruleType` (integer 1–6), `note` (string) |
-| Action Config | `POST /api/v1/actions/` | required `name` (string), `user` (integer), `action` (integer action-template ID); optional `attachResult` |
-| Route | `POST /api/v1/routes/` | required `filterOption` (integer 1–3), `mailbox` (integer), `ruleGroup` (integer); optional `name`, `isActive`, `ruleConfigs` (array of integers), `actions` (array of integers), `executionOption` (integer 1–2), `passToNextRouter` |
-| Action Template | `GET /api/v1/action-templates/` | `id`, `actionName`, `displayName`, `isActive`; identify the built-in MailTrigger SMTP Action by its name before creating a config |
+| Resource | Verified behavior |
+| --- | --- |
+| Rule target | `target: 1` means Sender |
+| Rule type | `ruleType: 1` means regex search, **not** Equals |
+| Route filtering | `filterOption: 1` means **match all rules**; `2` means match any; `3` means all emails, ignoring rules |
+| SMTP template | The active built-in template has `actionName: "RelaySMTP"`; staging ID was `21`, version `1`. **IDs vary across environments.** |
+| Route relationship | `ruleConfigs` references IDs returned by `POST /api/v1/rules/` |
+| Rule group | MailTrigger overrides the caller's supplied `ruleGroup` and gets or creates one for the authenticated user. No group ID should be provided by the client. |
+| Activation | `PATCH /api/v1/routes/{id}/` accepts partial `{ "isActive": false }` and `true` |
 
-The Rule serializer has **no `name` field**. The adapter identifies its own
-rules with a scoped `note`, and uses `name` for its Action and Route.
-The route status flag is **`isActive`**, not `isEnabled`.
-The Route relationship array is **`ruleConfigs`**, not `rules`.
-Action `action` points to a template ID rather than an `actionType` string.
+MailTrigger's group get-or-create behavior was found in its implementation.
+The staging account already had a group, so a wholly new account without any
+existing group has **not** been exercised live.
 
-The Swagger does not expose a Rule Group creation endpoint and does not
-explain whether `ruleConfigs` expects Rule IDs or a distinct RuleConfig
-resource. Confirm that relationship with a harmless staging request.
+## Exact sender match
 
-## One-time account-level routing profile
+Because `ruleType: 1` invokes regex search, a plain sender email address
+is unsafe as an exact-match expression; `.` would match any character and
+an unanchored pattern could match a substring.
 
-The adapter cannot safely guess numeric enum meanings. A MailTrigger account
-operator must determine the following provider values from its UI or live
-documentation, then configure a **single shared JSON profile** in the
-`MAILTRIGGER_ROUTE_PROFILE` Worker variable (GitHub Actions Repository
-Variable for auto-deployment). This is configured **once for the service**,
-not once per Host:
+The provider Rule must contain an escaped, anchored pattern, for example:
 
 ~~~json
 {
-  "senderTarget": 1,
-  "equalsRuleType": 1,
-  "filterOption": 1,
-  "ruleGroupId": 19,
-  "smtpActionTemplateId": 17
+  "target": 1,
+  "ruleType": 1,
+  "value": "^nar-hosta@relay-test\\.example$"
 }
 ~~~
 
-**These numbers are fictitious fixture values for illustrating the shape,
-NOT verified production values. Do not copy them into production.**
+The code escapes regex metacharacters in the full sender address before
+prefixing `^` and suffixing `$`. Existing managed Rules are checked
+against this exact pattern instead of silently accepting an unanchored value.
 
-- `senderTarget`: provider numeric Rule target for **Sender** (1–7)
-- `equalsRuleType`: provider numeric Rule type for **Equals** (1–6)
-- `filterOption`: provider numeric Route filter for **All**
-- `ruleGroupId`: valid group ID belonging to the managed MailTrigger account
-- `smtpActionTemplateId`: real active MailTrigger SMTP action-template ID
-  found under `GET /api/v1/action-templates/`
+## Automatic provisioning
 
-Provisioning fails closed with HTTP 503 if the profile is missing or invalid.
-The action-template lookup also refuses to create an Action unless the
-configured template visibly identifies MailTrigger SMTP, not SMTP to Origin.
-If the domain's `user` ID is unavailable, provisioning fails closed.
+Calling `POST /v1/hosts/provision` now:
 
-The provider API schema confirms field names and ranges, not whether those
-IDs are correct, whether a RuleGroup can be reused between Hosts, or whether
-a new Route requires a separate rule configuration object. These **remain
-staging blockers**; no credential-free Swagger file can prove a delivery.
+1. Ensures a sender/receiver mailbox.
+2. Finds the **one active** `RelaySMTP` template by its `actionName`;
+   uses that environment's returned numeric template ID.
+3. Creates/reuses a sender Rule (`target: 1`, `ruleType: 1`, exact regex),
+   an Action Config, and an enabled Route.
+4. Sends `filterOption: 1`, `ruleConfigs`, `actions`, `mailbox`, and
+   `isActive: true` in the Route POST. Omits `ruleGroup` intentionally.
+5. Reads the Route back and verifies its returned Rule Group, correct mailbox,
+   exact single Rule/Action links, filter mode and active state before
+   recording a new Host in D1.
+6. Rechecks and repairs missing/disabled routes for existing Hosts.
+   Fails closed on ambiguous or conflicting named resources.
 
-## Provisioning guarantees
+No account-wide `MAILTRIGGER_ROUTE_PROFILE` is required. In particular,
+the temporary staging template ID `21` and Rule Group ID `1` are **not**
+hard-coded for production.
 
-When `POST /v1/hosts/provision` is called, Relay must:
+## Smoke Host cleanup
 
-1. Ensure the MailTrigger mailbox exists.
-2. Ensure a sender-specific Rule, a built-in SMTP Action Config, and an
-   enabled mailbox Route, with idempotent matching by scoped names.
-3. Read back the exact Route and validate its relationships, active state,
-   and provider rule-group ID before marking a new Host ready in D1.
-4. Recheck existing Hosts on repeated provisioning, repairing missing or
-   disabled managed Routes; do not overwrite unrelated user Routes.
-5. Return a failure if any of these invariants is unavailable.
+Only the protected `relay-smoke-<runId>-a/b` Host and matching Work can
+invoke the destructive cleanup endpoint. For that Host, cleanup verifies
+the D1 mailbox ID, managed domain, mailbox username, deterministic managed
+resource names, owner and exact Rule/Action/Route relationships. It also
+refuses deletion if another Route references the Rule or Action.
 
-The profile is account-level only. The provisioning itself automatically
-creates and reuses the per-Host resources; users must not have to configure
-Routes by hand for each agent.
+Cleanup runs **Route → Action Config → Sender Rule → Mailbox → D1**.
+If any remote operation fails, the D1 record remains for retry; repeated
+cleanup handles already-removed managed routing entries. The result reports
+`providerUserCleanup: "not_verified"` because the provided Swagger does not
+expose a safe mailbox-user ownership/deletion API. It would be unsafe to
+delete a potentially shared provider User without stronger ownership proof.
 
-## Verification required before merging this Draft PR
+MailTrigger may auto-create additional Rule/Action Config/User resources when
+it creates a mailbox. Only the precisely identified NAR-owned resources are
+deleted automatically; other provider-created or orphaned objects require a
+separate account-scoped audit. Cleanup does **not** claim these are removed.
 
-- Record actual enum values (Sender, Equals, All), template ID, and valid
-  `ruleGroup` ID from a **staging MailTrigger account**.
-- Confirm `ruleConfigs` refers to the Rule IDs created by the API. If not,
-  the actual RuleConfig relationship must be implemented first.
-- Confirm route PATCH accepts partial `{ "isActive": true }`.
-- Confirm SMTP Action works with its default timeout, or determine the
-  parameter mutation API to set its documented default `timeout=30`.
-- Provision two temporary Hosts, inspect Route and Action Logs, send A→B,
-  then B→A, and confirm recipient-side archive / receipt.
-- Repeat provisioning and repair a disabled Route to verify no duplicates.
-- Check that a new Host is not registered ready if the provider rejects an
-  action or Route.
+## Remaining live validation before merge
 
-Swagger-driven mock tests verify serializer fields and internal D1 behavior,
-not the live provider integration. Do **not** merge to a production-deploying
-branch until the above staging tests succeed.
+The isolated Workers/D1 suite validates the code's behavior with provider
+test doubles, but is not a live MailTrigger integration test.
+
+- Provision two dedicated smoke Hosts using the **actual PR #8 API**, inspect
+  each managed Rule, Action and Route, then send A→B and B→A.
+- Verify arrival via recipient archive or authenticated receipt, rather
+  than treating HTTP 201 submission as delivery proof.
+- Repeat provisioning; delete/disable a Route and verify repair with no
+  duplicate resources.
+- Check a new MailTrigger account without an existing Rule Group.
+- Run cleanup and inspect MailTrigger for residual auto-created Rule/Action
+  Config/User records. Do not delete unknown/shared objects automatically.
+- Confirm all provider records are absent or document remaining orphans.
+
+Keep the PR in Draft and unmerged until these end-to-end checks are done.

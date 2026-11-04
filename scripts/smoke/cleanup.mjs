@@ -60,7 +60,10 @@ await execute(async () => {
         'Relay did not confirm scoped test resource cleanup.');
       side.relayCleaned = true;
       await saveState(state);
-      console.log('Removed Relay D1 and MailTrigger mailbox resources for Side ' + name.toUpperCase());
+      if (result.providerUserCleanup === 'not_verified') {
+        console.warn('MailTrigger user or auto-created resources may require a separate orphan audit.');
+      }
+      console.log('Removed scoped Relay D1, NAR routing and MailTrigger mailbox resources for Side ' + name.toUpperCase());
     }
 
     await request(state.addressUrl, '/v1/account/work/' + encodeURIComponent(side.id), token, {
