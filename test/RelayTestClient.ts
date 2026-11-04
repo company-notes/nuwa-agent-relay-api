@@ -35,6 +35,7 @@ export class RelayTestClient {
   failAddressStatus = false;
   failNextRouteCreation = false;
   failNextRouteLookup = false;
+  failNextRouteDeletion = false;
 
   private readonly hostA: AgentAddress = {
     id: 'host-a',
@@ -199,6 +200,27 @@ export class RelayTestClient {
 
         return Response.json(row, { status: 201 });
       }
+    }
+
+    const resource = url.pathname.match(/^\/api\/v1\/(rules|actions|routes)\/(\d+)\/$/);
+
+    if (resource && init?.method === 'DELETE') {
+      if (resource[1] === 'routes' && this.failNextRouteDeletion) {
+        this.failNextRouteDeletion = false;
+
+        return new Response(null, { status: 503 });
+      }
+
+      const rows = collections['/api/v1/' + resource[1] + '/'];
+      const index = rows.findIndex((entry) => String(entry.id) === resource[2]);
+
+      if (index === -1) {
+        return new Response(null, { status: 404 });
+      }
+
+      rows.splice(index, 1);
+
+      return new Response(null, { status: 204 });
     }
 
     const route = url.pathname.match(/^\/api\/v1\/routes\/(\d+)\/$/);
