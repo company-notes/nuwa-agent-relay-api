@@ -1,5 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
+import { MailTriggerRouteProvisioner } from './MailTriggerRouteProvisioner';
 
 export type ManagedMailbox = {
   mailboxId: string;
@@ -11,6 +12,7 @@ type DomainRow = {
   id: string | number;
   domainName?: string;
   isVerified?: boolean;
+  user?: number;
 };
 
 type MailboxRow = {
@@ -20,7 +22,15 @@ type MailboxRow = {
 };
 
 export class MailTriggerClient {
-  constructor(private readonly env: Env) {}
+  private readonly routes: MailTriggerRouteProvisioner;
+
+  constructor(private readonly env: Env) {
+    this.routes = new MailTriggerRouteProvisioner({
+      list: (path, code) => this.getRows(path, code),
+      write: (method, path, body, code) => this.writeResource(method, path, body, code),
+      delete: (kind, id) => this.deleteResource(kind, id),
+    });
+  }
 
   private headers(): HeadersInit {
     if (!this.env.MAILTRIGGER_API_TOKEN) {
@@ -57,6 +67,57 @@ export class MailTriggerClient {
     return rows.filter((row): row is Record<string, unknown> => (
       row !== null && typeof row === 'object' && !Array.isArray(row)
     ));
+  }
+
+  private async writeResource(
+    method: 'POST' | 'PATCH',
+    path: string,
+    body: Record<string, unknown>,
+    code: string,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(this.url(path), {
+      method,
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new APIError(502, code, `MailTrigger resource write failed (HTTP ${response.status}).`);
+    }
+
+    const data: unknown = await response.json();
+
+    if (!data || typeof data !== 'object' || Array.isArray(data) || !('id' in data)) {
+      throw new APIError(502, code, 'MailTrigger did not return a resource ID.');
+    }
+
+    return data as Record<string, unknown>;
+  }
+
+  private async deleteResource(
+    kind: 'rules' | 'actions' | 'routes',
+    id: number,
+  ): Promise<void> {
+    const response = await fetch(this.url('/api/v1/' + kind + '/' + id + '/'), {
+      method: 'DELETE',
+      headers: this.headers(),
+    });
+
+    if (![200, 204, 404].includes(response.status)) {
+      throw new APIError(502, 'mailtrigger_cleanup_failed',
+        'MailTrigger rejected managed resource deletion (HTTP ' + response.status + ').');
+    }
+  }
+
+  async ensureManagedSMTPRoute(mailbox: ManagedMailbox): Promise<void> {
+    const domain = await this.verifiedDomain();
+
+    if (!Number.isSafeInteger(domain.user) || (domain.user ?? 0) < 1) {
+      throw new APIError(503, 'mailtrigger_owner_missing',
+        'The managed domain must expose its provider user ID.');
+    }
+
+    await this.routes.ensureForMailbox(mailbox, domain.user!);
   }
 
   private async verifiedDomain(): Promise<DomainRow> {
@@ -180,7 +241,19 @@ export class MailTriggerClient {
     const details = await fetch(url, { headers: this.headers() });
 
     if (details.status === 404) {
-      // Remote cleanup already completed in a previous partial attempt.
+      // Retry cleanup of NAR resources after a partially completed mailbox delete.
+      if (!Number.isSafeInteger(domain.user) || (domain.user ?? 0) < 1) {
+        throw new APIError(503, 'mailtrigger_owner_missing',
+          'Cannot verify routing ownership for a missing mailbox.');
+      }
+
+      await this.routes.cleanupForMailbox({
+        mailboxId,
+        mailboxEmail: expectedUsername + '@' +
+          this.env.MAILTRIGGER_MANAGED_DOMAIN!.trim().toLowerCase(),
+        created: false,
+      }, domain.user!);
+
       return;
     }
 
@@ -200,6 +273,18 @@ export class MailTriggerClient {
       throw new APIError(409, 'mailbox_mismatch',
         'Refusing to delete a MailTrigger mailbox that does not exactly match this Host.');
     }
+
+    if (!Number.isSafeInteger(domain.user) || (domain.user ?? 0) < 1) {
+      throw new APIError(503, 'mailtrigger_owner_missing',
+        'Cannot safely remove routing resources without their owner ID.');
+    }
+
+    await this.routes.cleanupForMailbox({
+      mailboxId,
+      mailboxEmail: expectedUsername + '@' +
+        this.env.MAILTRIGGER_MANAGED_DOMAIN!.trim().toLowerCase(),
+      created: false,
+    }, domain.user!);
 
     const response = await fetch(url, {
       method: 'DELETE',

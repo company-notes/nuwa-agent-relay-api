@@ -16,12 +16,27 @@ export class RelayTestClient {
 
   private readonly mailboxes: Array<{ id: number; username: string; userDomain: number }> = [];
   readonly deliveries: Array<{ to: string[]; subject: string; body: string }> = [];
+  readonly rules: Array<Record<string, unknown>> = [];
+  readonly actions: Array<Record<string, unknown>> = [];
+  readonly templates: Array<Record<string, unknown>> = [{
+    id: 21,
+    actionName: 'RelaySMTP',
+    displayName: 'MailTrigger SMTP',
+    version: 1,
+    isActive: true,
+  }];
+  readonly routes: Array<Record<string, unknown>> = [];
+  readonly routeCreationBodies: Array<Record<string, unknown>> = [];
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
 
   failNextMail = false;
   failNextWake = false;
   failAddressStatus = false;
+  failNextRouteCreation = false;
+  failNextRouteLookup = false;
+  failNextRouteDeletion = false;
+  failNextActionDeletion = false;
 
   private readonly hostA: AgentAddress = {
     id: 'host-a',
@@ -117,9 +132,130 @@ export class RelayTestClient {
     throw new Error(`Unexpected Agent Address request: ${url.pathname}`);
   }
 
+  private requestRoutingResource(url: URL, init?: RequestInit): Response | null {
+    if (url.pathname === '/api/v1/action-templates/' && !init?.method) {
+      return Response.json(this.templates);
+    }
+
+    const collections: Record<string, Array<Record<string, unknown>>> = {
+      '/api/v1/rules/': this.rules,
+      '/api/v1/actions/': this.actions,
+      '/api/v1/routes/': this.routes,
+    };
+    const collection = collections[url.pathname];
+
+    if (collection) {
+      if (!init?.method) {
+        if (url.pathname === '/api/v1/routes/' && this.failNextRouteLookup) {
+          this.failNextRouteLookup = false;
+
+          return new Response(null, { status: 503 });
+        }
+
+        return Response.json(collection);
+      }
+
+      if (init.method === 'POST') {
+        if (url.pathname === '/api/v1/routes/' && this.failNextRouteCreation) {
+          this.failNextRouteCreation = false;
+
+          return new Response(null, { status: 503 });
+        }
+
+        const value = JSON.parse(String(init.body)) as Record<string, unknown>;
+
+        // Match the uploaded Swagger 2.0 serializer instead of accepting
+        // arbitrary JSON that a real MailTrigger API would reject.
+        if (url.pathname === '/api/v1/rules/' &&
+          (!Number.isInteger(value.target) || !Number.isInteger(value.ruleType) ||
+            typeof value.value !== 'string' || !Number.isInteger(value.user) ||
+            typeof value.note !== 'string' || 'name' in value)) {
+          return Response.json({ error: 'Invalid Rule serializer' }, { status: 400 });
+        }
+
+        if (url.pathname === '/api/v1/actions/' &&
+          (typeof value.name !== 'string' || !Number.isInteger(value.user) ||
+            !Number.isInteger(value.action) || 'actionType' in value ||
+            'parameters' in value)) {
+          return Response.json({ error: 'Invalid Action serializer' }, { status: 400 });
+        }
+
+        if (url.pathname === '/api/v1/routes/' &&
+          (value.filterOption !== 1 || !Number.isInteger(value.mailbox) ||
+            !Array.isArray(value.ruleConfigs) || !Array.isArray(value.actions) ||
+            typeof value.isActive !== 'boolean' || 'ruleGroup' in value ||
+            'rules' in value || 'isEnabled' in value || 'mailFilterOption' in value)) {
+          return Response.json({ error: 'Invalid Route serializer' }, { status: 400 });
+        }
+
+        const nextId = Math.max(0, ...collection.map((entry) => Number(entry.id))) + 1;
+        const row = url.pathname === '/api/v1/routes/'
+          ? { id: nextId, ...value, ruleGroup: 1 }
+          : { id: nextId, ...value };
+
+        if (url.pathname === '/api/v1/routes/') {
+          this.routeCreationBodies.push(value);
+        }
+
+        collection.push(row);
+
+        return Response.json(row, { status: 201 });
+      }
+    }
+
+    const resource = url.pathname.match(/^\/api\/v1\/(rules|actions|routes)\/(\d+)\/$/);
+
+    if (resource && init?.method === 'DELETE') {
+      if (resource[1] === 'routes' && this.failNextRouteDeletion) {
+        this.failNextRouteDeletion = false;
+
+        return new Response(null, { status: 503 });
+      }
+
+      if (resource[1] === 'actions' && this.failNextActionDeletion) {
+        this.failNextActionDeletion = false;
+
+        return new Response(null, { status: 503 });
+      }
+
+      const rows = collections['/api/v1/' + resource[1] + '/'];
+      const index = rows.findIndex((entry) => String(entry.id) === resource[2]);
+
+      if (index === -1) {
+        return new Response(null, { status: 404 });
+      }
+
+      rows.splice(index, 1);
+
+      return new Response(null, { status: 204 });
+    }
+
+    const route = url.pathname.match(/^\/api\/v1\/routes\/(\d+)\/$/);
+
+    if (route && init?.method === 'PATCH') {
+      const existing = this.routes.find((entry) => String(entry.id) === route[1]);
+
+      if (!existing) {
+        return new Response(null, { status: 404 });
+      }
+
+      Object.assign(existing, JSON.parse(String(init.body)));
+
+      return Response.json(existing);
+    }
+
+    return null;
+  }
+
   private requestMailTrigger(url: URL, init?: RequestInit): Response {
+    const routingResponse = this.requestRoutingResource(url, init);
+
+    if (routingResponse) {
+      return routingResponse;
+    }
+
     if (url.pathname === '/api/v1/domains/') {
-      return Response.json([{ id: 1, domainName: 'relay-test.example', isVerified: true }]);
+      return Response.json([{ id: 1, domainName: 'relay-test.example', isVerified: true, user: 31 }]);
     }
 
     if (url.pathname === '/api/v1/mailbox/' && init?.method === 'POST') {

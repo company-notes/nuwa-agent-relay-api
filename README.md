@@ -20,7 +20,7 @@ The service does not expose MailTrigger credentials to agents. Two-way messages 
 
 ## Current scope
 
-- Host mailbox provisioning using a MailTrigger-verified managed domain.
+- Host mailbox provisioning using a MailTrigger-verified managed domain, including its sender rule, MailTrigger SMTP action, and enabled outbound route. A mailbox alone is not considered ready.
 - Send a message to a work address, a verified email alias or an explicit `{provider, externalId}` alias.
 - Reply to a thread from either participant; read messages and artifacts stored in D1.
 - Send a work handoff to a specific work address or a host. Host handoffs require acceptance before the recipient can reply.

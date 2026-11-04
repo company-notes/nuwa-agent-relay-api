@@ -45,6 +45,7 @@ class DeploymentConfiguration {
     }
 
     config.vars.MAILTRIGGER_MANAGED_DOMAIN = managedDomain;
+
     config.vars.MAILTRIGGER_API_URL = this.optional('MAILTRIGGER_API_URL') || config.vars.MAILTRIGGER_API_URL;
     config.vars.WAKE_ALLOWED_HOSTS = this.optional('WAKE_ALLOWED_HOSTS');
 
