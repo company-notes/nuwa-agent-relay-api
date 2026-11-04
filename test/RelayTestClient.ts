@@ -275,7 +275,7 @@ export class RelayTestClient {
         const next = Math.max(0, ...this.routes.map((route) => Number(route.id))) + 1;
         this.routes.push({
           id: next,
-          name: 'SMTP to Origin',
+          name: 'SMTP to Origin Router',
           mailbox: mailbox.id,
           ruleGroup: 1,
           filterOption: 3,
