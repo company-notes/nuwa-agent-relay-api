@@ -27,3 +27,18 @@ The automated Worker/D1 tests use external-service substitutes; they are not a l
 ## Inbound receipts and wake callbacks
 
 See [inbound, wake and scoped cleanup instructions](InboundWake.md). The optional Worker Secret `MAILTRIGGER_INBOUND_KEY` and optional Variable `WAKE_ALLOWED_HOSTS` enable these features after a manual deployment. The new D1 migration, Cron and Agent Address restricted Host cleanup API are required for the updated smoke scripts.
+
+
+### Production MailTrigger endpoint safety
+
+Production deploys pin `MAILTRIGGER_API_URL` to
+`https://app.mailtrigger.app` from the reviewed `wrangler.jsonc` config.
+A stale GitHub Actions variable such as a temporary `*.trycloudflare.com`
+Tunnel URL is **not** used for production, even if still present in repository
+variables. Run local or staging tests with a separate local configuration.
+This is intentional: a temporary tunnel must never receive production
+MailTrigger credentials.
+
+Revoke and rotate any MailTrigger API token exposed in test logs or chat
+before using it in a long-lived Worker. If the production provider endpoint
+ever changes, update and review the production code/config explicitly.

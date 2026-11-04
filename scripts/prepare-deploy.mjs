@@ -46,7 +46,15 @@ class DeploymentConfiguration {
 
     config.vars.MAILTRIGGER_MANAGED_DOMAIN = managedDomain;
 
-    config.vars.MAILTRIGGER_API_URL = this.optional('MAILTRIGGER_API_URL') || config.vars.MAILTRIGGER_API_URL;
+    // A temporary Cloudflare Tunnel URL was accidentally passed through the
+    // repository's MAILTRIGGER_API_URL variable during a production deploy.
+    // Production must use the canonical API from the reviewed Wrangler config.
+    // Staging/local endpoints belong in local .dev.vars / test-only configs.
+    if (config.vars.MAILTRIGGER_API_URL !== 'https://app.mailtrigger.app') {
+      throw new Error('Production MailTrigger API must be https://app.mailtrigger.app');
+    }
+
+    console.log('Pinned production MailTrigger API: ' + config.vars.MAILTRIGGER_API_URL);
     config.vars.WAKE_ALLOWED_HOSTS = this.optional('WAKE_ALLOWED_HOSTS');
 
     const domain = this.optional('CLOUDFLARE_CUSTOM_DOMAIN') || 'agent-relay.company-notes.com';
