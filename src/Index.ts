@@ -269,12 +269,9 @@ export class RelayAPI {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    try {
-      await MailReceipt.reconcileArchives(env);
-    } finally {
-      // Failed archive lookups must not prevent retrying existing Wake events.
-      await WakeService.dispatchDue(env);
-    }
+    // Receipt Webhook is the live arrival path. Do not poll provider Archives
+    // periodically; only retry persisted Wake events here.
+    await WakeService.dispatchDue(env);
   },
 
   async fetch(

@@ -265,11 +265,20 @@ export class RelayService {
         metadata,
       );
     } catch (error) {
-      await this.env.DB.prepare(
-        "UPDATE messages SET delivery_status = 'failed' WHERE id = ? AND delivery_status = 'pending'",
-      ).bind(id).run();
+      // The independent recipient receipt may arrive before the send API
+      // response, or prove arrival even if that response is lost.
+      const verified = await this.env.DB.prepare(
+        "SELECT received_at AS receivedAt FROM messages WHERE id = ? AND delivery_status = 'sent'",
+      ).bind(id).first<{ receivedAt: string | null }>();
 
-      throw error;
+      if (!verified?.receivedAt) {
+        await this.env.DB.prepare(
+          "UPDATE messages SET delivery_status = 'failed' WHERE id = ? AND delivery_status = 'pending'",
+        ).bind(id).run();
+        throw error;
+      }
+
+      deliveryId = id;
     }
 
     await this.env.DB.prepare(

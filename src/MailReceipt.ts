@@ -96,7 +96,7 @@ export class MailReceipt {
                                  AND sender.host_address_id = m.sender_host_id
          JOIN paired_hosts recipient ON recipient.org_id = t.org_id
                                     AND recipient.host_address_id = m.recipient_host_id
-        WHERE m.id = ? AND m.delivery_status = 'sent'`,
+        WHERE m.id = ? AND m.delivery_status IN ('pending', 'sent', 'failed')`,
     ).bind(messageId).first<{
       id: string;
       receivedAt: string | null;
@@ -129,8 +129,10 @@ export class MailReceipt {
     const outcomes = await env.DB.batch([
       env.DB.prepare(
         `UPDATE messages
-            SET received_at = ?, receipt_source = ?
-          WHERE id = ? AND delivery_status = 'sent' AND received_at IS NULL`,
+            SET received_at = ?, receipt_source = ?, delivery_status = 'sent',
+                external_delivery_id = COALESCE(external_delivery_id, id)
+          WHERE id = ? AND delivery_status IN ('pending', 'sent', 'failed')
+            AND received_at IS NULL`,
       ).bind(now, source, messageId),
       env.DB.prepare(
         `INSERT OR IGNORE INTO wake_events (message_id, work_address_id, next_attempt_at)
