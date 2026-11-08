@@ -371,13 +371,16 @@ export class MailTriggerRouteProvisioner {
     const rule = await this.named('rules', 'note', 'NAR sender ' + mailbox.mailboxId);
     const action = await this.named('actions', 'name', 'NAR SMTP ' + mailbox.mailboxId);
     const route = await this.named('routes', 'name', 'NAR route ' + mailbox.mailboxId);
+    const receiptAction = await this.named('actions', 'name', 'NAR receipt webhook ' + mailbox.mailboxId);
+    const receiptRoute = await this.named('routes', 'name', 'NAR receipt ' + mailbox.mailboxId);
 
-    if (!rule && !action && !route) {
+    if (!rule && !action && !route && !receiptAction && !receiptRoute) {
       return;
     }
 
-    const templateId = await this.relaySMTPTemplate();
     const pattern = MailTriggerRouteProvisioner.senderRegex(mailbox.mailboxEmail);
+    const templateId = action ? await this.relaySMTPTemplate() : null;
+    const webhookTemplateId = receiptAction ? await this.webhookTemplate() : null;
 
     if (rule && (rule.user !== ownerId || rule.target !== 1 ||
       rule.ruleType !== 1 || rule.value !== pattern)) {
@@ -390,19 +393,33 @@ export class MailTriggerRouteProvisioner {
         'Refusing to remove a managed Action that does not belong to this Host.');
     }
 
+    if (receiptAction && (receiptAction.user !== ownerId ||
+      receiptAction.action !== webhookTemplateId)) {
+      throw new APIError(409, 'mailtrigger_cleanup_action_mismatch',
+        'Refusing to remove a Receipt Action with unexpected ownership or template.');
+    }
+
     const ruleId = rule ? MailTriggerRouteProvisioner.positiveId(rule.id) : null;
     const actionId = action ? MailTriggerRouteProvisioner.positiveId(action.id) : null;
+    const receiptActionId = receiptAction
+      ? MailTriggerRouteProvisioner.positiveId(receiptAction.id) : null;
 
     if (route) {
       if (ruleId === null || actionId === null) {
         throw new APIError(409, 'mailtrigger_cleanup_route_mismatch',
           'The managed Route references resources that cannot be verified.');
       }
-
       MailTriggerRouteProvisioner.validateRoute(route, mailboxId, ruleId, actionId);
     }
 
-    // Rule/Action configs must not be removed while some other Route uses them.
+    if (receiptRoute) {
+      if (receiptActionId === null) {
+        throw new APIError(409, 'mailtrigger_cleanup_route_mismatch',
+          'The Receipt Route references an Action that cannot be verified.');
+      }
+      MailTriggerRouteProvisioner.validateReceiptRoute(receiptRoute, mailboxId, receiptActionId);
+    }
+
     const allRoutes = await this.resources.list(
       '/api/v1/routes/?page_size=1000', 'mailtrigger_route_lookup_failed',
     );
@@ -413,34 +430,51 @@ export class MailTriggerRouteProvisioner {
     }
 
     for (const candidate of allRoutes) {
-      if (route && MailTriggerRouteProvisioner.positiveId(candidate.id) ===
-        MailTriggerRouteProvisioner.positiveId(route.id)) {
+      const candidateId = MailTriggerRouteProvisioner.positiveId(candidate.id);
+
+      if ((route && candidateId === MailTriggerRouteProvisioner.positiveId(route.id)) ||
+        (receiptRoute && candidateId === MailTriggerRouteProvisioner.positiveId(receiptRoute.id))) {
         continue;
       }
 
       if ((ruleId !== null && MailTriggerRouteProvisioner.includesID(candidate.ruleConfigs, ruleId)) ||
-        (actionId !== null && MailTriggerRouteProvisioner.includesID(candidate.actions, actionId))) {
+        (actionId !== null && MailTriggerRouteProvisioner.includesID(candidate.actions, actionId)) ||
+        (receiptActionId !== null &&
+          MailTriggerRouteProvisioner.includesID(candidate.actions, receiptActionId))) {
         throw new APIError(409, 'mailtrigger_cleanup_shared_resource',
-          'Another Route references the managed Rule or Action.');
+          'Another Route references a managed Rule or Action.');
       }
+    }
+
+    // Delete routes before their linked Actions and Rules. This order makes
+    // failed/interrupted cleanup resumable on the next smoke-cleanup request.
+    if (receiptRoute) {
+      await this.resources.delete('routes',
+        MailTriggerRouteProvisioner.positiveId(receiptRoute.id));
     }
 
     if (route) {
       await this.resources.delete('routes', MailTriggerRouteProvisioner.positiveId(route.id));
     }
 
-    if (action) {
-      await this.resources.delete('actions', actionId!);
+    if (receiptActionId !== null) {
+      await this.resources.delete('actions', receiptActionId);
     }
 
-    if (rule) {
-      await this.resources.delete('rules', ruleId!);
+    if (actionId !== null) {
+      await this.resources.delete('actions', actionId);
+    }
+
+    if (ruleId !== null) {
+      await this.resources.delete('rules', ruleId);
     }
 
     const remaining = await Promise.all([
       this.named('routes', 'name', 'NAR route ' + mailbox.mailboxId),
       this.named('actions', 'name', 'NAR SMTP ' + mailbox.mailboxId),
       this.named('rules', 'note', 'NAR sender ' + mailbox.mailboxId),
+      this.named('routes', 'name', 'NAR receipt ' + mailbox.mailboxId),
+      this.named('actions', 'name', 'NAR receipt webhook ' + mailbox.mailboxId),
     ]);
 
     if (remaining.some((row) => row !== null)) {
