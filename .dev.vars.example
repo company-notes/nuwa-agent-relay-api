@@ -1,3 +1,6 @@
 MAILTRIGGER_API_TOKEN=replace-with-local-test-token
 MAILTRIGGER_MANAGED_DOMAIN=example.test
 ALIAS_VERIFICATION_KEY=replace-with-local-test-verification-key
+MAILTRIGGER_INBOUND_KEY=replace-with-local-test-receipt-webhook-secret
+# For a local Worker, use its publicly reachable HTTPS Tunnel receipt endpoint:
+# MAILTRIGGER_RECEIPT_URL=https://your-tunnel.example.com/v1/mailtrigger/receipt

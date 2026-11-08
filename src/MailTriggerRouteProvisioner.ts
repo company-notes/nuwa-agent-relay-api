@@ -22,7 +22,10 @@ export type MailTriggerResources = {
  * The RelaySMTP action-template ID is discovered in each environment.
  */
 export class MailTriggerRouteProvisioner {
-  constructor(private readonly resources: MailTriggerResources) {}
+  constructor(
+    private readonly resources: MailTriggerResources,
+    private readonly receipt?: { url: string; key: string },
+  ) {}
 
   private static positiveId(value: unknown): number {
     const id = typeof value === 'object' && value && 'id' in value
@@ -129,6 +132,236 @@ export class MailTriggerRouteProvisioner {
     return MailTriggerRouteProvisioner.positiveId(action.id);
   }
 
+  private async ensureRecipientRule(
+    mailbox: ManagedMailbox, ownerId: number,
+  ): Promise<number> {
+    const note = `NAR recipient ${mailbox.mailboxId}`;
+    const pattern = MailTriggerRouteProvisioner.senderRegex(mailbox.mailboxEmail);
+    let rule = await this.named('rules', 'note', note);
+
+    if (!rule) {
+      // MailTrigger target 2 is the recipient address. This is deliberately
+      // NOT an All Emails route: outgoing mail from the same mailbox must
+      // never generate a false recipient-side delivery receipt.
+      rule = await this.resources.write('POST', '/api/v1/rules/', {
+        note,
+        user: ownerId,
+        target: 2,
+        ruleType: 1,
+        value: pattern,
+      }, 'mailtrigger_recipient_rule_failed');
+    }
+
+    if (rule.note !== note || rule.user !== ownerId ||
+      rule.target !== 2 || rule.ruleType !== 1 ||
+      rule.value !== pattern) {
+      throw new APIError(409, 'mailtrigger_recipient_rule_mismatch',
+        'The recipient Rule must match exactly the receiving mailbox email.');
+    }
+
+    return MailTriggerRouteProvisioner.positiveId(rule.id);
+  }
+
+  private async webhookTemplate(): Promise<number> {
+    const templates = await this.resources.list(
+      '/api/v1/action-templates/?page_size=1000',
+      'mailtrigger_action_template_lookup_failed',
+    );
+    // Do not assume an environment-specific template numeric ID.
+    const matched = templates.filter((row) => row.isActive === true &&
+      (row.displayName === 'Webhook (API)' ||
+        row.actionName === 'WebhookAPI' || row.actionName === 'Webhook'));
+
+    if (matched.length !== 1) {
+      throw new APIError(503, 'mailtrigger_webhook_template_invalid',
+        'Expected exactly one active Webhook (API) Action template.');
+    }
+
+    return MailTriggerRouteProvisioner.positiveId(matched[0].id);
+  }
+
+  private static receiptWebhookURL(value: string): string {
+    let url: URL;
+
+    try {
+      url = new URL(value);
+    } catch {
+      throw new APIError(503, 'mailtrigger_receipt_url_invalid',
+        'MAILTRIGGER_RECEIPT_URL must be a full public HTTPS receipt endpoint.');
+    }
+
+    if (url.protocol !== 'https:' || url.pathname !== '/v1/mailtrigger/receipt' ||
+      url.username || url.password || url.search || url.hash ||
+      (url.port && url.port !== '443')) {
+      throw new APIError(503, 'mailtrigger_receipt_url_invalid',
+        'MAILTRIGGER_RECEIPT_URL must be an HTTPS URL ending in /v1/mailtrigger/receipt.');
+    }
+
+    return url.toString();
+  }
+
+  private async actionParameters(actionId: number): Promise<Resource[]> {
+    return this.resources.list(
+      `/api/v1/actions/${actionId}/parameters/`,
+      'mailtrigger_webhook_parameters_failed',
+    );
+  }
+
+  private static parameterName(row: Resource): string | null {
+    if (typeof row.name === 'string') return row.name;
+    if (typeof row.parameterName === 'string') return row.parameterName;
+    if (typeof row.fieldName === 'string') return row.fieldName;
+    if (row.field && typeof row.field === 'object' && !Array.isArray(row.field) &&
+      'name' in row.field && typeof row.field.name === 'string') {
+      return row.field.name;
+    }
+    return null;
+  }
+
+  private async ensureWebhookParameters(actionId: number, url: string, key: string): Promise<void> {
+    // These parameter names and MailTrigger inline substitutions are documented.
+    // Actual instance serializers are checked by reading values back.
+    const desired: Record<string, string> = {
+      method: 'POST',
+      webhook_url: url,
+      headers: JSON.stringify({
+        'Content-Type': 'application/json',
+        'X-Relay-Inbound-Key': key,
+      }),
+      data: JSON.stringify({
+        from: '$SENDER',
+        receiver: '$RECEIVERS',
+        subject: '$SUBJECT',
+      }),
+    };
+
+    const rows = await this.actionParameters(actionId);
+
+    for (const [name, value] of Object.entries(desired)) {
+      const matches = rows.filter((row) => MailTriggerRouteProvisioner.parameterName(row) === name);
+
+      if (matches.length !== 1) {
+        throw new APIError(502, 'mailtrigger_webhook_parameters_invalid',
+          'Webhook Action must expose one configurable parameter for each required field.');
+      }
+
+      const parameter = matches[0];
+
+      if (parameter.value !== value) {
+        await this.resources.write(
+          'PATCH',
+          `/api/v1/actions/${actionId}/parameters/${MailTriggerRouteProvisioner.positiveId(parameter.id)}/`,
+          { value },
+          'mailtrigger_webhook_parameters_failed',
+        );
+      }
+    }
+
+    const verified = await this.actionParameters(actionId);
+
+    for (const [name, value] of Object.entries(desired)) {
+      const matches = verified.filter((row) =>
+        MailTriggerRouteProvisioner.parameterName(row) === name);
+
+      if (matches.length !== 1 || matches[0].value !== value) {
+        throw new APIError(502, 'mailtrigger_webhook_parameters_invalid',
+          'MailTrigger did not persist the expected Webhook Action settings.');
+      }
+    }
+  }
+
+  private static validateReceiptRoute(
+    route: Resource, mailboxId: number, ruleId: number, actionId: number,
+  ): void {
+    MailTriggerRouteProvisioner.positiveId(route.ruleGroup);
+
+    if (MailTriggerRouteProvisioner.positiveId(route.mailbox) !== mailboxId ||
+      route.filterOption !== 1 ||
+      !Array.isArray(route.ruleConfigs) || route.ruleConfigs.length !== 1 ||
+      !MailTriggerRouteProvisioner.includesID(route.ruleConfigs, ruleId) ||
+      !Array.isArray(route.actions) || route.actions.length !== 1 ||
+      !MailTriggerRouteProvisioner.includesID(route.actions, actionId)) {
+      throw new APIError(409, 'mailtrigger_receipt_route_mismatch',
+        'Receipt Webhook Route must target exactly this mailbox and its own action.');
+    }
+  }
+
+  private async ensureReceiptRoute(mailbox: ManagedMailbox, ownerId: number): Promise<void> {
+    if (!this.receipt) {
+      // Backward-compatible transport: enable Receipt Webhooks only after the
+      // endpoint and inbound secret are explicitly configured for this Worker.
+      return;
+    }
+
+    if (!this.receipt.key) {
+      throw new APIError(503, 'mailtrigger_receipt_unconfigured',
+        'MAILTRIGGER_INBOUND_KEY is required when MAILTRIGGER_RECEIPT_URL is set.');
+    }
+
+    const url = MailTriggerRouteProvisioner.receiptWebhookURL(this.receipt.url);
+    const templateId = await this.webhookTemplate();
+    const mailboxId = MailTriggerRouteProvisioner.positiveId(mailbox.mailboxId);
+    const ruleId = await this.ensureRecipientRule(mailbox, ownerId);
+    const actionName = `NAR receipt webhook ${mailbox.mailboxId}`;
+    let action = await this.named('actions', 'name', actionName);
+
+    if (!action) {
+      action = await this.resources.write('POST', '/api/v1/actions/', {
+        name: actionName,
+        user: ownerId,
+        action: templateId,
+        attachResult: false,
+      }, 'mailtrigger_receipt_action_failed');
+    }
+
+    if (action.name !== actionName || action.user !== ownerId || action.action !== templateId) {
+      throw new APIError(409, 'mailtrigger_receipt_action_mismatch',
+        'Receipt Webhook Action has unexpected ownership or template.');
+    }
+
+    const actionId = MailTriggerRouteProvisioner.positiveId(action.id);
+
+    // Configured values must be verified BEFORE activating the incoming route.
+    await this.ensureWebhookParameters(actionId, url, this.receipt.key);
+
+    const routeName = `NAR receipt ${mailbox.mailboxId}`;
+    const existing = await this.named('routes', 'name', routeName);
+
+    if (!existing) {
+      await this.resources.write('POST', '/api/v1/routes/', {
+        name: routeName,
+        mailbox: mailboxId,
+        filterOption: 1,
+        ruleConfigs: [ruleId],
+        actions: [actionId],
+        passToNextRouter: true,
+        isActive: true,
+      }, 'mailtrigger_receipt_route_failed');
+    } else {
+      MailTriggerRouteProvisioner.validateReceiptRoute(existing, mailboxId, ruleId, actionId);
+
+      if (existing.isActive !== true) {
+        await this.resources.write('PATCH',
+          `/api/v1/routes/${MailTriggerRouteProvisioner.positiveId(existing.id)}/`,
+          { isActive: true }, 'mailtrigger_receipt_route_failed');
+      }
+    }
+
+    const verified = await this.named('routes', 'name', routeName);
+
+    if (!verified) {
+      throw new APIError(502, 'mailtrigger_receipt_route_missing',
+        'MailTrigger did not return the recipient Webhook Route.');
+    }
+
+    MailTriggerRouteProvisioner.validateReceiptRoute(verified, mailboxId, ruleId, actionId);
+
+    if (verified.isActive !== true) {
+      throw new APIError(502, 'mailtrigger_receipt_route_inactive',
+        'The recipient Webhook Route is inactive.');
+    }
+  }
+
   private static includesID(values: unknown, expected: number): boolean {
     return Array.isArray(values) &&
       values.some((value: unknown) => {
@@ -170,13 +403,17 @@ export class MailTriggerRouteProvisioner {
     const rule = await this.named('rules', 'note', 'NAR sender ' + mailbox.mailboxId);
     const action = await this.named('actions', 'name', 'NAR SMTP ' + mailbox.mailboxId);
     const route = await this.named('routes', 'name', 'NAR route ' + mailbox.mailboxId);
+    const receiptAction = await this.named('actions', 'name', 'NAR receipt webhook ' + mailbox.mailboxId);
+    const receiptRoute = await this.named('routes', 'name', 'NAR receipt ' + mailbox.mailboxId);
+    const receiptRule = await this.named('rules', 'note', 'NAR recipient ' + mailbox.mailboxId);
 
-    if (!rule && !action && !route) {
+    if (!rule && !action && !route && !receiptAction && !receiptRoute && !receiptRule) {
       return;
     }
 
-    const templateId = await this.relaySMTPTemplate();
     const pattern = MailTriggerRouteProvisioner.senderRegex(mailbox.mailboxEmail);
+    const templateId = action ? await this.relaySMTPTemplate() : null;
+    const webhookTemplateId = receiptAction ? await this.webhookTemplate() : null;
 
     if (rule && (rule.user !== ownerId || rule.target !== 1 ||
       rule.ruleType !== 1 || rule.value !== pattern)) {
@@ -184,24 +421,48 @@ export class MailTriggerRouteProvisioner {
         'Refusing to remove a managed Rule with unexpected ownership or pattern.');
     }
 
+    if (receiptRule && (receiptRule.user !== ownerId || receiptRule.target !== 2 ||
+      receiptRule.ruleType !== 1 || receiptRule.value !== pattern)) {
+      throw new APIError(409, 'mailtrigger_cleanup_rule_mismatch',
+        'Refusing to remove a Recipient Rule with unexpected ownership or pattern.');
+    }
+
     if (action && (action.user !== ownerId || action.action !== templateId)) {
       throw new APIError(409, 'mailtrigger_cleanup_action_mismatch',
         'Refusing to remove a managed Action that does not belong to this Host.');
     }
 
+    if (receiptAction && (receiptAction.user !== ownerId ||
+      receiptAction.action !== webhookTemplateId)) {
+      throw new APIError(409, 'mailtrigger_cleanup_action_mismatch',
+        'Refusing to remove a Receipt Action with unexpected ownership or template.');
+    }
+
     const ruleId = rule ? MailTriggerRouteProvisioner.positiveId(rule.id) : null;
+    const receiptRuleId = receiptRule
+      ? MailTriggerRouteProvisioner.positiveId(receiptRule.id) : null;
     const actionId = action ? MailTriggerRouteProvisioner.positiveId(action.id) : null;
+    const receiptActionId = receiptAction
+      ? MailTriggerRouteProvisioner.positiveId(receiptAction.id) : null;
 
     if (route) {
       if (ruleId === null || actionId === null) {
         throw new APIError(409, 'mailtrigger_cleanup_route_mismatch',
           'The managed Route references resources that cannot be verified.');
       }
-
       MailTriggerRouteProvisioner.validateRoute(route, mailboxId, ruleId, actionId);
     }
 
-    // Rule/Action configs must not be removed while some other Route uses them.
+    if (receiptRoute) {
+      if (receiptActionId === null || receiptRuleId === null) {
+        throw new APIError(409, 'mailtrigger_cleanup_route_mismatch',
+          'The Receipt Route references a Rule or Action that cannot be verified.');
+      }
+      MailTriggerRouteProvisioner.validateReceiptRoute(
+        receiptRoute, mailboxId, receiptRuleId, receiptActionId,
+      );
+    }
+
     const allRoutes = await this.resources.list(
       '/api/v1/routes/?page_size=1000', 'mailtrigger_route_lookup_failed',
     );
@@ -212,34 +473,58 @@ export class MailTriggerRouteProvisioner {
     }
 
     for (const candidate of allRoutes) {
-      if (route && MailTriggerRouteProvisioner.positiveId(candidate.id) ===
-        MailTriggerRouteProvisioner.positiveId(route.id)) {
+      const candidateId = MailTriggerRouteProvisioner.positiveId(candidate.id);
+
+      if ((route && candidateId === MailTriggerRouteProvisioner.positiveId(route.id)) ||
+        (receiptRoute && candidateId === MailTriggerRouteProvisioner.positiveId(receiptRoute.id))) {
         continue;
       }
 
       if ((ruleId !== null && MailTriggerRouteProvisioner.includesID(candidate.ruleConfigs, ruleId)) ||
-        (actionId !== null && MailTriggerRouteProvisioner.includesID(candidate.actions, actionId))) {
+        (receiptRuleId !== null &&
+          MailTriggerRouteProvisioner.includesID(candidate.ruleConfigs, receiptRuleId)) ||
+        (actionId !== null && MailTriggerRouteProvisioner.includesID(candidate.actions, actionId)) ||
+        (receiptActionId !== null &&
+          MailTriggerRouteProvisioner.includesID(candidate.actions, receiptActionId))) {
         throw new APIError(409, 'mailtrigger_cleanup_shared_resource',
-          'Another Route references the managed Rule or Action.');
+          'Another Route references a managed Rule or Action.');
       }
+    }
+
+    // Delete routes before their linked Actions and Rules. This order makes
+    // failed/interrupted cleanup resumable on the next smoke-cleanup request.
+    if (receiptRoute) {
+      await this.resources.delete('routes',
+        MailTriggerRouteProvisioner.positiveId(receiptRoute.id));
     }
 
     if (route) {
       await this.resources.delete('routes', MailTriggerRouteProvisioner.positiveId(route.id));
     }
 
-    if (action) {
-      await this.resources.delete('actions', actionId!);
+    if (receiptActionId !== null) {
+      await this.resources.delete('actions', receiptActionId);
     }
 
-    if (rule) {
-      await this.resources.delete('rules', ruleId!);
+    if (actionId !== null) {
+      await this.resources.delete('actions', actionId);
+    }
+
+    if (ruleId !== null) {
+      await this.resources.delete('rules', ruleId);
+    }
+
+    if (receiptRuleId !== null) {
+      await this.resources.delete('rules', receiptRuleId);
     }
 
     const remaining = await Promise.all([
       this.named('routes', 'name', 'NAR route ' + mailbox.mailboxId),
       this.named('actions', 'name', 'NAR SMTP ' + mailbox.mailboxId),
       this.named('rules', 'note', 'NAR sender ' + mailbox.mailboxId),
+      this.named('routes', 'name', 'NAR receipt ' + mailbox.mailboxId),
+      this.named('actions', 'name', 'NAR receipt webhook ' + mailbox.mailboxId),
+      this.named('rules', 'note', 'NAR recipient ' + mailbox.mailboxId),
     ]);
 
     if (remaining.some((row) => row !== null)) {
@@ -362,5 +647,9 @@ export class MailTriggerRouteProvisioner {
     await this.removeDefaultSMTPToOrigin(
       mailboxId, ruleId, actionId, MailTriggerRouteProvisioner.positiveId(verified.id),
     );
+
+    // This is a separate recipient-side route; never attach an arrival Webhook
+    // to the sender-side RelaySMTP route (which runs before delivery to B).
+    await this.ensureReceiptRoute(mailbox, ownerId);
   }
 }

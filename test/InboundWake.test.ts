@@ -293,4 +293,44 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     const completed = await client.call('token-b', 'GET', '/v1/wake-events?work_address_id=work-b');
     expect(completed.body.data[0]).toMatchObject({ status: 'delivered', attempts: 2 });
   });
+  it('accepts a genuine B-side receipt before the /mail/send response, even if send HTTP fails', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionBothHosts();
+
+    const subscribed = await client.call('token-b', 'POST',
+      '/v1/wake-subscription?work_address_id=work-b', {
+        callbackUrl: 'https://agent-hook.example.com/wake',
+      });
+    expect(subscribed.status).toBe(201);
+
+    // MailTrigger B delivers and calls Nuwa before A's send HTTP response.
+    client.autoReceiptDuringMailSend = true;
+    client.failNextMail = true;
+
+    const sent = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+      to: '@beta/reviewer',
+      body: 'Early delivery notice must not be lost or cause a false send failure.',
+    });
+
+    expect(sent.status).toBe(201);
+    const receipt = await client.call('token-b', 'GET',
+      '/v1/messages/' + sent.body.data.id + '/receipt?work_address_id=work-b');
+    expect(receipt.body.data).toMatchObject({
+      submissionStatus: 'sent',
+      arrivedInMailTrigger: true,
+      receiptSource: 'webhook',
+    });
+
+    const wakes = await client.call('token-b', 'GET',
+      '/v1/wake-events?work_address_id=work-b');
+    expect(wakes.body.data.filter((row: { messageId: string }) =>
+      row.messageId === sent.body.data.id)).toHaveLength(1);
+    await WakeService.dispatchDue(env);
+    const deliveredForMessage = client.wakeCallbacks.filter((item) =>
+      item.body.messageId === sent.body.data.id);
+    expect(deliveredForMessage).toHaveLength(1);
+  });
+
+
 });

@@ -24,9 +24,16 @@ export class RelayTestClient {
     displayName: 'MailTrigger SMTP',
     version: 1,
     isActive: true,
+  }, {
+    id: 22,
+    actionName: 'Webhook',
+    displayName: 'Webhook (API)',
+    version: 1,
+    isActive: true,
   }];
   readonly routes: Array<Record<string, unknown>> = [];
   readonly routeCreationBodies: Array<Record<string, unknown>> = [];
+  readonly webhookParameters = new Map<number, Array<Record<string, unknown>>>();
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
 
@@ -38,6 +45,8 @@ export class RelayTestClient {
   failNextRouteDeletion = false;
   providerCreatesOriginRoutes = false;
   failNextActionDeletion = false;
+  failNextWebhookParameterUpdate = false;
+  autoReceiptDuringMailSend = false;
 
   private readonly hostA: AgentAddress = {
     id: 'host-a',
@@ -134,6 +143,32 @@ export class RelayTestClient {
   }
 
   private requestRoutingResource(url: URL, init?: RequestInit): Response | null {
+    const parameterList = url.pathname.match(/^\/api\/v1\/actions\/(\d+)\/parameters\/$/);
+    if (parameterList && !init?.method) {
+      return Response.json(this.webhookParameters.get(Number(parameterList[1])) ?? []);
+    }
+
+    const parameterItem = url.pathname.match(
+      /^\/api\/v1\/actions\/(\d+)\/parameters\/(\d+)\/$/,
+    );
+    if (parameterItem && init?.method === 'PATCH') {
+      if (this.failNextWebhookParameterUpdate) {
+        this.failNextWebhookParameterUpdate = false;
+        return new Response(null, { status: 503 });
+      }
+
+      const item = this.webhookParameters.get(Number(parameterItem[1]))?.find((row) =>
+        Number(row.id) === Number(parameterItem[2]));
+      if (!item) return new Response(null, { status: 404 });
+
+      const incoming = JSON.parse(String(init.body)) as Record<string, unknown>;
+      if (typeof incoming.value !== 'string') {
+        return Response.json({ error: 'Expected string value' }, { status: 400 });
+      }
+      item.value = incoming.value;
+      return Response.json(item);
+    }
+
     if (url.pathname === '/api/v1/action-templates/' && !init?.method) {
       return Response.json(this.templates);
     }
@@ -182,7 +217,7 @@ export class RelayTestClient {
         }
 
         if (url.pathname === '/api/v1/routes/' &&
-          (value.filterOption !== 1 || !Number.isInteger(value.mailbox) ||
+          (![1, 3].includes(value.filterOption as number) || !Number.isInteger(value.mailbox) ||
             !Array.isArray(value.ruleConfigs) || !Array.isArray(value.actions) ||
             typeof value.isActive !== 'boolean' || 'ruleGroup' in value ||
             'rules' in value || 'isEnabled' in value || 'mailFilterOption' in value)) {
@@ -199,6 +234,13 @@ export class RelayTestClient {
         }
 
         collection.push(row);
+
+        if (url.pathname === '/api/v1/actions/' && value.action === 22) {
+          this.webhookParameters.set(nextId,
+            ['method', 'webhook_url', 'headers', 'data', 'params', 'timeout'].map(
+              (name, index) => ({ id: nextId * 100 + index + 1, name, value: '' }),
+            ));
+        }
 
         return Response.json(row, { status: 201 });
       }
@@ -227,6 +269,8 @@ export class RelayTestClient {
       }
 
       rows.splice(index, 1);
+
+      if (resource[1] === 'actions') this.webhookParameters.delete(Number(resource[2]));
 
       return new Response(null, { status: 204 });
     }
@@ -347,6 +391,26 @@ export class RelayTestClient {
 
   private async externalFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = new URL(typeof input === 'string' ? input : input.toString());
+
+    if (url.hostname === 'app.mailtrigger.app' && init?.method === 'POST' &&
+      url.pathname.endsWith('/mail/send/') && this.autoReceiptDuringMailSend) {
+      const body = JSON.parse(String(init.body)) as {
+        subject: string; to: string[];
+      };
+      const mailboxId = Number(url.pathname.match(/mailbox\/(\d+)\/mail\/send/)?.[1]);
+      const from = this.mailboxes.find((box) => box.id === mailboxId);
+
+      if (!from) throw new Error('Unknown sender mailbox in early receipt test.');
+
+      const arrived = await this.callWithHeaders('POST', '/v1/mailtrigger/receipt', {
+        from: from.username + '@relay-test.example',
+        receiver: body.to[0],
+        subject: body.subject,
+      }, { 'x-relay-inbound-key': 'test-inbound-key' });
+
+      expect(arrived.status).toBe(200);
+      expect(arrived.body.data.matched).toBe(true);
+    }
 
     if (url.hostname === 'address.company-notes.com') {
       const token = new Headers(init?.headers).get('authorization');

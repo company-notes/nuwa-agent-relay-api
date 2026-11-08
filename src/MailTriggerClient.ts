@@ -29,7 +29,9 @@ export class MailTriggerClient {
       list: (path, code) => this.getRows(path, code),
       write: (method, path, body, code) => this.writeResource(method, path, body, code),
       delete: (kind, id) => this.deleteResource(kind, id),
-    });
+    }, env.MAILTRIGGER_RECEIPT_URL
+      ? { url: env.MAILTRIGGER_RECEIPT_URL, key: env.MAILTRIGGER_INBOUND_KEY ?? '' }
+      : undefined);
   }
 
   private headers(): HeadersInit {

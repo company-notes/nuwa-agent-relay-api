@@ -118,3 +118,38 @@ The production deployment workflow deploys automatically after successful
 `main` verification, without the old `RELAY_DEPLOY_ENABLED` toggle.
 Deploy requires the repository's existing Cloudflare/D1/MailTrigger
 credentials and does not populate missing secrets.
+
+## Recipient Webhook receipt path (opt-in)
+
+When the Worker has `MAILTRIGGER_RECEIPT_URL` and the secret
+`MAILTRIGGER_INBOUND_KEY` configured, Host provisioning additionally creates
+a `NAR receipt <mailboxId>` Route on the **receiving mailbox**, with a
+**recipient-address regex Rule** (target 2, regex type 1) and its own
+`Webhook (API)` Action. Outgoing mail from B must not be mistaken for
+a receipt at B. It does **not** attach the Webhook to the
+sender `RelaySMTP` Route (which runs before recipient arrival).
+
+The Webhook Action uses `POST`, `webhook_url`, `headers` containing the
+inbound key, and `data` with `$SENDER`, `$RECEIVERS`, and `$SUBJECT`.
+Provisioning reads the Action parameters back before enabling the Route.
+The Rule Group and template ID are provider-assigned. Existing resources are
+rechecked and cleanup removes the managed Receipt Route and Action.
+
+`MAILTRIGGER_RECEIPT_URL` is the **Relay Worker**'s public callback URL;
+`MAILTRIGGER_API_URL` remains the **MailTrigger server** address, completely
+independent of the receipt callback. No URL is inferred from one another.
+
+A verified B-side receipt can arrive before the send API response. In that
+case the authenticated receipt supersedes the D1 `pending` or `failed`
+submission state and records an arrived message. Wake events are queued from
+this authoritative arrival, not from the send API's HTTP 201.
+
+Routine Cron Archive polling has been removed. An authenticated, explicit
+`refresh=archive` diagnostic remains available but is not used by live
+Wake or the `smoke:receipts` script.
+
+**Provider validation needed:** MailTrigger's published Swagger documents
+Action parameter listing and PATCH, but the parameter-value serializer and
+active Webhook template names may differ by instance. Only an isolated
+mock contract has been exercised here; check actual staging Action parameters
+and the real incoming Webhook before production activation.
