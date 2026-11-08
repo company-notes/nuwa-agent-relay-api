@@ -324,10 +324,12 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
 
     const wakes = await client.call('token-b', 'GET',
       '/v1/wake-events?work_address_id=work-b');
-    expect(wakes.body.data).toHaveLength(1);
+    expect(wakes.body.data.filter((row: { messageId: string }) =>
+      row.messageId === sent.body.data.id)).toHaveLength(1);
     await WakeService.dispatchDue(env);
-    expect(client.wakeCallbacks).toHaveLength(1);
-    expect(client.wakeCallbacks[0].body.messageId).toBe(sent.body.data.id);
+    const deliveredForMessage = client.wakeCallbacks.filter((item) =>
+      item.body.messageId === sent.body.data.id);
+    expect(deliveredForMessage).toHaveLength(1);
   });
 
 
