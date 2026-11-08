@@ -217,7 +217,7 @@ export class RelayTestClient {
         }
 
         if (url.pathname === '/api/v1/routes/' &&
-          (value.filterOption !== 1 || !Number.isInteger(value.mailbox) ||
+          (![1, 3].includes(value.filterOption as number) || !Number.isInteger(value.mailbox) ||
             !Array.isArray(value.ruleConfigs) || !Array.isArray(value.actions) ||
             typeof value.isActive !== 'boolean' || 'ruleGroup' in value ||
             'rules' in value || 'isEnabled' in value || 'mailFilterOption' in value)) {
