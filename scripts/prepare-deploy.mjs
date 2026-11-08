@@ -47,6 +47,27 @@ class DeploymentConfiguration {
     config.vars.MAILTRIGGER_MANAGED_DOMAIN = managedDomain;
 
     config.vars.MAILTRIGGER_API_URL = this.optional('MAILTRIGGER_API_URL') || config.vars.MAILTRIGGER_API_URL;
+    // Optional, explicit public callback URL for the *Relay* Worker. Never
+    // infer it from MAILTRIGGER_API_URL (which is the *MailTrigger* server).
+    const receiptURL = this.optional('MAILTRIGGER_RECEIPT_URL');
+
+    if (receiptURL) {
+      let parsed;
+
+      try {
+        parsed = new URL(receiptURL);
+      } catch {
+        throw new Error('MAILTRIGGER_RECEIPT_URL must be a valid public HTTPS URL');
+      }
+
+      if (parsed.protocol !== 'https:' || parsed.pathname !== '/v1/mailtrigger/receipt' ||
+        parsed.search || parsed.hash || parsed.username || parsed.password) {
+        throw new Error('MAILTRIGGER_RECEIPT_URL must be a clean HTTPS Relay receipt URL');
+      }
+
+      config.vars.MAILTRIGGER_RECEIPT_URL = parsed.toString();
+    }
+
     config.vars.WAKE_ALLOWED_HOSTS = this.optional('WAKE_ALLOWED_HOSTS');
 
     const domain = this.optional('CLOUDFLARE_CUSTOM_DOMAIN') || 'agent-relay.company-notes.com';

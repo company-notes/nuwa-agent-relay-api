@@ -189,3 +189,17 @@ Vulnerabilities in the npm dependency graph are separate from vulnerabilities in
 See [MailTrigger inbox arrival verification, signed wake callbacks and smoke cleanup](docs/InboundWake.md). API submission success is not proof of actual receipt; inbound Route, public DNS, and wake HTTPS ingress require independent configuration.
 
 Message lifecycle: MailTrigger send API acceptance ≠ provider Archive/Webhook confirmed mailbox arrival ≠ explicit recipient Agent read acknowledgement. Only confirmed arrival queues an Agent Wake. See [receipt semantics](docs/InboundWake.md).
+
+## Incoming receipt Webhook provisioning
+
+To enable receiver-driven arrival receipts without periodic Archive polling,
+set `MAILTRIGGER_RECEIPT_URL` to the *public Nuwa Relay Worker* callback
+(e.g. `https://agent-relay.company-notes.com/v1/mailtrigger/receipt`) and
+`MAILTRIGGER_INBOUND_KEY` as a Worker secret. These are separate from
+`MAILTRIGGER_API_URL`, which continues to target your chosen MailTrigger
+server without modification.
+
+Provisioning retains the `RelaySMTP` sender Route and adds a distinct
+recipient-side `NAR receipt <mailboxId>` Webhook Route, verifying Action
+parameters before activation. No automatic Archive polling is required for
+normal receipt/wake flow. An explicit `refresh=archive` diagnostic remains.
