@@ -32,7 +32,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
       created: false,
     });
 
-    expect(client.rules).toHaveLength(1);
+    expect(client.rules).toHaveLength(2);
     expect(client.actions).toHaveLength(2);
     expect(client.routes).toHaveLength(2);
 
@@ -43,13 +43,19 @@ describe('Recipient MailTrigger Webhook Route', () => {
     expect(smtp.actions).toHaveLength(1);
     expect(receipt).toMatchObject({
       isActive: true,
-      filterOption: 3,
-      ruleConfigs: [],
+      filterOption: 1,
+      ruleConfigs: [client.rules.find((rule) => rule.note === 'NAR recipient 1')?.id],
       actions: [webhook.id],
       mailbox: 1,
       passToNextRouter: true,
     });
     expect(webhook).toMatchObject({ action: 22, user: 31 });
+    expect(client.rules.find((rule) => rule.note === 'NAR recipient 1')).toMatchObject({
+      target: 2,
+      ruleType: 1,
+      value: '^nar-hosta@relay-test\\.example$',
+      user: 31,
+    });
 
     const params = new Map(client.webhookParameters.get(Number(webhook.id))!
       .map((row) => [row.name, row.value]));

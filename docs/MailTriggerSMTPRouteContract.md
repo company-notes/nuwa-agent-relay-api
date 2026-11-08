@@ -123,8 +123,10 @@ credentials and does not populate missing secrets.
 
 When the Worker has `MAILTRIGGER_RECEIPT_URL` and the secret
 `MAILTRIGGER_INBOUND_KEY` configured, Host provisioning additionally creates
-a `NAR receipt <mailboxId>` Route on the **receiving mailbox**, with its own
-`Webhook (API)` Action. It does **not** attach the Webhook to the
+a `NAR receipt <mailboxId>` Route on the **receiving mailbox**, with a
+**recipient-address regex Rule** (target 2, regex type 1) and its own
+`Webhook (API)` Action. Outgoing mail from B must not be mistaken for
+a receipt at B. It does **not** attach the Webhook to the
 sender `RelaySMTP` Route (which runs before recipient arrival).
 
 The Webhook Action uses `POST`, `webhook_url`, `headers` containing the
