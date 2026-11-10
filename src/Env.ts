@@ -8,5 +8,5 @@ export interface Env {
   ALIAS_VERIFICATION_KEY?: string;
   MAILTRIGGER_INBOUND_KEY?: string;
   MAILTRIGGER_RECEIPT_URL?: string;
-  WAKE_ALLOWED_HOSTS?: string;
+  WAKE_CREDENTIALS_KEY?: string;
 }

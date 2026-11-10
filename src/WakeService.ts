@@ -1,86 +1,57 @@
 import type { Env } from './Env';
 import { APIError, HTTP } from './HTTP';
 import type { IdentityContext } from './IdentityContext';
+import { WakeRegistration } from './WakeRegistration';
+import { WakeTarget, type WakeAuthMode } from './WakeTarget';
 
 type WakeRow = {
   messageId: string;
   workAddressId: string;
   callbackUrl: string;
   signingSecret: string;
+  encryptedTarget: string | null;
   attempts: number;
 };
 
 export class WakeService {
-  private static allowedURL(value: string, allowedHosts: string | undefined): string {
-    let url: URL;
-
-    try {
-      url = new URL(value);
-    } catch {
-      throw new APIError(400, 'invalid_callback_url', 'Callback must be a public HTTPS URL.');
-    }
-
-    const allowed = (allowedHosts || '')
-      .split(',')
-      .map((host) => host.trim().toLowerCase())
-      .filter(Boolean);
-
-    if (url.protocol !== 'https:' || !allowed.includes(url.hostname.toLowerCase()) ||
-      !url.hostname.includes('.') || url.username || url.password || url.hash ||
-      (url.port && url.port !== '443')) {
-      throw new APIError(
-        400, 'callback_not_allowed',
-        'Callbacks require an exact hostname in WAKE_ALLOWED_HOSTS and public HTTPS.',
-      );
-    }
-
-    return url.toString();
-  }
 
   constructor(
     private readonly env: Env,
     private readonly identity: IdentityContext,
   ) {}
 
-  async subscribe(rawURL: string): Promise<Record<string, unknown>> {
-    const callback = WakeService.allowedURL(rawURL, this.env.WAKE_ALLOWED_HOSTS);
-    const signingSecret = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
-    const created = new Date().toISOString();
+  async subscribe(callbackURL: string, authMode: WakeAuthMode = 'hmac', bearerToken?: string) {
+    return new WakeRegistration(this.env, this.identity).begin(callbackURL, authMode, bearerToken);
+  }
 
-    await this.env.DB.prepare(
-      `INSERT INTO wake_subscriptions
-          (work_address_id, org_id, callback_url, signing_secret, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(work_address_id) DO UPDATE SET
-          callback_url = excluded.callback_url,
-          signing_secret = excluded.signing_secret,
-          created_at = excluded.created_at`,
-    ).bind(this.identity.work.id, this.identity.organization.id, callback, signingSecret, created).run();
-
-    return {
-      workAddressId: this.identity.work.id,
-      callbackUrl: callback,
-      signingSecret,
-      description: 'Keep signingSecret private. Validate X-Nuwa-Wake-Signature (HMAC-SHA256).',
-    };
+  async verify(verificationId: string, challenge: string) {
+    return new WakeRegistration(this.env, this.identity).verify(verificationId, challenge);
   }
 
   async getSubscription(): Promise<Record<string, unknown>> {
     const row = await this.env.DB.prepare(
-      'SELECT callback_url AS callbackUrl FROM wake_subscriptions WHERE work_address_id = ? AND org_id = ?',
+      'SELECT callback_url AS callbackURL, auth_mode AS authMode FROM wake_subscriptions WHERE work_address_id = ? AND org_id = ?',
     ).bind(this.identity.work.id, this.identity.organization.id)
-      .first<{ callbackUrl: string }>();
+      .first<{ callbackURL: string; authMode: string }>();
+
+    const pending = await new WakeRegistration(this.env, this.identity).pending();
 
     return {
       workAddressId: this.identity.work.id,
       enabled: Boolean(row),
-      callbackUrl: row?.callbackUrl ?? null,
+      callbackHost: row ? new URL(row.callbackURL).hostname : null,
+      authMode: row?.authMode ?? null,
+      pending,
     };
   }
 
   async unsubscribe(): Promise<Record<string, unknown>> {
     await this.env.DB.prepare(
       'DELETE FROM wake_subscriptions WHERE work_address_id = ? AND org_id = ?',
+    ).bind(this.identity.work.id, this.identity.organization.id).run();
+
+    await this.env.DB.prepare(
+      'DELETE FROM wake_registration_attempts WHERE work_address_id = ? AND org_id = ?',
     ).bind(this.identity.work.id, this.identity.organization.id).run();
 
     // Unsubscribe also removes retry jobs to avoid contacting the old endpoint.
@@ -103,25 +74,11 @@ export class WakeService {
     return result.results as Record<string, unknown>[];
   }
 
-  private static async signature(secret: string, body: string): Promise<string> {
-    const key = await crypto.subtle.importKey(
-      'raw', new TextEncoder().encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
-    );
-    const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body));
-
-    return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
-  }
-
   static async dispatchDue(env: Env): Promise<void> {
-    if (!env.WAKE_ALLOWED_HOSTS) {
-      return;
-    }
-
     const now = new Date().toISOString();
     const rows = await env.DB.prepare(
       `SELECT e.message_id AS messageId, e.work_address_id AS workAddressId,
-              e.attempts, s.callback_url AS callbackUrl, s.signing_secret AS signingSecret
+              e.attempts, s.callback_url AS callbackUrl, s.signing_secret AS signingSecret, s.encrypted_target AS encryptedTarget
          FROM wake_events e
          JOIN wake_subscriptions s ON s.work_address_id = e.work_address_id
          JOIN messages m ON m.id = e.message_id
@@ -145,46 +102,27 @@ export class WakeService {
         continue;
       }
 
-      // Enforce the current operator allowlist again, including migrated D1 rows.
-      let callback: string;
-
-      try {
-        callback = WakeService.allowedURL(event.callbackUrl, env.WAKE_ALLOWED_HOSTS);
-      } catch {
-        await env.DB.prepare(
-          `UPDATE wake_events SET status = 'failed', last_error = 'url_not_allowed',
-                lease_owner = NULL, lease_until = NULL
-            WHERE message_id = ? AND lease_owner = ?`,
-        ).bind(event.messageId, leaseOwner).run();
-        continue;
-      }
-
-      const body = JSON.stringify({
+      const body = {
         event: 'nuwa.message.available',
         messageId: event.messageId,
         workAddressId: event.workAddressId,
-      });
-      const signature = await WakeService.signature(event.signingSecret, body);
+      };
 
       let success = false;
       let reason = 'network_error';
 
       try {
-        const response = await fetch(callback, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-nuwa-wake-signature': 'sha256=' + signature,
-          },
-          body,
-          redirect: 'error',
-          signal: AbortSignal.timeout(8000),
-        });
-
-        success = response.ok;
-        reason = response.ok ? '' : 'http_' + response.status;
+        const config = event.encryptedTarget
+          ? await WakeTarget.decrypt(env, event.encryptedTarget)
+          : {
+            callbackURL: event.callbackUrl,
+            authMode: 'hmac' as const,
+            signingSecret: event.signingSecret,
+          };
+        success = await WakeTarget.send(config, body);
+        reason = success ? '' : 'http_rejected';
       } catch {
-        // Never leak callback secrets or HTTP response bodies to logs.
+        // No target URLs or secrets in external responses or logs.
       }
 
       const attempts = event.attempts + 1;

@@ -54,7 +54,7 @@ jobs:
       MAILTRIGGER_API_TOKEN: ${{ secrets.MAILTRIGGER_API_TOKEN }}
       ALIAS_VERIFICATION_KEY: ${{ secrets.ALIAS_VERIFICATION_KEY }}
       MAILTRIGGER_INBOUND_KEY: ${{ secrets.MAILTRIGGER_INBOUND_KEY }}
-      WAKE_ALLOWED_HOSTS: ${{ vars.WAKE_ALLOWED_HOSTS }}
+      WAKE_CREDENTIALS_KEY: ${{ secrets.WAKE_CREDENTIALS_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -83,6 +83,10 @@ jobs:
       - name: Set operator alias-verification Worker secret
         shell: bash
         run: printf '%s' "$ALIAS_VERIFICATION_KEY" | npx wrangler secret put ALIAS_VERIFICATION_KEY --config .wrangler.deploy.jsonc
+      - name: Set optional Wake target encryption key
+        if: env.WAKE_CREDENTIALS_KEY != ''
+        shell: bash
+        run: printf '%s' "$WAKE_CREDENTIALS_KEY" | npx wrangler secret put WAKE_CREDENTIALS_KEY --config .wrangler.deploy.jsonc
       - name: Set optional MailTrigger inbound credential
         if: env.MAILTRIGGER_INBOUND_KEY != ''
         shell: bash

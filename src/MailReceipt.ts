@@ -158,7 +158,7 @@ export class MailReceipt {
   static async reconcileArchives(env: Env): Promise<void> {
     // Archive reconciliation is an Agent wake feature. With no configured
     // receiving callbacks, do not poll every unconfirmed historical mailbox.
-    if (!env.MAILTRIGGER_API_TOKEN || !env.WAKE_ALLOWED_HOSTS) {
+    if (!env.MAILTRIGGER_API_TOKEN) {
       return;
     }
 
