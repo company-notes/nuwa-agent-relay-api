@@ -68,8 +68,6 @@ class DeploymentConfiguration {
       config.vars.MAILTRIGGER_RECEIPT_URL = parsed.toString();
     }
 
-    config.vars.WAKE_ALLOWED_HOSTS = this.optional('WAKE_ALLOWED_HOSTS');
-
     const domain = this.optional('CLOUDFLARE_CUSTOM_DOMAIN') || 'agent-relay.company-notes.com';
 
     if (domain !== 'agent-relay.company-notes.com') {

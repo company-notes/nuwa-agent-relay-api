@@ -16,7 +16,7 @@ export default defineConfig(async () => {
             MAILTRIGGER_MANAGED_DOMAIN: 'relay-test.example',
             ALIAS_VERIFICATION_KEY: 'test-alias-verification-key',
             MAILTRIGGER_INBOUND_KEY: 'test-inbound-key',
-            WAKE_ALLOWED_HOSTS: 'agent-hook.example.com',
+            WAKE_CREDENTIALS_KEY: 'a'.repeat(64),
           },
         },
       }),

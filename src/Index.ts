@@ -192,8 +192,21 @@ export class RelayAPI {
     if (request.method === 'POST' && pathname === '/v1/wake-subscription') {
       const data = await HTTP.json(request);
       const callback = HTTP.requiredString(data, 'callbackUrl', 2048);
+      const authMode = HTTP.optionalString(data, 'authMode', 32) ?? 'hmac';
+      const bearerToken = HTTP.optionalString(data, 'bearerToken', 2048) ?? undefined;
 
-      return HTTP.response(await new WakeService(this.env, identity).subscribe(callback), 201);
+      return HTTP.response(await new WakeService(this.env, identity).subscribe(
+        callback, authMode as 'hmac' | 'bearer' | 'capability', bearerToken,
+      ), 201);
+    }
+
+    if (pathname === '/v1/wake-subscription/verification' && request.method === 'POST') {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(await new WakeService(this.env, identity).verify(
+        HTTP.requiredString(data, 'verificationId', 64),
+        HTTP.requiredString(data, 'challenge', 128),
+      ));
     }
 
     if (pathname === '/v1/wake-subscription' && request.method === 'GET') {
@@ -298,7 +311,7 @@ export default {
       // Cron remains the durable retry/fallback. Never dispatch on send-201.
       if (request.method === 'POST' &&
         new URL(request.url).pathname === '/v1/mailtrigger/receipt' &&
-        response.ok && context && env.WAKE_ALLOWED_HOSTS) {
+        response.ok && context) {
         context.waitUntil(WakeService.dispatchDue(env));
       }
 
