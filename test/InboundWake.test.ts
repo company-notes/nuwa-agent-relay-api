@@ -152,10 +152,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
       });
     expect(blocked.status).toBe(400);
 
-    const subscribed = await client.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b', {
-        callbackUrl: 'https://agent-hook.example.com/wake',
-      });
+    const subscribed = await client.registerVerifiedWake();
     expect(subscribed.status).toBe(201);
     const secret = subscribed.body.data.signingSecret as string;
     expect(secret.length).toBeGreaterThan(48);
@@ -223,9 +220,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     client.installExternalTestTransport();
     await client.provisionBothHosts();
 
-    await client.call('token-b', 'POST', '/v1/wake-subscription?work_address_id=work-b', {
-      callbackUrl: 'https://agent-hook.example.com/wake',
-    });
+    await client.registerVerifiedWake();
 
     const mail = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
       to: '@beta/reviewer',
@@ -249,10 +244,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     client.installExternalTestTransport();
     await client.provisionBothHosts();
 
-    const subscribed = await client.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b', {
-        callbackUrl: 'https://agent-hook.example.com/wake',
-      });
+    const subscribed = await client.registerVerifiedWake();
     expect(subscribed.status).toBe(201);
 
     client.failNextWake = true;
@@ -298,10 +290,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     client.installExternalTestTransport();
     await client.provisionBothHosts();
 
-    const subscribed = await client.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b', {
-        callbackUrl: 'https://agent-hook.example.com/wake',
-      });
+    const subscribed = await client.registerVerifiedWake();
     expect(subscribed.status).toBe(201);
 
     // MailTrigger B delivers and calls Nuwa before A's send HTTP response.

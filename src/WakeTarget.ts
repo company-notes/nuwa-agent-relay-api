@@ -102,7 +102,7 @@ export class WakeTarget {
     }
 
     const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: this.unbase64(parts[1]) },
+      { name: 'AES-GCM', iv: Uint8Array.from(this.unbase64(parts[1])) },
       await this.key(env), this.unbase64(parts[2]));
 
     return JSON.parse(new TextDecoder().decode(plaintext)) as WakeTargetConfig;

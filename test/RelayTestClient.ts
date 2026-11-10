@@ -36,6 +36,8 @@ export class RelayTestClient {
   readonly webhookParameters = new Map<number, Array<Record<string, unknown>>>();
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
+  readonly wakeChallenges: Array<{ verificationId: string; challenge: string; workAddressId: string }> = [];
+  readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string }> = [];
 
   failNextMail = false;
   failNextWake = false;
@@ -422,11 +424,19 @@ export class RelayTestClient {
       return this.requestMailTrigger(url, init);
     }
 
-    if (url.hostname === 'agent-hook.example.com') {
-      this.wakeCallbacks.push({
-        body: JSON.parse(String(init?.body)),
-        signature: new Headers(init?.headers).get('x-nuwa-wake-signature'),
-      });
+    if (['agent-hook.example.com', 'api2.cursor.sh', 'agent-demo.ngrok-free.app'].includes(url.hostname)) {
+      const body = JSON.parse(String(init?.body));
+      const headers = new Headers(init?.headers);
+      this.wakeRequests.push({ body, authorization: headers.get('authorization'), url: url.toString() });
+
+      if (body.event === 'nuwa.wake.verification') {
+        this.wakeChallenges.push(body);
+      } else {
+        this.wakeCallbacks.push({
+          body,
+          signature: headers.get('x-nuwa-wake-signature'),
+        });
+      }
 
       if (this.failNextWake) {
         this.failNextWake = false;
@@ -474,6 +484,26 @@ export class RelayTestClient {
     );
 
     return { status: response.status, body: await response.json() };
+  }
+
+  async confirmLatestWake(token: 'token-a' | 'token-b' | 'token-c' = 'token-b') {
+    const challenge = this.wakeChallenges.at(-1);
+    expect(challenge, 'A real challenge POST must reach the target').toBeTruthy();
+    const response = await this.call(token, 'POST',
+      '/v1/wake-subscription/verification?work_address_id=' + challenge!.workAddressId,
+      { verificationId: challenge!.verificationId, challenge: challenge!.challenge });
+    expect(response.status).toBe(200);
+    expect(response.body.data.status).toBe('active');
+  }
+
+  async registerVerifiedWake(callbackURL = 'https://agent-hook.example.com/wake',
+                             authMode = 'hmac', bearerToken?: string) {
+    const response = await this.call('token-b', 'POST',
+      '/v1/wake-subscription?work_address_id=work-b',
+      { callbackUrl: callbackURL, authMode, ...(bearerToken ? { bearerToken } : {}) });
+    expect(response.status).toBe(201);
+    await this.confirmLatestWake();
+    return response;
   }
 
   archiveDeliveredEmail(mailboxId: string, subject: string): void {
