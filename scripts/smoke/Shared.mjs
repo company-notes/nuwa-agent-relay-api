@@ -3,15 +3,10 @@ import { dirname, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 
-export const addressOrigin = process.env.RELAY_SMOKE_ADDRESS_URL || 'https://address.company-notes.com';
-export const relayOrigin = process.env.RELAY_SMOKE_RELAY_URL || 'https://agent-relay.company-notes.com';
-export const statePath = resolve(process.env.RELAY_SMOKE_STATE || '.relay-smoke/session.json');
+import { addressOrigin, relayOrigin, statePath, assert } from './SmokeConfig.mjs';
+import { readSavedToken } from './AuthStore.mjs';
 
-export function assert(condition, description) {
-  if (!condition) {
-    throw new Error(description);
-  }
-}
+export { addressOrigin, relayOrigin, statePath, assert } from './SmokeConfig.mjs';
 
 export async function accessToken(side, expectedOrigin = addressOrigin) {
   const value = process.env['RELAY_SMOKE_TOKEN_' + side.toUpperCase()];
@@ -19,9 +14,6 @@ export async function accessToken(side, expectedOrigin = addressOrigin) {
   if (value) {
     return value;
   }
-
-  // Lazy import avoids a cycle: Auth uses shared state-path and validation helpers.
-  const { readSavedToken } = await import('./Auth.mjs');
 
   return readSavedToken(side, expectedOrigin);
 }
