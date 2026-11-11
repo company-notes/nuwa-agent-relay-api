@@ -41,6 +41,26 @@ export class WakePairing {
       (value) => value.toString(16).padStart(2, '0')).join('');
   }
 
+  private static csrfToken(sessionCookie: string): Promise<string> {
+    // The private browser session is a random 256-bit secret. Bind each form
+    // to that specific session without storing another credential in D1.
+    return this.digest('nuwa.wake.pair.csrf.v1:' + sessionCookie);
+  }
+
+  private static matchesCSRF(received: string, expected: string): boolean {
+    if (!/^[a-f0-9]{64}$/.test(received) || received.length !== expected.length) {
+      return false;
+    }
+
+    let difference = 0;
+
+    for (let index = 0; index < expected.length; index += 1) {
+      difference |= received.charCodeAt(index) ^ expected.charCodeAt(index);
+    }
+
+    return difference === 0;
+  }
+
   private static cookie(request: Request, name: string): string | null {
     const candidate = request.headers.get('cookie')?.split(';')
       .map((entry) => entry.trim()).find((entry) => entry.startsWith(name + '='));
@@ -277,6 +297,9 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
   private async showForm(request: Request): Promise<Response> {
     const row = await this.session(request);
     const safeWork = WakePairing.escape(row.workAddressId);
+    const csrfToken = await WakePairing.csrfToken(
+      WakePairing.cookie(request, WakePairing.sessionCookie)!,
+    );
 
     return WakePairing.page('安全連接 Webhook', `
 <p>已透過 Agent Address 驗證這個 Work 的管理權限。</p>
@@ -284,6 +307,7 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 <p>請從你的 Automation 設定複製 Webhook URL 與金鑰，直接貼到這個頁面。
 金鑰只會傳給 Relay Worker，不需要讓助理讀取。</p>
 <form method="post" action="/wake-pair/complete" autocomplete="off">
+<input type="hidden" name="csrfToken" value="${csrfToken}">
 <label for="url">Webhook HTTPS URL</label>
 <input id="url" name="callbackUrl" type="url" inputmode="url" maxlength="2048"
  placeholder="https://api2.cursor.sh/..." required>
@@ -296,7 +320,11 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
   }
 
   private async submitForm(request: Request): Promise<Response> {
-    if (request.headers.get('origin') !== WakePairingOAuth.origin) {
+    // A valid same-origin form may omit Origin in some browser/privacy
+    // configurations. Reject any explicit foreign Origin and require a
+    // cryptographically session-bound CSRF field regardless.
+    const origin = request.headers.get('origin');
+    if (origin !== null && origin !== WakePairingOAuth.origin) {
       throw new APIError(403, 'pairing_cross_origin', 'Pairing form must originate from Relay.');
     }
 
@@ -316,6 +344,15 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
     }
 
     const form = new URLSearchParams(body);
+    const csrfValues = form.getAll('csrfToken');
+    const sessionCookie = WakePairing.cookie(request, WakePairing.sessionCookie)!;
+    const expectedCSRF = await WakePairing.csrfToken(sessionCookie);
+
+    if (csrfValues.length !== 1 || !WakePairing.matchesCSRF(csrfValues[0], expectedCSRF)) {
+      throw new APIError(403, 'pairing_csrf_invalid',
+        'Pairing form expired or did not originate from this browser session.');
+    }
+
     const callbackValues = form.getAll('callbackUrl');
     const credentialValues = form.getAll('bearerToken');
 
