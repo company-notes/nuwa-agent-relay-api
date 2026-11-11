@@ -9,7 +9,7 @@
   },
   "vars": {
     "ADDRESS_API_URL": "https://address.company-notes.com",
-    "MAILTRIGGER_API_URL": "https://app.mailtrigger.app",
+    "MAILTRIGGER_API_URL": "https://route.mxnodes.com",
     "MAILTRIGGER_AUTH_SCHEME": "Token"
   },
   "d1_databases": [
