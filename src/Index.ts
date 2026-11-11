@@ -5,6 +5,7 @@ import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { IdentityContext } from './IdentityContext';
 import { MailReceipt } from './MailReceipt';
 import { WakeService } from './WakeService';
+import { WakePairing } from './WakePairing';
 import { RelayService, type NewMessage } from './RelayService';
 
 export class RelayAPI {
@@ -162,6 +163,10 @@ export class RelayAPI {
     pathname: string,
     wake: WakeService,
   ): Promise<Response | null> {
+    if (request.method === 'POST' && pathname === '/v1/wake-pairings') {
+      return HTTP.response(await new WakePairing(this.env).create(wake.scope), 201);
+    }
+
     if (request.method === 'POST' && pathname === '/v1/wake-subscription') {
       const data = await HTTP.json(request);
       const callback = HTTP.requiredString(data, 'callbackUrl', 2048);
@@ -200,6 +205,10 @@ export class RelayAPI {
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
+
+    if (pathname.startsWith('/wake-pair/')) {
+      return new WakePairing(this.env).handlePublic(request);
+    }
 
     if (request.method === 'GET' && pathname === '/health') {
       return HTTP.response({ service: 'nuwa-agent-relay-api', status: 'ok' });
