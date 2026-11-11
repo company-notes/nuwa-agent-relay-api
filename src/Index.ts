@@ -6,6 +6,7 @@ import { IdentityContext } from './IdentityContext';
 import { MailReceipt } from './MailReceipt';
 import { WakeService } from './WakeService';
 import { WakePairing } from './WakePairing';
+import { ThreadContextReader } from './ThreadContextReader';
 import { RelayService, type NewMessage } from './RelayService';
 
 export class RelayAPI {
@@ -249,7 +250,11 @@ export class RelayAPI {
     const messageId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)$/);
 
     if (request.method === 'GET' && messageId) {
-      return HTTP.response(await relay.messageById(messageId));
+      const contextLimit = ThreadContextReader.parseLimit(
+        url.searchParams.get('context_limit'),
+      );
+
+      return HTTP.response(await relay.messageById(messageId, contextLimit));
     }
 
     const readId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/read$/);
