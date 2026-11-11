@@ -286,7 +286,10 @@ export class MailTriggerRouteProvisioner {
     }
   }
 
-  private async ensureReceiptRoute(mailbox: ManagedMailbox, ownerId: number): Promise<void> {
+  private async ensureReceiptRoute(
+    mailbox: ManagedMailbox, ownerId: number,
+    senderRuleId: number, senderActionId: number, senderRouteId: number,
+  ): Promise<void> {
     if (!this.receipt) {
       // Backward-compatible transport: enable Receipt Webhooks only after the
       // endpoint and inbound secret are explicitly configured for this Worker.
@@ -360,6 +363,16 @@ export class MailTriggerRouteProvisioner {
       throw new APIError(502, 'mailtrigger_receipt_route_inactive',
         'The recipient Webhook Route is inactive.');
     }
+
+    // Retire the provider's inbound SMTP fallback only after the receipt
+    // Webhook Route has been read back and verified active. Never do this
+    // when receipt configuration is missing or parameter setup failed.
+    await this.removeDefaultRelayToOrigin(
+      mailboxId,
+      [ruleId, senderRuleId],
+      [actionId, senderActionId],
+      [MailTriggerRouteProvisioner.positiveId(verified.id), senderRouteId],
+    );
   }
 
   private static includesID(values: unknown, expected: number): boolean {
@@ -596,6 +609,57 @@ export class MailTriggerRouteProvisioner {
     }
   }
 
+  /**
+   * Unlike the outbound SMTP-to-Origin default, MailTrigger's exact inbound
+   * "Relay to Origin Route" remains until the NAR recipient Webhook is active.
+   * The legacy "Relay to Origin" route and user-named variants are untouched.
+   */
+  private async removeDefaultRelayToOrigin(
+    mailboxId: number,
+    protectedRuleIds: number[],
+    protectedActionIds: number[],
+    protectedRouteIds: number[],
+  ): Promise<void> {
+    const path = '/api/v1/routes/?page_size=1000';
+    const code = 'mailtrigger_relay_origin_lookup_failed';
+    const rows = await this.resources.list(path, code);
+
+    if (rows.length >= 1000) {
+      throw new APIError(502, 'mailtrigger_relay_origin_ambiguous',
+        'MailTrigger route listing may be truncated; refusing inbound origin route removal.');
+    }
+
+    const isTarget = (route: Resource): boolean =>
+      route.name === 'Relay to Origin Route' &&
+      MailTriggerRouteProvisioner.positiveId(route.mailbox) === mailboxId;
+
+    const matches = rows.filter(isTarget);
+    if (matches.length > 1) {
+      throw new APIError(502, 'mailtrigger_relay_origin_ambiguous',
+        'Multiple Relay to Origin Route entries belong to this mailbox; refusing deletion.');
+    }
+
+    if (matches.length === 0) return;
+
+    const fallback = matches[0];
+    const fallbackId = MailTriggerRouteProvisioner.positiveId(fallback.id);
+    if (protectedRouteIds.includes(fallbackId) ||
+      protectedRuleIds.some((id) => MailTriggerRouteProvisioner.includesID(fallback.ruleConfigs, id)) ||
+      protectedActionIds.some((id) => MailTriggerRouteProvisioner.includesID(fallback.actions, id))) {
+      throw new APIError(409, 'mailtrigger_relay_origin_conflict',
+        'Inbound origin route references Nuwa-managed resources; refusing deletion.');
+    }
+
+    await this.resources.delete('routes', fallbackId);
+
+    // Confirm actual removal; DELETE 204 alone does not prove it is gone.
+    const after = await this.resources.list(path, code);
+    if (after.length >= 1000 || after.some(isTarget)) {
+      throw new APIError(502, 'mailtrigger_relay_origin_not_removed',
+        'The inbound Relay to Origin Route remains after deletion.');
+    }
+  }
+
   async ensureForMailbox(mailbox: ManagedMailbox, ownerId: number): Promise<void> {
     const mailboxId = MailTriggerRouteProvisioner.positiveId(mailbox.mailboxId);
     const templateId = await this.relaySMTPTemplate();
@@ -650,6 +714,8 @@ export class MailTriggerRouteProvisioner {
 
     // This is a separate recipient-side route; never attach an arrival Webhook
     // to the sender-side RelaySMTP route (which runs before delivery to B).
-    await this.ensureReceiptRoute(mailbox, ownerId);
+    await this.ensureReceiptRoute(
+      mailbox, ownerId, ruleId, actionId, MailTriggerRouteProvisioner.positiveId(verified.id),
+    );
   }
 }
