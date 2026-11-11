@@ -56,7 +56,8 @@ async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' |
   const state = target.searchParams.get('state');
   expect(state).toMatch(/^[0-9a-f-]{36}\.[a-f0-9]{48}$/);
 
-  const oauthCookie = extractCookie(start, '__Host-nuwa_pair_oauth');
+  const oauthCookie = extractCookie(start,
+    '__Host-nuwa_pair_oauth_' + state!.split('.')[1]);
 
   return { created, state: state!, oauthCookie };
 }
@@ -75,7 +76,8 @@ describe('user-controlled Wake Pairing', () => {
       .searchParams.get('state');
     expect(secondState).toBeTruthy();
     expect(secondState).not.toBe(state);
-    const secondCookie = extractCookie(secondStart, '__Host-nuwa_pair_oauth');
+    const secondCookie = extractCookie(secondStart,
+      '__Host-nuwa_pair_oauth_' + secondState!.split('.')[1]);
 
     const callback = await open(origin + '/wake-pair/oauth/callback?' +
       new URLSearchParams({ state, code: 'owned-work' }), oauthCookie);
@@ -86,7 +88,7 @@ describe('user-controlled Wake Pairing', () => {
     // a different tab must not replace the first browser's pairing session.
     const laterCallback = await open(origin + '/wake-pair/oauth/callback?' +
       new URLSearchParams({ state: secondState!, code: 'owned-work' }), secondCookie);
-    expect(laterCallback.status).toBe(403);
+    expect(laterCallback.status).toBe(409);
     expect(callback.headers.get('location')).toBe(origin + '/wake-pair/complete');
     const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
     expect(callback.headers.get('cache-control')).toBe('no-store');
