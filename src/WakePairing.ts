@@ -301,7 +301,7 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
       WakePairing.cookie(request, WakePairing.sessionCookie)!,
     );
 
-    return WakePairing.page('安全連接 Webhook', `
+    const response = WakePairing.page('安全連接 Webhook', `
 <p>已透過 Agent Address 驗證這個 Work 的管理權限。</p>
 <p>Work ID：<code>${safeWork}</code></p>
 <p>請從你的 Automation 設定複製 Webhook URL 與金鑰，直接貼到這個頁面。
@@ -317,14 +317,31 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 <button type="submit">加密保存並發送一次驗證</button></form>
 <p><small>這是一次性配對。之後的每則訊息不必重新輸入金鑰；金鑰不會進入 URL、
 MCP 工具參數或 Agent 任務提示。</small></p>`);
+
+    // For same-origin HTML form POST, no-referrer turns Origin into "null".
+    // Override it only on the form; redirects and confirmation pages stay private.
+    response.headers.set('referrer-policy', 'same-origin');
+
+    return response;
   }
 
   private async submitForm(request: Request): Promise<Response> {
-    // A valid same-origin form may omit Origin in some browser/privacy
-    // configurations. Reject any explicit foreign Origin and require a
-    // cryptographically session-bound CSRF field regardless.
+    // Fetch serializes Origin as "null" for form POSTs under "no-referrer".
+    // Require a same-origin browser navigation for an opaque Origin. Older
+    // clients omitting Origin still need a valid session-bound CSRF token.
     const origin = request.headers.get('origin');
-    if (origin !== null && origin !== WakePairingOAuth.origin) {
+    const fetchSite = request.headers.get('sec-fetch-site');
+    const opaqueSameOrigin = origin === 'null' && fetchSite === 'same-origin';
+    const crossSite = fetchSite !== null && fetchSite !== 'same-origin';
+
+    if (crossSite || (origin !== null &&
+      origin !== WakePairingOAuth.origin && !opaqueSameOrigin)) {
+      WakePairing.logger.warning('form_source_rejected', {
+        originKind: origin === null ? 'missing' : origin === 'null' ? 'opaque' : 'other',
+        fetchSiteKind: fetchSite === null ? 'missing' :
+          fetchSite === 'same-origin' ? 'same-origin' : 'not-same-origin',
+      });
+
       throw new APIError(403, 'pairing_cross_origin', 'Pairing form must originate from Relay.');
     }
 
