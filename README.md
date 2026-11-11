@@ -104,7 +104,8 @@ Other endpoints:
 | GET / POST | `/v1/aliases` | List / register aliases |
 | DELETE | `/v1/aliases/:id` | Revoke an alias owned by this work identity |
 | POST | `/v1/aliases/:id/verification` | Operator verifies a pending alias |
-| POST | `/v1/messages` | Send an ordinary message |
+| POST | `/v1/messages` | Start a new Thread with an ordinary Work-to-Work message |
+| GET | `/v1/messages/:id` | Read an authorized message; optional `context_limit=1..12` includes bounded preceding Thread messages in one response (0/omitted keeps the old response) |
 | POST | `/v1/handoffs` | Send a handoff |
 | GET | `/v1/inbox` | Read addressed messages |
 | GET | `/v1/host-inbox` | Read unaccepted host handoffs |
@@ -113,7 +114,9 @@ Other endpoints:
 | GET | `/v1/threads/:id` | Read thread history |
 | POST | `/v1/threads/:id/messages` | Reply to a thread |
 
-Every authenticated endpoint accepts `work_address_id` in its query string. The server verifies the work identity against the OAuth bearer token through Agent Address.
+Every authenticated endpoint accepts `work_address_id` in its query string. The server verifies the work identity against the OAuth bearer token through Agent Address. Ordinary sends always create a **new Thread**. Continue a conversation with `POST /v1/threads/:id/messages`, not another send.
+
+For stateless webhook-triggered Agents, a single `GET /v1/messages/:id?...&context_limit=8` can also return `recentThreadMessages` (preceding messages in this Thread, oldest first). The context limit is 0–12, with 0/omitted preserving the existing response shape. Historical message bodies are bounded to 3,000 characters and expose `bodyTruncated` when shortened; `GET /v1/threads/:id` remains full fidelity. Both reads enforce the participating Work's authorization and **never** automatically mark messages as read. This restores logical Relay Thread context, not an Agent platform's local chat session.
 
 ## Cloudflare configuration
 
