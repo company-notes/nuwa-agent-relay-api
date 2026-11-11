@@ -165,7 +165,9 @@ export class RelayTestClient {
 
       const item = this.webhookParameters.get(Number(parameterItem[1]))?.find((row) =>
         Number(row.id) === Number(parameterItem[2]));
-      if (!item) return new Response(null, { status: 404 });
+      if (!item) {
+          return new Response(null, { status: 404 });
+        }
 
       const incoming = JSON.parse(String(init.body)) as Record<string, unknown>;
       if (typeof incoming.value !== 'string') {
