@@ -118,7 +118,6 @@ export class MailReceipt {
     return HTTP.response({ matched: true, messageId, duplicate: Boolean(result.receivedAt) });
   }
 
-
   /**
    * Confirm a MailTrigger-side arrival without treating a send-API 201 as
    * evidence. Updating the receipt and queuing a subscribed Work's wake are
