@@ -5,8 +5,11 @@ import { createInterface } from 'node:readline/promises';
 
 import { addressOrigin, relayOrigin, statePath, assert } from './SmokeConfig.mjs';
 import { readSavedToken } from './AuthStore.mjs';
+import { SmokeLogger } from './Logger.mjs';
 
 export { addressOrigin, relayOrigin, statePath, assert } from './SmokeConfig.mjs';
+
+const logger = new SmokeLogger('smoke.command');
 
 export async function accessToken(side, expectedOrigin = addressOrigin) {
   const value = process.env['RELAY_SMOKE_TOKEN_' + side.toUpperCase()];
@@ -45,8 +48,14 @@ export async function request(origin, path, token, options = {}) {
     method: options.method || 'GET',
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    redirect: 'manual',
     signal: AbortSignal.timeout(20000),
   });
+
+  // Never follow a redirect while carrying an OAuth Bearer credential.
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error('Service returned an unexpected redirect (HTTP ' + response.status + ').');
+  }
 
   let payload;
 
@@ -163,7 +172,9 @@ export async function execute(fn) {
   try {
     await fn();
   } catch (error) {
-    console.error('Smoke test failed: ' + (error instanceof Error ? error.message : String(error)));
+    // Provider errors and network exceptions may contain private URLs or tokens.
+    logger.exception('command_failed', error);
+    console.error('Smoke test failed. Check the sanitized error type above.');
     process.exitCode = 1;
   }
 }
