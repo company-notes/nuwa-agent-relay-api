@@ -1,3 +1,5 @@
+import { Logger } from './Logger';
+
 export type JSONRecord = Record<string, unknown>;
 
 export class APIError extends Error {
@@ -11,6 +13,7 @@ export class APIError extends Error {
 }
 
 export class HTTP {
+  private static readonly logger = Logger.forModule('relay.http');
   static async json(request: Request): Promise<JSONRecord> {
     if (!request.headers.get('content-type')?.includes('application/json')) {
       throw new APIError(415, 'invalid_content_type', 'JSON request body required.');
@@ -96,7 +99,7 @@ export class HTTP {
       );
     }
 
-    console.error('Unhandled Nuwa Agent Relay API error', error);
+    HTTP.logger.exception('unhandled_exception', error);
 
     return Response.json(
       { ok: false, error: { code: 'internal_error', message: 'Unexpected server error.' } },
