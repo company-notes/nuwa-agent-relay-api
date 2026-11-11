@@ -12,12 +12,14 @@ type PairingRow = {
   workAddressId: string;
   orgId: string;
   expiresAt: string;
-  oauthStateDigest: string | null;
-  oauthClientId: string | null;
-  oauthStartedAt: string | null;
   sessionDigest: string | null;
   sessionExpiresAt: string | null;
   consumedAt: string | null;
+};
+
+type OAuthAttemptRow = PairingRow & {
+  oauthClientId: string;
+  oauthStartedAt: string;
 };
 
 export class WakePairing {
@@ -66,6 +68,12 @@ export class WakePairing {
       .map((entry) => entry.trim()).find((entry) => entry.startsWith(name + '='));
 
     return candidate ? candidate.slice(name.length + 1) : null;
+  }
+
+  private static oauthCookieName(state: string): string {
+    // Each OAuth flow needs its own cookie; a second browser tab must not
+    // overwrite the first flow's PKCE verifier.
+    return WakePairing.oauthCookie + '_' + state.split('.')[1];
   }
 
   private static secureCookie(name: string, value: string, ageSeconds: number): string {
@@ -131,10 +139,8 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
   private async byId(id: string): Promise<PairingRow | null> {
     return this.env.DB.prepare(
       `SELECT id, work_address_id AS workAddressId, org_id AS orgId,
-              expires_at AS expiresAt, oauth_state_digest AS oauthStateDigest,
-              oauth_client_id AS oauthClientId, oauth_started_at AS oauthStartedAt,
-              session_digest AS sessionDigest, session_expires_at AS sessionExpiresAt,
-              consumed_at AS consumedAt
+              expires_at AS expiresAt, session_digest AS sessionDigest,
+              session_expires_at AS sessionExpiresAt, consumed_at AS consumedAt
        FROM wake_pairing_requests WHERE id = ?`,
     ).bind(id).first<PairingRow>();
   }
@@ -148,6 +154,12 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
     const now = new Date();
     const expiresAt = new Date(now.getTime() + WakePairing.maxPairMs).toISOString();
     const cooldown = new Date(now.getTime() - 60_000).toISOString();
+    const retentionCutoff = new Date(now.getTime() - 24 * 60 * 60_000).toISOString();
+
+    // Bound orphaned attempts when invitations are replaced or expire.
+    await this.env.DB.prepare(
+      'DELETE FROM wake_pairing_oauth_attempts WHERE started_at < ?',
+    ).bind(retentionCutoff).run();
 
     const result = await this.env.DB.prepare(
       `INSERT INTO wake_pairing_requests
@@ -189,11 +201,16 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 
     const digest = await WakePairing.digest(link);
     const row = await this.env.DB.prepare(
-      `SELECT id, expires_at AS expiresAt, consumed_at AS consumedAt
+      `SELECT id, expires_at AS expiresAt, consumed_at AS consumedAt,
+              session_digest AS sessionDigest
        FROM wake_pairing_requests WHERE link_digest = ?`,
-    ).bind(digest).first<{ id: string; expiresAt: string; consumedAt: string | null }>();
+    ).bind(digest).first<{
+      id: string; expiresAt: string;
+      consumedAt: string | null; sessionDigest: string | null;
+    }>();
 
-    if (!row || row.consumedAt || row.expiresAt <= new Date().toISOString()) {
+    if (!row || row.consumedAt || row.sessionDigest ||
+      row.expiresAt <= new Date().toISOString()) {
       throw new APIError(404, 'pairing_not_found', 'Pairing link is invalid or expired.');
     }
 
@@ -204,18 +221,21 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
     const stateDigest = await WakePairing.digest(state);
     const now = new Date().toISOString();
 
-    const updated = await this.env.DB.prepare(
-      `UPDATE wake_pairing_requests SET oauth_state_digest = ?,
-         oauth_client_id = ?, oauth_started_at = ?
-       WHERE id = ? AND expires_at > ? AND consumed_at IS NULL`,
+    const created = await this.env.DB.prepare(
+      `INSERT INTO wake_pairing_oauth_attempts
+         (state_digest, pairing_id, oauth_client_id, started_at)
+       SELECT ?, id, ?, ? FROM wake_pairing_requests
+       WHERE id = ? AND expires_at > ? AND consumed_at IS NULL
+         AND session_digest IS NULL`,
     ).bind(stateDigest, clientId, now, row.id, now).run();
 
-    if (updated.meta.changes !== 1) {
+    if (created.meta.changes !== 1) {
       throw new APIError(409, 'pairing_expired', 'Pairing link is no longer active.');
     }
 
     return WakePairing.redirect(await oauth.authorizationURL(clientId, state, verifier), [
-      WakePairing.secureCookie(WakePairing.oauthCookie, state + ':' + verifier, 600),
+      WakePairing.secureCookie(WakePairing.oauthCookieName(state),
+        state + ':' + verifier, 600),
       WakePairing.secureCookie(WakePairing.sessionCookie, '', 0),
     ]);
   }
@@ -230,21 +250,43 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
     const state = params.get('state') ?? '';
     const code = params.get('code') ?? '';
     const match = state.match(/^([0-9a-f-]{36})\.([a-f0-9]{48})$/);
-    const cookie = WakePairing.cookie(request, WakePairing.oauthCookie);
+    const oauthCookieName = match ? WakePairing.oauthCookieName(state) : '';
+    const cookie = match ? WakePairing.cookie(request, oauthCookieName) : null;
     const verifier = cookie?.startsWith(state + ':') ? cookie.slice(state.length + 1) : null;
 
     if (!match || !code || code.length > 4096 || !verifier || !/^[a-f0-9]{64}$/.test(verifier)) {
       throw new APIError(403, 'pairing_oauth_invalid', 'Pairing login was not initiated in this browser.');
     }
 
-    const row = await this.byId(match[1]);
     const now = new Date();
     const digest = await WakePairing.digest(state);
+    const row = await this.env.DB.prepare(
+      `SELECT p.id, p.work_address_id AS workAddressId,
+              p.org_id AS orgId, p.expires_at AS expiresAt,
+              p.session_digest AS sessionDigest,
+              p.session_expires_at AS sessionExpiresAt,
+              p.consumed_at AS consumedAt,
+              a.oauth_client_id AS oauthClientId,
+              a.started_at AS oauthStartedAt
+       FROM wake_pairing_oauth_attempts AS a
+       JOIN wake_pairing_requests AS p ON p.id = a.pairing_id
+       WHERE a.state_digest = ? AND a.pairing_id = ?`,
+    ).bind(digest, match[1]).first<OAuthAttemptRow>();
 
-    if (!row || !row.oauthClientId || row.oauthStateDigest !== digest ||
-      !row.oauthStartedAt || row.consumedAt || row.expiresAt <= now.toISOString() ||
+    if (!row) {
+      throw new APIError(403, 'pairing_oauth_unrecognized',
+        'This OAuth login cannot be matched to the pairing link.');
+    }
+
+    if (row.sessionDigest || row.consumedAt) {
+      throw new APIError(409, 'pairing_oauth_replayed',
+        'This pairing has already been approved.');
+    }
+
+    if (row.expiresAt <= now.toISOString() ||
       Date.parse(row.oauthStartedAt) + WakePairing.maxOAuthMs <= now.getTime()) {
-      throw new APIError(403, 'pairing_oauth_invalid', 'Pairing login is expired or already used.');
+      throw new APIError(410, 'pairing_oauth_expired',
+        'This pairing login has expired. Start again from a new pairing link.');
     }
 
     await new WakePairingOAuth(this.env).verifyWork(
@@ -259,18 +301,24 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 
     const consumedState = await this.env.DB.prepare(
       `UPDATE wake_pairing_requests
-       SET oauth_state_digest = NULL, oauth_client_id = NULL,
-           session_digest = ?, session_expires_at = ?
-       WHERE id = ? AND oauth_state_digest = ? AND consumed_at IS NULL
-         AND expires_at > ?`,
-    ).bind(sessionDigest, sessionExpiresAt, row.id, digest, now.toISOString()).run();
+       SET session_digest = ?, session_expires_at = ?
+       WHERE id = ? AND session_digest IS NULL AND consumed_at IS NULL
+         AND expires_at > ?
+         AND EXISTS (
+           SELECT 1 FROM wake_pairing_oauth_attempts
+           WHERE state_digest = ?
+             AND pairing_id = wake_pairing_requests.id
+             AND started_at > ?
+         )`,
+    ).bind(sessionDigest, sessionExpiresAt, row.id, now.toISOString(), digest,
+      new Date(now.getTime() - WakePairing.maxOAuthMs).toISOString()).run();
 
     if (consumedState.meta.changes !== 1) {
       throw new APIError(409, 'pairing_oauth_replayed', 'OAuth approval has already been used.');
     }
 
     return WakePairing.redirect(WakePairingOAuth.origin + '/wake-pair/complete', [
-      WakePairing.secureCookie(WakePairing.oauthCookie, '', 0),
+      WakePairing.secureCookie(oauthCookieName, '', 0),
       WakePairing.secureCookie(WakePairing.sessionCookie, row.id + '.' + sessionSecret, 600),
     ]);
   }
