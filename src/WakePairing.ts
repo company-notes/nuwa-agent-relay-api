@@ -282,7 +282,7 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 <p>已透過 Agent Address 驗證這個 Work 的管理權限。</p>
 <p>Work ID：<code>${safeWork}</code></p>
 <p>請從你的 Automation 設定複製 Webhook URL 與金鑰，直接貼到這個頁面。
-金鑰只會傳給 Relay Worker，**不需要讓助理讀取**。</p>
+金鑰只會傳給 Relay Worker，不需要讓助理讀取。</p>
 <form method="post" action="/wake-pair/complete" autocomplete="off">
 <label for="url">Webhook HTTPS URL</label>
 <input id="url" name="callbackUrl" type="url" inputmode="url" maxlength="2048"
@@ -305,6 +305,11 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
     }
 
     const row = await this.session(request);
+    const declaredSize = Number(request.headers.get('content-length') ?? 0);
+    if (!Number.isFinite(declaredSize) || declaredSize > 8192) {
+      throw new APIError(413, 'pairing_form_too_large', 'Pairing form is too large.');
+    }
+
     const body = await request.text();
     if (body.length > 8192) {
       throw new APIError(413, 'pairing_form_too_large', 'Pairing form is too large.');
