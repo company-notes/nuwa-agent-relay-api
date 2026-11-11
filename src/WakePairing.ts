@@ -118,7 +118,7 @@ button { font: inherit; padding: .75rem 1.2rem; margin-top: 1.25rem; cursor: poi
 small { opacity: .75; } code { overflow-wrap: anywhere; }
 </style></head><body><main><h1>${this.escape(title)}</h1>${content}</main></body></html>`;
 
-    return this.noCache(new Response(html, {
+    const response = this.noCache(new Response(html, {
       status,
       headers: {
         'content-type': 'text/html; charset=utf-8',
@@ -126,6 +126,13 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
         'x-frame-options': 'DENY',
       },
     }));
+
+    // "no-referrer" serializes Origin as "null" for ordinary HTML form POSTs.
+    // Same-origin permits the real Origin for our form and sends no Referer
+    // to external sites. Keep "no-referrer" on OAuth 303 redirects.
+    response.headers.set('referrer-policy', 'same-origin');
+
+    return response;
   }
 
   private async byId(id: string): Promise<PairingRow | null> {
@@ -320,11 +327,22 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
   }
 
   private async submitForm(request: Request): Promise<Response> {
-    // A valid same-origin form may omit Origin in some browser/privacy
-    // configurations. Reject any explicit foreign Origin and require a
-    // cryptographically session-bound CSRF field regardless.
+    // Fetch serializes Origin as "null" for form POSTs under "no-referrer".
+    // Require a same-origin browser navigation for an opaque Origin. Older
+    // clients omitting Origin still need a valid session-bound CSRF token.
     const origin = request.headers.get('origin');
-    if (origin !== null && origin !== WakePairingOAuth.origin) {
+    const fetchSite = request.headers.get('sec-fetch-site');
+    const opaqueSameOrigin = origin === 'null' && fetchSite === 'same-origin';
+    const crossSite = fetchSite !== null && fetchSite !== 'same-origin';
+
+    if (crossSite || (origin !== null &&
+      origin !== WakePairingOAuth.origin && !opaqueSameOrigin)) {
+      WakePairing.logger.warning('form_source_rejected', {
+        originKind: origin === null ? 'missing' : origin === 'null' ? 'opaque' : 'other',
+        fetchSiteKind: fetchSite === null ? 'missing' :
+          fetchSite === 'same-origin' ? 'same-origin' : 'not-same-origin',
+      });
+
       throw new APIError(403, 'pairing_cross_origin', 'Pairing form must originate from Relay.');
     }
 
