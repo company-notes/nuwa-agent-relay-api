@@ -44,6 +44,7 @@ export class RelayTestClient {
 
   failNextMail = false;
   failNextWake = false;
+  redirectNextWake = false;
   failAddressStatus = false;
   failNextRouteCreation = false;
   failNextRouteLookup = false;
@@ -457,6 +458,13 @@ export class RelayTestClient {
         this.wakeCallbacks.push({
           body,
           signature: headers.get('x-nuwa-wake-signature'),
+        });
+      }
+
+      if (this.redirectNextWake) {
+        this.redirectNextWake = false;
+        return new Response(null, {
+          status: 302, headers: { location: 'https://untrusted.example.net/steal' },
         });
       }
 
