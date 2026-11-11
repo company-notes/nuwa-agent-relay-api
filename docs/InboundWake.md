@@ -34,19 +34,38 @@ Relay 接到回報時會驗證獨立 Secret、`[NAR:<message-UUID>]` Subject、�
 
 在 `smoke:a -- send` 後執行 `npm run smoke:receipts`，會逐一驗證一般訊息與 Handoff 是否被收件 Webhook 確認。這個腳本現在**不再呼叫 `refresh=archive`**。Inbox 仍來自 Relay D1，不能單靠它證明 MailTrigger 真正收件；若 Webhook Route 失敗，receipt 會保持未確認。
 
-## 2. Agent HTTPS 喚醒通知
+## 2. Agent HTTPS 喚醒通知與安全配對
 
-每個 Work 以自己的 OAuth Token 註冊：
+**推薦 GrokBot / Cursor 等隱藏 Webhook 金鑰的平台採用 Wake Pairing：**
 
-- `POST /v1/wake-subscription?work_address_id=<id>`，Body `{"callbackUrl":"https://agents.example.com/wake"}`；只回傳一次簽章 Secret。
-- `GET /v1/wake-subscription` 只回傳訂閱狀態和 URL，永不回傳 Secret。
+1. Agent 完成 MCP OAuth 並選定有效 Work，在 Automation 任務內容固定寫入 `EXPECTED_WORK_ID`，請使用者同意建立 Webhook。
+2. Agent 呼叫 `relayBeginWakePairing`，即 `POST /v1/wake-pairings?work_address_id=<Work ID>`（帶 Agent Address OAuth Bearer）；只傳送 Work ID，取得約 20 分鐘有效的單次 `pairingUrl`。建立新連結有 60 秒冷卻期。
+3. 使用者自己開啟 `https://agent-relay.company-notes.com/wake-pair/<一次性連結>`，經 Agent Address OAuth / PKCE 登入並被驗證確實擁有相同 Organization + Work 後，才看到安全表單。
+4. 使用者從原 Webhook 平台複製 URL 與 Key，**直接填入 Relay HTTPS 配對頁面**。Key 不會經過聊天、MCP 工具參數或 URL，Relay 使用 `WAKE_CREDENTIALS_KEY` AES-GCM 加密保存目標。
+5. Relay 沿用既有 `WakeRegistration.begin`，送出 `nuwa.wake.verification`；Automation 用相同 Work 的 OAuth 呼叫 `relayVerifyWake`，確認 `enabled: true` 才算完成。若 Challenge 未送達或驗證失敗，不能把配對頁提交成功當成 Agent 已受信任。
+
+配對連結只能使用一次；OAuth `state` / PKCE 驗證、Secure HttpOnly SameSite Cookie、
+POST Origin 驗證、短效 Session 與 D1 SHA-256 雜湊防止任意接管。配對連結本身請只分享給
+目標使用者，不放公開日誌；如果平台將金鑰遮蔽到連使用者也無法複製，請在該平台生成
+新 Key，再於配對頁私密輸入。當金鑰變更後，必須重新配對。
+
+API 仍支援既有的自動化註冊：
+
+- `POST /v1/wake-subscription?work_address_id=<id>`，Body 包含 `callbackUrl`、`authMode` 和對 Bearer 模式適用的 `bearerToken`；只有在受信任的程序確實可以安全取得 Key 時才應使用。
+- `POST /v1/wake-subscription/verification`，Body 包含 `verificationId` 與 `challenge`；這是**一次性的驗證**，不是每則訊息的例行工作。
+- `GET /v1/wake-subscription` 只回傳狀態與公開 Host，永不回傳 Secret。
 - `DELETE /v1/wake-subscription` 取消訂閱和待送任務。
 - `GET /v1/wake-events` 讀取自己的通知狀態與失敗原因。
-- `GET /v1/messages/<messageId>?work_address_id=<id>`，僅同 Thread 的已授權參與者可取得正文。
+- `GET /v1/messages/<messageId>?work_address_id=<id>` 以授權 Work 取得正文。
 
-管理者需在 Relay GitHub Actions Variables 加入 `WAKE_ALLOWED_HOSTS`，內容為逗號分隔的**確切公開 HTTPS hostname**，例如 `agents.example.com`；不允許 localhost、任意 IP、HTTP、萬用字元或自動重新導向。重新部署後 Cloudflare Cron 每分鐘重試 D1 Wake 佇列；收到可信 MailTrigger Receipt Webhook 時會在同一請求背景嘗試即時派送。通知只有事件名稱、Message ID 和 Work ID，不包含正文／附件。
-
-每個 Callback 使用 `X-Nuwa-Wake-Signature: sha256=<hex>`，簽的是原始 JSON Body 的 HMAC-SHA256；接收端必須用專屬 Secret 驗證，並以 Message ID 做冪等處理。非 2xx 最多重試 6 次；郵件不會因為喚醒失敗而重寄。
+Wake 目標只能是經驗證的公開 HTTPS 主機、標準埠且不得自動跟隨 Redirect。
+`hmac` 模式在原始 JSON body 上提供 `X-Nuwa-Wake-Signature: sha256=<hex>`；
+`bearer` 模式另外使用 Webhook Key 的 `Authorization: Bearer`；
+`capability` 模式使用平台批准的秘密 URL。只有對應模式的接收端完成驗證後才能處理。
+MailTrigger 到站確認後才會建立 Wake 通知，Cron 每分鐘重試失敗投遞，最多 6 次。
+Wake Body 只有事件名稱、Message ID 與 Work ID，不含正文或附件。正常已驗證訊息採
+**Webhook 驗證 → 比對預存 Work ID → 一次 relayMessage → 必要時 relayReplyThread**，
+不重新註冊、不重查工具清單或身份狀態、不自動回已讀。
 
 本機測試示例：
 
@@ -84,7 +103,7 @@ npm run smoke:cleanup
 - Agent Address 必須先部署受限的空 Host 撤銷 API。
 - Relay 必須套用 `0002_mail_receipts_wake.sql` 並部署新的 Cron 與 API。
 - `MAILTRIGGER_INBOUND_KEY` 為可選 Secret；未設定時 Inbound Route 回傳 503，不會放行。
-- `WAKE_ALLOWED_HOSTS` 為可選 Variable；未設定時 Agent Wake 無法註冊。
+- `WAKE_CREDENTIALS_KEY` 為必要 Worker Secret；新註冊必須使用有效的 32-byte AES-GCM 金鑰，Webhook Key 不會寫入 D1 明文。
 - MailTrigger 後台的實際 Incoming Route、DNS 設定、Agent HTTPS Tunnel 與外部郵件送達，需要由持有該服務管理權限的操作者完成；GitHub PR 不會自動更動這些外部帳號設定。
 
 ## 5. 自動化測試
