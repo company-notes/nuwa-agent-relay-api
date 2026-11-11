@@ -123,6 +123,28 @@ describe('automatic managed SMTP provisioning', () => {
     expect(client.routes.find((route) => route.name === 'NAR route 1')?.isActive).toBe(true);
   });
 
+  it('refuses to delete an origin route with an invalid linked Rule ID', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    client.routes.push({
+      id: 901,
+      name: 'SMTP to Origin Router',
+      mailbox: 1,
+      ruleGroup: 1,
+      filterOption: 3,
+      ruleConfigs: [{ id: 'invalid-provider-id' }],
+      actions: [],
+      isActive: true,
+    });
+
+    const response = await client.call('token-a', 'POST',
+      '/v1/hosts/provision?work_address_id=work-a');
+
+    expect(response.status).toBe(502);
+    expect(response.body.error.code).toBe('mailtrigger_resource_invalid');
+    expect(client.routes.find((route) => route.id === 901)).toBeDefined();
+  });
+
   it('keeps unrelated custom routes and another mailbox default untouched', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
