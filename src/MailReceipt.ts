@@ -1,6 +1,7 @@
 import type { Env } from './Env';
 import { APIError, HTTP } from './HTTP';
 import { MailTriggerClient } from './MailTriggerClient';
+import { Logger } from './Logger';
 
 type IncomingReceipt = {
   from: string;
@@ -9,6 +10,7 @@ type IncomingReceipt = {
 };
 
 export class MailReceipt {
+  private static readonly logger = Logger.forModule('mail.receipt');
   private static readonly SUBJECT_PATTERN = /^\[NAR:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]/i;
 
   constructor(private readonly env: Env) {}
@@ -193,10 +195,9 @@ export class MailReceipt {
 
       try {
         archived = await provider.archivedProtocolMessageIds(mailboxId);
-      } catch {
-        // No false-positive receipt and no aborted retry cycle if a provider
-        // mailbox is unavailable. The next Cron will try the same IDs again.
-        console.warn('MailTrigger archive reconciliation failed for a mailbox.');
+      } catch (error) {
+        // No false-positive receipt if one provider mailbox is unavailable.
+        MailReceipt.logger.exception('archive_reconciliation_failed', error);
         continue;
       }
 
