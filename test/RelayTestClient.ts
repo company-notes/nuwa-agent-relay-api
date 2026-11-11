@@ -458,7 +458,8 @@ export class RelayTestClient {
         expect(init.redirect).toBe('manual');
 
         return Response.json({
-          access_token: request.get('code') === 'different-owner' ? 'token-a' : 'token-b',
+          access_token: request.get('code') === 'owned-a' || request.get('code') === 'different-owner'
+            ? 'token-a' : request.get('code') === 'owned-c' ? 'token-c' : 'token-b',
           token_type: 'Bearer',
         });
       }
