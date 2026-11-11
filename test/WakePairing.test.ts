@@ -16,6 +16,14 @@ async function open(url: string, cookie?: string, init: RequestInit = {}): Promi
   }));
 }
 
+function extractCSRF(html: string): string {
+  const csrf = html.match(/name="csrfToken"[^>]*value="([a-f0-9]{64})"/);
+
+  expect(csrf, 'The private pairing form must carry a session-bound CSRF token').not.toBeNull();
+
+  return csrf![1];
+}
+
 function extractCookie(response: Response, name: string): string {
   const headers = response.headers as Headers & { getSetCookie?(): string[] };
   const values = headers.getSetCookie?.() ?? [response.headers.get('set-cookie') ?? ''];
@@ -74,16 +82,17 @@ describe('user-controlled Wake Pairing', () => {
     expect(html).toContain('name="bearerToken"');
     expect(html).toContain('type="password"');
     expect(form.headers.get('content-security-policy')).toContain("form-action 'self'");
+    const csrfToken = extractCSRF(html);
 
     const bearerToken = 'human-entered-secret-for-cursor-webhook';
     const callbackUrl = 'https://api2.cursor.sh/automations/webhook/private-path';
-    const encoded = new URLSearchParams({ callbackUrl, bearerToken });
+    const encoded = new URLSearchParams({ callbackUrl, bearerToken, csrfToken });
 
     const attempt = await open(origin + '/wake-pair/complete', sessionCookie, {
       method: 'POST',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        origin,
+        // Some privacy-conscious browsers omit Origin for a legitimate form POST.
       },
       body: encoded.toString(),
     });
@@ -152,6 +161,8 @@ describe('user-controlled Wake Pairing', () => {
       new URLSearchParams({ state, code: 'owned-c' }), oauthCookie);
     expect(legitimate.status).toBe(303);
     const sessionCookie = extractCookie(legitimate, '__Host-nuwa_pair_session');
+    const formResponse = await open(origin + '/wake-pair/complete', sessionCookie);
+    const csrfToken = extractCSRF(await formResponse.text());
 
     const direct = await open(origin + '/wake-pair/complete', undefined, {
       method: 'POST',
@@ -163,6 +174,17 @@ describe('user-controlled Wake Pairing', () => {
     });
     expect(direct.status).toBe(403);
 
+    const missingCSRF = await open(origin + '/wake-pair/complete', sessionCookie, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        callbackUrl: 'https://api2.cursor.sh/automations/webhook/hidden',
+        bearerToken: 'secrets-not-in-MCP',
+      }),
+    });
+    expect(missingCSRF.status).toBe(403);
+    expect((await missingCSRF.json() as any).error.code).toBe('pairing_csrf_invalid');
+
     const wrongOrigin = await open(origin + '/wake-pair/complete', sessionCookie, {
       method: 'POST',
       headers: {
@@ -172,22 +194,37 @@ describe('user-controlled Wake Pairing', () => {
       body: new URLSearchParams({
         callbackUrl: 'https://api2.cursor.sh/automations/webhook/hidden',
         bearerToken: 'secrets-not-in-MCP',
+        csrfToken,
       }),
     });
     expect(wrongOrigin.status).toBe(403);
+    expect(client.wakeRequests).toHaveLength(0);
+
+    const forgedToken = await open(origin + '/wake-pair/complete', sessionCookie, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        callbackUrl: 'https://api2.cursor.sh/automations/webhook/hidden',
+        bearerToken: 'secrets-not-in-MCP',
+        csrfToken: '0'.repeat(64),
+      }),
+    });
+    expect(forgedToken.status).toBe(403);
+    expect((await forgedToken.json() as any).error.code).toBe('pairing_csrf_invalid');
     expect(client.wakeRequests).toHaveLength(0);
 
     const secondInvitation = await client.call('token-c', 'POST',
       '/v1/wake-pairings?work_address_id=work-c');
     expect(secondInvitation.status).toBe(429);
 
-    // Confirm the initial invitation cannot be re-used after completion.
+    // Failed cross-origin and missing-token requests must not consume the link.
     const good = await open(origin + '/wake-pair/complete', sessionCookie, {
       method: 'POST',
       headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         callbackUrl: 'https://api2.cursor.sh/automations/webhook/hidden',
         bearerToken: 'secrets-not-in-MCP',
+        csrfToken,
       }),
     });
     expect(good.status).toBe(200);
@@ -205,6 +242,8 @@ describe('user-controlled Wake Pairing', () => {
     expect(callback.status).toBe(303);
 
     const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
+    const safeForm = await open(origin + '/wake-pair/complete', sessionCookie);
+    const csrfToken = extractCSRF(await safeForm.text());
     const secretPath = 'dont-leak-private-path';
     const key = 'dont-leak-secret-bearer-token';
 
@@ -214,6 +253,7 @@ describe('user-controlled Wake Pairing', () => {
       body: new URLSearchParams({
         callbackUrl: 'https://api2.cursor.sh/automations/webhook/' + secretPath,
         bearerToken: key,
+        csrfToken,
       }),
     });
     const text = await posted.text();
