@@ -15,6 +15,20 @@ function enabledProvider(overrides: Record<string, string> = {}) {
   });
 }
 
+function addProviderOriginRoute(
+  client: RelayTestClient,
+  id: number,
+  mailbox: number,
+  name = 'Relay to Origin Route',
+  ruleConfigs: number[] = [],
+  actions: number[] = [],
+): void {
+  client.routes.push({
+    id, name, mailbox, ruleGroup: 1, filterOption: 1,
+    ruleConfigs, actions, isActive: true,
+  });
+}
+
 describe('Recipient MailTrigger Webhook Route', () => {
   it('creates a verified recipient route and configured Webhook Action alongside sender RelaySMTP', async () => {
     const client = new RelayTestClient();
@@ -58,7 +72,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
     });
 
     const params = new Map(client.webhookParameters.get(Number(webhook.id))!
-      .map((row) => [row.name, row.value]));
+      .map((row) => [row.fieldName, row.value]));
     expect(params.get('method')).toBe('POST');
     expect(params.get('webhook_url')).toBe(RECEIPT_URL);
     expect(JSON.parse(String(params.get('headers')))).toEqual({
@@ -154,4 +168,117 @@ describe('Recipient MailTrigger Webhook Route', () => {
 
     await provider.deleteManagedMailbox(String(ready.body.data.mailboxId), 'nar-hosta');
   });
+  it('removes only the exact provider inbound origin route after the NAR receipt route is active', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const ready = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+    expect(ready.status).toBe(201);
+    const mailbox = {
+      mailboxId: ready.body.data.mailboxId,
+      mailboxEmail: ready.body.data.mailboxEmail,
+      created: false,
+    };
+    const mailboxId = Number(mailbox.mailboxId);
+
+    addProviderOriginRoute(client, 155, mailboxId);
+    addProviderOriginRoute(client, 157, 9999);
+    addProviderOriginRoute(client, 158, mailboxId, 'Relay to Origin');
+    addProviderOriginRoute(client, 159, mailboxId, 'Relay to Origin Route - Custom');
+
+    await enabledProvider().ensureManagedSMTPRoute(mailbox);
+
+    expect(client.routes.find((route) => route.id === 155)).toBeUndefined();
+    expect(client.routes.find((route) => route.id === 157)).toBeDefined();
+    expect(client.routes.find((route) => route.id === 158)).toBeDefined();
+    expect(client.routes.find((route) => route.id === 159)).toBeDefined();
+    expect(client.routes.find((route) => route.name === `NAR receipt ${mailboxId}`))
+      .toMatchObject({ isActive: true, mailbox: mailboxId });
+  });
+
+  it('keeps the provider inbound origin route when the receipt callback is not configured', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const ready = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+    expect(ready.status).toBe(201);
+    const mailboxId = Number(ready.body.data.mailboxId);
+    addProviderOriginRoute(client, 155, mailboxId);
+
+    const repeated = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+
+    expect(repeated.status).toBe(201);
+    expect(client.routes.find((route) => route.id === 155)).toBeDefined();
+    expect(client.routes.some((route) => route.name === `NAR receipt ${mailboxId}`)).toBe(false);
+  });
+
+  it('does not delete inbound origin fallback if actual MailTrigger webhook fields are duplicated', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const ready = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+    expect(ready.status).toBe(201);
+    const mailbox = {
+      mailboxId: ready.body.data.mailboxId,
+      mailboxEmail: ready.body.data.mailboxEmail,
+      created: false,
+    };
+    const mailboxId = Number(mailbox.mailboxId);
+    addProviderOriginRoute(client, 155, mailboxId);
+    client.duplicateWebhookParameterFields = true;
+
+    await expect(enabledProvider().ensureManagedSMTPRoute(mailbox)).rejects.toMatchObject({
+      code: 'mailtrigger_webhook_parameters_invalid',
+    });
+
+    expect(client.routes.find((route) => route.id === 155)).toBeDefined();
+    expect(client.routes.some((route) => route.name === `NAR receipt ${mailboxId}`)).toBe(false);
+    const webhook = client.actions.find((row) => row.name === `NAR receipt webhook ${mailboxId}`)!;
+    const rows = client.webhookParameters.get(Number(webhook.id))!;
+    expect(rows.filter((row) => row.fieldName === 'method')).toHaveLength(2);
+    expect(rows.filter((row) => row.fieldName === 'data')).toHaveLength(2);
+    expect(rows.every((row) => row.value === '')).toBe(true);
+  });
+
+  it('refuses duplicate exact-name inbound origin routes without removing either one', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const ready = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+    const mailbox = {
+      mailboxId: ready.body.data.mailboxId,
+      mailboxEmail: ready.body.data.mailboxEmail,
+      created: false,
+    };
+    const mailboxId = Number(mailbox.mailboxId);
+    addProviderOriginRoute(client, 155, mailboxId);
+    addProviderOriginRoute(client, 156, mailboxId);
+
+    await expect(enabledProvider().ensureManagedSMTPRoute(mailbox)).rejects.toMatchObject({
+      code: 'mailtrigger_relay_origin_ambiguous',
+    });
+
+    expect(client.routes.find((route) => route.id === 155)).toBeDefined();
+    expect(client.routes.find((route) => route.id === 156)).toBeDefined();
+    expect(client.routes.find((route) => route.name === `NAR receipt ${mailboxId}`))
+      .toMatchObject({ isActive: true });
+  });
+
+  it('refuses to delete inbound origin route referencing the NAR receipt rule', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const ready = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+    const mailbox = {
+      mailboxId: ready.body.data.mailboxId,
+      mailboxEmail: ready.body.data.mailboxEmail,
+      created: false,
+    };
+    const mailboxId = Number(mailbox.mailboxId);
+
+    await enabledProvider().ensureManagedSMTPRoute(mailbox);
+    const receiptRule = client.rules.find((row) => row.note === `NAR recipient ${mailboxId}`)!;
+    addProviderOriginRoute(client, 155, mailboxId, 'Relay to Origin Route', [Number(receiptRule.id)]);
+
+    await expect(enabledProvider().ensureManagedSMTPRoute(mailbox)).rejects.toMatchObject({
+      code: 'mailtrigger_relay_origin_conflict',
+    });
+    expect(client.routes.find((route) => route.id === 155)).toBeDefined();
+  });
+
 });

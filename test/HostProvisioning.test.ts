@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
+import { MailTriggerClient } from '../src/MailTriggerClient';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('automatic managed SMTP provisioning', () => {
@@ -57,6 +58,42 @@ describe('automatic managed SMTP provisioning', () => {
       '/v1/hosts/provision?work_address_id=work-a');
     expect(again.status).toBe(201);
     expect(client.routes).toHaveLength(4);
+  });
+
+  it('deletes only the exact inbound Relay to Origin Route after the receipt Route is active', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const a = await client.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
+    const b = await client.call('token-b', 'POST', '/v1/hosts/provision?work_address_id=work-b');
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+
+    const mailboxA = Number(a.body.data.mailboxId);
+    const mailboxB = Number(b.body.data.mailboxId);
+    for (const [id, mailbox] of [[155, mailboxA], [156, mailboxB]]) {
+      client.routes.push({
+        id, name: 'Relay to Origin Route', mailbox, ruleGroup: 1,
+        filterOption: 1, ruleConfigs: [], actions: [], isActive: true,
+      });
+    }
+
+    const provider = new MailTriggerClient({
+      ...env,
+      MAILTRIGGER_RECEIPT_URL: 'https://agent-relay.company-notes.com/v1/mailtrigger/receipt',
+      MAILTRIGGER_INBOUND_KEY: 'test-inbound-key',
+    });
+    await provider.ensureManagedSMTPRoute({
+      mailboxId: a.body.data.mailboxId,
+      mailboxEmail: a.body.data.mailboxEmail,
+      created: false,
+    });
+
+    expect(client.routes.some((route) => route.id === 155)).toBe(false);
+    expect(client.routes.find((route) => route.id === 156)).toMatchObject({
+      name: 'Relay to Origin Route', mailbox: mailboxB,
+    });
+    expect(client.routes.find((route) => route.name === `NAR receipt ${mailboxA}`))
+      .toMatchObject({ mailbox: mailboxA, isActive: true });
   });
 
   it('also cleans up the legacy SMTP to Origin default for the same mailbox', async () => {

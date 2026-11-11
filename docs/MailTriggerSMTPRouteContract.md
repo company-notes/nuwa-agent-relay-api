@@ -64,7 +64,7 @@ Calling `POST /v1/hosts/provision` now:
    **`SMTP to Origin Router`** Route (or the legacy name
    **`SMTP to Origin`**) attached to this **exact mailbox**. If present,
    deletes only that default and reads Routes back to confirm its removal.
-   Does not delete `Relay to Origin` or unrelated/custom Routes. Duplicate
+   Does not delete the legacy `Relay to Origin` or unrelated/custom Routes. Duplicate
    matching defaults, incomplete provider listings, conflicting NAR resource
    references and deletion failures fail provisioning rather than silently
    marking a new Host ready.
@@ -134,6 +134,21 @@ inbound key, and `data` with `$SENDER`, `$RECEIVERS`, and `$SUBJECT`.
 Provisioning reads the Action parameters back before enabling the Route.
 The Rule Group and template ID are provider-assigned. Existing resources are
 rechecked and cleanup removes the managed Receipt Route and Action.
+
+After the `NAR receipt <mailboxId>` Route has been read back, verified against
+its exact mailbox, recipient Rule and Webhook Action, and confirmed **active**,
+provisioning also deletes the provider-created inbound route named **exactly**
+`Relay to Origin Route` for **that same mailbox**. It does **not** delete the
+legacy `Relay to Origin` spelling, prefix matches, or another mailbox's route.
+If Receipt configuration is missing, Webhook parameters fail validation, or
+the receipt route is inactive, it retains the inbound fallback.
+Deletion rejects truncated (1000-row) route lists, duplicates, and references
+to either NAR sender or receipt Rule/Action/Route. A second route-list read
+must confirm the provider default is absent before provisioning succeeds.
+
+This exact-name inbound fallback cleanup is deliberately separate from the
+earlier `SMTP to Origin Router`/`SMTP to Origin` cleanup, which still occurs
+after the sender RelaySMTP Route is verified.
 
 `MAILTRIGGER_RECEIPT_URL` is the **Relay Worker**'s public callback URL;
 `MAILTRIGGER_API_URL` remains the **MailTrigger server** address, completely
