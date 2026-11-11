@@ -61,7 +61,12 @@ export class WakePairing {
   }
 
   private static redirect(path: string, cookies: string[] = []): Response {
-    const response = Response.redirect(path, 303);
+    // Response.redirect creates immutable headers in Workers. Construct a
+    // fresh response so secure cookie and no-store headers can be attached.
+    const response = new Response(null, {
+      status: 303,
+      headers: { location: path },
+    });
 
     for (const cookie of cookies) {
       response.headers.append('set-cookie', cookie);
