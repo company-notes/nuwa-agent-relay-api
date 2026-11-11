@@ -5,6 +5,8 @@ import { APIError, type JSONRecord } from './HTTP';
 import { IdentityContext } from './IdentityContext';
 import { MailTriggerClient, type ManagedMailbox } from './MailTriggerClient';
 import { Logger } from './Logger';
+import { MessageView, type MessageRow } from './MessageView';
+import { ThreadContextReader } from './ThreadContextReader';
 
 type HostRow = { mailbox_id: string; mailbox_email: string };
 
@@ -19,19 +21,6 @@ type ThreadRow = {
   accepted_work_id: string | null;
 };
 
-type MessageRow = {
-  id: string;
-  thread_id: string;
-  kind: string;
-  sender_host_id: string;
-  sender_work_id: string;
-  recipient_host_id: string;
-  recipient_work_id: string | null;
-  subject: string;
-  body: string;
-  artifacts_json: string;
-  created_at: string;
-};
 
 export type NewMessage = {
   to: Recipient;
@@ -53,20 +42,6 @@ export class RelayService {
     }
 
     return `nar-${stableId}`;
-  }
-
-  private static publicMessage(row: MessageRow): JSONRecord {
-    return {
-      id: row.id,
-      threadId: row.thread_id,
-      kind: row.kind,
-      senderWorkId: row.sender_work_id,
-      recipientWorkId: row.recipient_work_id,
-      subject: row.subject,
-      body: row.body,
-      artifactLinks: JSON.parse(row.artifacts_json) as string[],
-      createdAt: row.created_at,
-    };
   }
 
   constructor(
@@ -490,7 +465,7 @@ export class RelayService {
     };
   }
 
-  async messageById(messageId: string): Promise<JSONRecord> {
+  async messageById(messageId: string, contextLimit = 0): Promise<JSONRecord> {
     const row = await this.env.DB.prepare(
       `SELECT m.id, m.thread_id, m.kind, m.sender_host_id, m.sender_work_id,
               m.recipient_host_id, m.recipient_work_id, m.subject, m.body,
@@ -511,7 +486,16 @@ export class RelayService {
       throw new APIError(404, 'message_not_found', 'Message is unavailable to this work identity.');
     }
 
-    return RelayService.publicMessage(row);
+    const message = MessageView.fromRow(row);
+    if (contextLimit === 0) {
+      return message;
+    }
+
+    const context = new ThreadContextReader(this.env.DB, this.identity.work.id);
+    return {
+      ...message,
+      recentThreadMessages: await context.preceding(row, contextLimit),
+    };
   }
 
   async history(threadId: string): Promise<JSONRecord[]> {
@@ -525,7 +509,7 @@ export class RelayService {
         ORDER BY created_at, id`,
     ).bind(threadId).all<MessageRow>();
 
-    return rows.results.map(RelayService.publicMessage);
+    return rows.results.map(MessageView.fromRow);
   }
 
   async inbox(): Promise<JSONRecord[]> {
@@ -545,7 +529,7 @@ export class RelayService {
       this.identity.work.id,
     ).all<MessageRow>();
 
-    return rows.results.map(RelayService.publicMessage);
+    return rows.results.map(MessageView.fromRow);
   }
 
   async hostInbox(): Promise<JSONRecord[]> {
@@ -561,6 +545,6 @@ export class RelayService {
         ORDER BY m.created_at DESC LIMIT 100`,
     ).bind(this.identity.organization.id, this.identity.host.id).all<MessageRow>();
 
-    return rows.results.map(RelayService.publicMessage);
+    return rows.results.map(MessageView.fromRow);
   }
 }
