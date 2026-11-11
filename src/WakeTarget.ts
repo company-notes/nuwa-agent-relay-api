@@ -1,5 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
+import { Logger } from './Logger';
 
 export type WakeAuthMode = 'hmac' | 'bearer' | 'capability';
 
@@ -12,6 +13,7 @@ export type WakeTargetConfig = {
 
 /** Validates outbound callback destinations and owns private transport credentials. */
 export class WakeTarget {
+  private static readonly logger = Logger.forModule('wake.target');
   private static readonly blockedSuffixes = [
     '.localhost', '.local', '.internal', '.lan', '.home.arpa',
     '.test', '.invalid', '.example', '.onion', '.arpa',
@@ -149,6 +151,11 @@ export class WakeTarget {
     });
 
     // Non-2xx, including 3xx, never verifies a callback or marks Wake delivered.
-    return response.status >= 200 && response.status < 300;
+    const delivered = response.status >= 200 && response.status < 300;
+    if (!delivered) {
+      WakeTarget.logger.warning('callback_http_rejected', { status: response.status });
+    }
+
+    return delivered;
   }
 }
