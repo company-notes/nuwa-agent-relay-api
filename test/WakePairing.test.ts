@@ -56,7 +56,8 @@ async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' |
   const state = target.searchParams.get('state');
   expect(state).toMatch(/^[0-9a-f-]{36}\.[a-f0-9]{48}$/);
 
-  const oauthCookie = extractCookie(start, '__Host-nuwa_pair_oauth');
+  const oauthCookie = extractCookie(start,
+    '__Host-nuwa_pair_oauth_' + state!.split('.')[1]);
 
   return { created, state: state!, oauthCookie };
 }
@@ -67,10 +68,44 @@ describe('user-controlled Wake Pairing', () => {
     client.installExternalTestTransport();
     const { created, state, oauthCookie } = await authorize(client);
 
+    // Opening the same invitation again (e.g. link preview or second tab)
+    // must NOT invalidate the OAuth flow already running in the first tab.
+    const secondStart = await open(created.body.data.pairingUrl);
+    expect(secondStart.status).toBe(303);
+    const secondState = new URL(secondStart.headers.get('location')!)
+      .searchParams.get('state');
+    expect(secondState).toBeTruthy();
+    expect(secondState).not.toBe(state);
+    const secondCookie = extractCookie(secondStart,
+      '__Host-nuwa_pair_oauth_' + secondState!.split('.')[1]);
+    expect(secondCookie.split('=')[0]).not.toBe(oauthCookie.split('=')[0]);
+
+    const storedAttempts = await env.DB.prepare(
+      `SELECT state_digest AS digest FROM wake_pairing_oauth_attempts
+       WHERE pairing_id = (
+         SELECT id FROM wake_pairing_requests WHERE work_address_id = ?
+       )`,
+    ).bind('work-b').all<{ digest: string }>();
+    expect(storedAttempts.results).toHaveLength(2);
+    expect(new Set(storedAttempts.results.map((entry) => entry.digest)).size).toBe(2);
+    for (const attempt of storedAttempts.results) {
+      expect(attempt.digest).toMatch(/^[a-f0-9]{64}$/);
+      expect(attempt.digest).not.toBe(state);
+      expect(attempt.digest).not.toBe(secondState);
+    }
+
+    // A real browser sends both cookies after opening the link in two tabs.
     const callback = await open(origin + '/wake-pair/oauth/callback?' +
-      new URLSearchParams({ state, code: 'owned-work' }), oauthCookie);
+      new URLSearchParams({ state, code: 'owned-work' }),
+      oauthCookie + '; ' + secondCookie);
 
     expect(callback.status).toBe(303);
+
+    // Ownership proof remains one-time: a later successful OAuth return from
+    // a different tab must not replace the first browser's pairing session.
+    const laterCallback = await open(origin + '/wake-pair/oauth/callback?' +
+      new URLSearchParams({ state: secondState!, code: 'owned-work' }), secondCookie);
+    expect(laterCallback.status).toBe(409);
     expect(callback.headers.get('location')).toBe(origin + '/wake-pair/complete');
     const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
     expect(callback.headers.get('cache-control')).toBe('no-store');
