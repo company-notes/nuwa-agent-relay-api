@@ -82,6 +82,8 @@ describe('user-controlled Wake Pairing', () => {
     expect(html).toContain('name="bearerToken"');
     expect(html).toContain('type="password"');
     expect(form.headers.get('content-security-policy')).toContain("form-action 'self'");
+    // Form navigation must not inherit no-referrer: Fetch serializes Origin as "null".
+    expect(form.headers.get('referrer-policy')).toBe('same-origin');
     const csrfToken = extractCSRF(html);
 
     const bearerToken = 'human-entered-secret-for-cursor-webhook';
@@ -92,7 +94,8 @@ describe('user-controlled Wake Pairing', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        // Some privacy-conscious browsers omit Origin for a legitimate form POST.
+        origin: 'null',
+        'sec-fetch-site': 'same-origin',
       },
       body: encoded.toString(),
     });
@@ -198,6 +201,35 @@ describe('user-controlled Wake Pairing', () => {
       }),
     });
     expect(wrongOrigin.status).toBe(403);
+    expect(client.wakeRequests).toHaveLength(0);
+
+    const crossSiteOpaque = await open(origin + '/wake-pair/complete', sessionCookie, {
+      method: 'POST',
+      headers: {
+        origin: 'null',
+        'sec-fetch-site': 'cross-site',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        callbackUrl: 'https://api2.cursor.sh/automations/webhook/hidden',
+        bearerToken: 'secrets-not-in-MCP',
+        csrfToken,
+      }),
+    });
+    expect(crossSiteOpaque.status).toBe(403);
+    expect((await crossSiteOpaque.json() as any).error.code).toBe('pairing_cross_origin');
+    expect(client.wakeRequests).toHaveLength(0);
+
+    const opaqueWithoutSiteProof = await open(origin + '/wake-pair/complete', sessionCookie, {
+      method: 'POST',
+      headers: { origin: 'null', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        callbackUrl: 'https://api2.cursor.sh/automations/webhook/hidden',
+        bearerToken: 'secrets-not-in-MCP',
+        csrfToken,
+      }),
+    });
+    expect(opaqueWithoutSiteProof.status).toBe(403);
     expect(client.wakeRequests).toHaveLength(0);
 
     const forgedToken = await open(origin + '/wake-pair/complete', sessionCookie, {
