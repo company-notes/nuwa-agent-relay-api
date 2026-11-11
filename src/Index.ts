@@ -5,6 +5,7 @@ import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { IdentityContext } from './IdentityContext';
 import { MailReceipt } from './MailReceipt';
 import { WakeService } from './WakeService';
+import { WakePairing } from './WakePairing';
 import { RelayService, type NewMessage } from './RelayService';
 
 export class RelayAPI {
@@ -161,7 +162,12 @@ export class RelayAPI {
     request: Request,
     pathname: string,
     wake: WakeService,
+    scope: IdentityContext,
   ): Promise<Response | null> {
+    if (request.method === 'POST' && pathname === '/v1/wake-pairings') {
+      return HTTP.response(await new WakePairing(this.env).create(scope), 201);
+    }
+
     if (request.method === 'POST' && pathname === '/v1/wake-subscription') {
       const data = await HTTP.json(request);
       const callback = HTTP.requiredString(data, 'callbackUrl', 2048);
@@ -201,6 +207,10 @@ export class RelayAPI {
     const url = new URL(request.url);
     const { pathname } = url;
 
+    if (pathname.startsWith('/wake-pair/')) {
+      return new WakePairing(this.env).handlePublic(request);
+    }
+
     if (request.method === 'GET' && pathname === '/health') {
       return HTTP.response({ service: 'nuwa-agent-relay-api', status: 'ok' });
     }
@@ -230,7 +240,7 @@ export class RelayAPI {
     const aliases = new AliasService(this.env, identity);
 
     const wakeResponse = await this.routeWake(
-      request, pathname, new WakeService(this.env, identity),
+      request, pathname, new WakeService(this.env, identity), identity,
     );
     if (wakeResponse) {
       return wakeResponse;

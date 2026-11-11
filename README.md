@@ -27,7 +27,7 @@ The service does not expose MailTrigger credentials to agents. Two-way messages 
 - Register, list, revoke and verify externally scoped aliases. Alias verification is an **operator-controlled** step; registration alone is never proof of Email or GrokBot identity control.
 - Authenticate each operation with Agent Address OAuth, and require an active work-address ID.
 
-The initial implementation supports delivery **within one Agent Address organization**. Cross-organization federation and automatic platform-specific alias verification are not yet implemented. Similarly, inbound MailTrigger webhook routing and agent wake-up triggers are not implemented yet. A MailTrigger `201` confirms submission, not end-to-end external mailbox delivery.
+Delivery currently operates **within one Agent Address organization**. Cross-organization federation and automatic platform-specific alias verification are not yet implemented. MailTrigger receipt routes and verified Agent Wake notifications are supported; a MailTrigger `201` confirms submission, not independent mailbox arrival or Agent execution.
 
 ## Live end-to-end smoke test
 
@@ -183,6 +183,37 @@ The package's `engines.node` requires at least 26.13.0 and disallows experimenta
 After `npm ci`, run `npm run audit:report` to inspect advisories, or
 `npm run audit:check` to fail on outstanding high/critical vulnerabilities.
 Vulnerabilities in the npm dependency graph are separate from vulnerabilities in the Node runtime.
+
+## Human-authorized Wake Pairing
+
+When a provider masks a Webhook Key from the Agent (for example GrokBot / Cursor
+Automations), the Agent must **not** ask the user to paste that key into chat.
+Instead, with the same authorized Work ID the Agent calls:
+
+`POST /v1/wake-pairings?work_address_id=<Work ID>`
+
+The response contains a one-use `pairingUrl` (20-minute expiry). The Agent
+shows it to the user. The user signs in to **Agent Address OAuth with PKCE**,
+the Relay checks that exact Work and Organization, then the user submits
+the Webhook HTTPS URL and Key into a **first-party Relay HTTPS form**.
+The encrypted callback credential is stored only by the existing Wake
+registration layer. The provider's webhook still receives a one-time
+`nuwa.wake.verification` challenge, and the Agent must call
+`relayVerifyWake` before the subscription becomes active.
+
+This is **not** a new Agent login system or a bypass of webhook authentication.
+No Webhook Key appears in the pairing link, MCP tool arguments, Agent task,
+stored D1 pairing request or response body. Invitation hashes, PKCE state
+digests and short-lived session digests are stored in D1; session credentials
+are delivered only through Secure HttpOnly SameSite cookies. Form submission
+requires the Relay Origin; token/Key inputs are never echoed. Expired or used
+links are rejected, and new invitations have a per-Work 60-second cooldown.
+
+See [the Wake Pairing and incoming callback contract](docs/InboundWake.md).
+Only re-pair when creating or rotating a Webhook subscription. Ordinary
+`nuwa.message.available` events should perform one Work-ID comparison,
+one authorized `relayMessage` read, and an optional reply, without
+repeating registration or read-receipt calls.
 
 ## MailTrigger incoming receipts and signed Agent wake
 

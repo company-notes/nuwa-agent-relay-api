@@ -1,6 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
-import type { IdentityContext } from './IdentityContext';
+export type WakeWorkScope = { work: { id: string }; organization: { id: string } };
 import { WakeTarget, type WakeAuthMode } from './WakeTarget';
 import { Logger } from './Logger';
 
@@ -19,7 +19,7 @@ export class WakeRegistration {
   private static readonly logger = Logger.forModule('wake.registration');
   constructor(
     private readonly env: Env,
-    private readonly identity: IdentityContext,
+    private readonly identity: WakeWorkScope,
   ) {}
 
   private static hex(bytes: Uint8Array): string {

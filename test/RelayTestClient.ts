@@ -441,6 +441,29 @@ export class RelayTestClient {
     }
 
     if (url.hostname === 'address.company-notes.com') {
+      if (url.pathname === '/register' && init?.method === 'POST') {
+        const registration = JSON.parse(String(init.body));
+        expect(registration.redirect_uris).toEqual([
+          'https://agent-relay.company-notes.com/wake-pair/oauth/callback',
+        ]);
+        expect(init.redirect).toBe('manual');
+
+        return Response.json({ client_id: 'test-pairing-oauth-client' }, { status: 201 });
+      }
+
+      if (url.pathname === '/token' && init?.method === 'POST') {
+        const request = new URLSearchParams(String(init.body));
+        expect(request.get('code_verifier')).toMatch(/^[a-f0-9]{64}$/);
+        expect(request.get('grant_type')).toBe('authorization_code');
+        expect(init.redirect).toBe('manual');
+
+        return Response.json({
+          access_token: request.get('code') === 'owned-a' || request.get('code') === 'different-owner'
+            ? 'token-a' : request.get('code') === 'owned-c' ? 'token-c' : 'token-b',
+          token_type: 'Bearer',
+        });
+      }
+
       const token = new Headers(init?.headers).get('authorization');
 
       return this.requestAgentAddress(url, token);
