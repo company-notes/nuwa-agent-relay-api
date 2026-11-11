@@ -6,7 +6,7 @@ const result = spawnSync('npm', ['audit', '--json'], {
 });
 
 if (result.error) {
-  console.error('Unable to run npm audit:', result.error.message);
+  console.error('Unable to run npm audit:', { errorType: result.error.name || 'Error' });
   process.exitCode = 2;
 } else {
   let report;
@@ -15,13 +15,17 @@ if (result.error) {
     report = JSON.parse(result.stdout);
   } catch {
     console.error('npm audit did not return valid JSON.');
-    console.error((result.stderr || result.stdout).slice(0, 1200));
+    console.error('npm audit failed to produce JSON:', { exitStatus: result.status ?? -1 });
     process.exitCode = 2;
   }
 
   if (report) {
     if (report.error || !report.metadata?.vulnerabilities) {
-      console.error('npm audit failed:', report.error?.summary || report.error?.code || 'Invalid response');
+      console.error('npm audit failed:', {
+        errorCode: /^[A-Z0-9_]{1,64}$/.test(report.error?.code ?? '')
+          ? report.error.code
+          : 'invalid_response',
+      });
       process.exitCode = 2;
     } else {
       const counts = report.metadata.vulnerabilities;
