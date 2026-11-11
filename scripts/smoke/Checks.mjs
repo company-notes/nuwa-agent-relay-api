@@ -10,6 +10,7 @@ import {
   listenForCallback,
   oauthChallenge,
 } from './Auth.mjs';
+import { oauthPost } from './AuthStore.mjs';
 import { planHosts } from './setup.mjs';
 
 import {
@@ -143,6 +144,34 @@ test('OAuth credentials never follow HTTP redirects', async () => {
   try {
     await assert.rejects(() => request('https://relay.example.com',
       '/v1/wake-subscription', 'secret-test-token'), /unexpected redirect/);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('OAuth refresh POST rejects redirects before resending its private body', async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+
+  globalThis.fetch = async (_url, options) => {
+    calls += 1;
+    assert.equal(options.redirect, 'manual');
+
+    return new Response(null, {
+      status: 307,
+      headers: { location: 'https://untrusted.example.net/token' },
+    });
+  };
+
+  try {
+    await assert.rejects(
+      () => oauthPost('https://address.example.com', '/token', {
+        grant_type: 'refresh_token',
+        refresh_token: 'sensitive-test-refresh-token',
+      }),
+      /unexpected redirect/,
+    );
     assert.equal(calls, 1);
   } finally {
     globalThis.fetch = original;
