@@ -52,6 +52,7 @@ export class RelayTestClient {
   failNextActionDeletion = false;
   failNextWebhookParameterUpdate = false;
   autoReceiptDuringMailSend = false;
+  duplicateWebhookParameterFields = false;
 
   private readonly hostA: AgentAddress = {
     id: 'host-a',
@@ -241,10 +242,20 @@ export class RelayTestClient {
         collection.push(row);
 
         if (url.pathname === '/api/v1/actions/' && value.action === 22) {
-          this.webhookParameters.set(nextId,
-            ['method', 'webhook_url', 'headers', 'data', 'params', 'timeout'].map(
-              (name, index) => ({ id: nextId * 100 + index + 1, name, value: '' }),
-            ));
+          // MailTrigger's actual ActionConfigParameterSerializer returns fieldName,
+          // not name. Duplicate template fields produce duplicate config parameters.
+          const fields = ['method', 'webhook_url', 'headers', 'data', 'params', 'timeout'];
+          const parameters = fields.map((fieldName, index) => ({
+            id: nextId * 100 + index + 1, fieldName, value: '',
+          }));
+          if (this.duplicateWebhookParameterFields) {
+            for (const fieldName of ['method', 'webhook_url', 'headers', 'data', 'params']) {
+              parameters.push({
+                id: nextId * 100 + parameters.length + 1, fieldName, value: '',
+              });
+            }
+          }
+          this.webhookParameters.set(nextId, parameters);
         }
 
         return Response.json(row, { status: 201 });
