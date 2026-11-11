@@ -142,10 +142,13 @@ export class WakeTarget {
       method: 'POST',
       headers,
       body,
-      redirect: 'error',
+      // Workers supports 'manual', not 'error'; never follow redirects with
+      // a private Bearer token or signed Wake body.
+      redirect: 'manual',
       signal: AbortSignal.timeout(8000),
     });
 
-    return response.ok;
+    // Non-2xx, including 3xx, never verifies a callback or marks Wake delivered.
+    return response.status >= 200 && response.status < 300;
   }
 }
