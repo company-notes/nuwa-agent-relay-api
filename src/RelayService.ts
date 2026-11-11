@@ -4,6 +4,7 @@ import type { Env } from './Env';
 import { APIError, type JSONRecord } from './HTTP';
 import { IdentityContext } from './IdentityContext';
 import { MailTriggerClient, type ManagedMailbox } from './MailTriggerClient';
+import { Logger } from './Logger';
 
 type HostRow = { mailbox_id: string; mailbox_email: string };
 
@@ -40,6 +41,7 @@ export type NewMessage = {
 };
 
 export class RelayService {
+  private static readonly logger = Logger.forModule('relay.service');
   private readonly mail: MailTriggerClient;
   private readonly aliases: AliasService;
 
@@ -278,6 +280,7 @@ export class RelayService {
         throw error;
       }
 
+      RelayService.logger.exception('send_failed_after_verified_arrival', error, { messageId: id });
       deliveryId = id;
     }
 
