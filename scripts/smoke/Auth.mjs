@@ -5,9 +5,11 @@ import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { addressOrigin, assert, statePath } from './Shared.mjs';
+import { SmokeLogger } from './Logger.mjs';
 
 const AUTH_TIMEOUT_MS = 180_000;
 const EXPIRY_MARGIN_MS = 60_000;
+const logger = new SmokeLogger('smoke.oauth');
 
 export function authFile(side) {
   assert(['a', 'b'].includes(side), 'Login side must be a or b.');
@@ -139,7 +141,9 @@ function openBrowser(url) {
   // Avoid shell expansion of URL query parameters (especially on Windows).
   if (command) {
     const child = spawn(command, [url], { stdio: 'ignore', detached: true });
-    child.on('error', () => {});
+    child.on('error', (error) => {
+      logger.exception('browser_launch_failed', error);
+    });
     child.unref();
   }
 }
@@ -155,7 +159,10 @@ export async function listenForCallback(state, timeoutMs = AUTH_TIMEOUT_MS) {
 
   // If client registration fails before the browser opens, close() rejects this
   // pending promise. Attach a rejection handler before any external request.
-  received.catch(() => {});
+  received.catch((error) => {
+    // An early rejection is still handled by the login flow; record its type.
+    logger.exception('callback_pending_rejected', error);
+  });
   const server = createServer((req, res) => {
     const host = req.headers.host;
     const localAddress = server.address();
@@ -182,6 +189,7 @@ export async function listenForCallback(state, timeoutMs = AUTH_TIMEOUT_MS) {
         accept(code);
       }
     } catch (error) {
+      logger.exception('callback_rejected', error);
       res.writeHead(400, {
         'content-type': 'text/plain; charset=utf-8',
         'cache-control': 'no-store',
