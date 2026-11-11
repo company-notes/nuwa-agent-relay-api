@@ -8,6 +8,7 @@ const origin = RelayTestClient.origin;
 async function open(url: string, cookie?: string, init: RequestInit = {}): Promise<Response> {
   return exports.default.fetch(new Request(url, {
     ...init,
+    redirect: 'manual',
     headers: {
       ...(cookie ? { cookie } : {}),
       ...(init.headers as Record<string, string> ?? {}),
