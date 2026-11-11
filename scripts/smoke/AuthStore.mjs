@@ -34,8 +34,14 @@ export async function oauthPost(origin, path, body, type = 'form') {
         : 'application/x-www-form-urlencoded',
     },
     body: payload,
+    redirect: 'manual',
     signal: AbortSignal.timeout(20_000),
   });
+
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error('OAuth token service returned an unexpected redirect (HTTP ' +
+      response.status + ').');
+  }
 
   let data;
 
