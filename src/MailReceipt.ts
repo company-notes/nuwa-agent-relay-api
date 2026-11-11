@@ -151,14 +151,12 @@ export class MailReceipt {
   }
 
   /**
-   * The original ReleaseBot queried recipient MailTrigger Archives on Inbox.
-   * This bounded Cron reconciliation restores that independent evidence, so
-   * a configured MailTrigger inbound webhook is optional (but faster).
-   * Unmatched or unarchived mail never triggers a Wake.
+   * Explicit, bounded Archive reconciliation for diagnostics and tests.
+   * Production Cron retries Wake events; it does not poll MailTrigger Archives.
+   * Only independently confirmed arrivals may enqueue a Wake.
    */
   static async reconcileArchives(env: Env): Promise<void> {
-    // Archive reconciliation is an Agent wake feature. With no configured
-    // receiving callbacks, do not poll every unconfirmed historical mailbox.
+    // With no configured receiving callbacks, avoid querying unrelated mailboxes.
     if (!env.MAILTRIGGER_API_TOKEN) {
       return;
     }
