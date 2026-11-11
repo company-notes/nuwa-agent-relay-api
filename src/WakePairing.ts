@@ -118,7 +118,7 @@ button { font: inherit; padding: .75rem 1.2rem; margin-top: 1.25rem; cursor: poi
 small { opacity: .75; } code { overflow-wrap: anywhere; }
 </style></head><body><main><h1>${this.escape(title)}</h1>${content}</main></body></html>`;
 
-    const response = this.noCache(new Response(html, {
+    return this.noCache(new Response(html, {
       status,
       headers: {
         'content-type': 'text/html; charset=utf-8',
@@ -126,13 +126,6 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
         'x-frame-options': 'DENY',
       },
     }));
-
-    // "no-referrer" serializes Origin as "null" for ordinary HTML form POSTs.
-    // Same-origin permits the real Origin for our form and sends no Referer
-    // to external sites. Keep "no-referrer" on OAuth 303 redirects.
-    response.headers.set('referrer-policy', 'same-origin');
-
-    return response;
   }
 
   private async byId(id: string): Promise<PairingRow | null> {
@@ -308,7 +301,7 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
       WakePairing.cookie(request, WakePairing.sessionCookie)!,
     );
 
-    return WakePairing.page('安全連接 Webhook', `
+    const response = WakePairing.page('安全連接 Webhook', `
 <p>已透過 Agent Address 驗證這個 Work 的管理權限。</p>
 <p>Work ID：<code>${safeWork}</code></p>
 <p>請從你的 Automation 設定複製 Webhook URL 與金鑰，直接貼到這個頁面。
@@ -324,6 +317,12 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 <button type="submit">加密保存並發送一次驗證</button></form>
 <p><small>這是一次性配對。之後的每則訊息不必重新輸入金鑰；金鑰不會進入 URL、
 MCP 工具參數或 Agent 任務提示。</small></p>`);
+
+    // For same-origin HTML form POST, no-referrer turns Origin into "null".
+    // Override it only on the form; redirects and confirmation pages stay private.
+    response.headers.set('referrer-policy', 'same-origin');
+
+    return response;
   }
 
   private async submitForm(request: Request): Promise<Response> {
