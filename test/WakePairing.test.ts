@@ -78,6 +78,21 @@ describe('user-controlled Wake Pairing', () => {
     expect(secondState).not.toBe(state);
     const secondCookie = extractCookie(secondStart,
       '__Host-nuwa_pair_oauth_' + secondState!.split('.')[1]);
+    expect(secondCookie.split('=')[0]).not.toBe(oauthCookie.split('=')[0]);
+
+    const storedAttempts = await env.DB.prepare(
+      `SELECT state_digest AS digest FROM wake_pairing_oauth_attempts
+       WHERE pairing_id = (
+         SELECT id FROM wake_pairing_requests WHERE work_address_id = ?
+       )`,
+    ).bind('work-b').all<{ digest: string }>();
+    expect(storedAttempts.results).toHaveLength(2);
+    expect(new Set(storedAttempts.results.map((entry) => entry.digest)).size).toBe(2);
+    for (const attempt of storedAttempts.results) {
+      expect(attempt.digest).toMatch(/^[a-f0-9]{64}$/);
+      expect(attempt.digest).not.toBe(state);
+      expect(attempt.digest).not.toBe(secondState);
+    }
 
     // A real browser sends both cookies after opening the link in two tabs.
     const callback = await open(origin + '/wake-pair/oauth/callback?' +
