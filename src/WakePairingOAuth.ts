@@ -2,8 +2,10 @@ import type { AddressStatus } from './AddressClient';
 import type { Env } from './Env';
 import { APIError } from './HTTP';
 import { IdentityContext } from './IdentityContext';
+import { Logger } from './Logger';
 
 export class WakePairingOAuth {
+  private static readonly logger = Logger.forModule('wake.pairing.oauth');
   static readonly origin = 'https://agent-relay.company-notes.com';
   static readonly callbackURL = WakePairingOAuth.origin + '/wake-pair/oauth/callback';
 
@@ -46,6 +48,7 @@ export class WakePairingOAuth {
       return payload as Record<string, unknown>;
     } catch (error) {
       // Never include OAuth token responses or callback codes in an exception.
+      WakePairingOAuth.logger.exception('invalid_provider_json', error);
       throw new APIError(502, 'pairing_oauth_invalid', 'Agent Address returned an invalid OAuth response.');
     }
   }
@@ -95,7 +98,7 @@ export class WakePairingOAuth {
     const accessToken = tokenResponse.access_token;
 
     if (typeof accessToken !== 'string' || !accessToken ||
-      accessToken.length > 4096) {
+      accessToken.length > 4096 || /[\r\n\t ]/.test(accessToken)) {
       throw new APIError(502, 'pairing_oauth_invalid', 'OAuth did not issue an access token.');
     }
 
@@ -117,6 +120,7 @@ export class WakePairingOAuth {
     try {
       payload = await response.json() as typeof payload;
     } catch (error) {
+      WakePairingOAuth.logger.exception('invalid_work_status_json', error);
       throw new APIError(502, 'pairing_oauth_invalid', 'Agent Address status is invalid.');
     }
 
