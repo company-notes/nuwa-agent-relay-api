@@ -25,12 +25,12 @@ function extractCookie(response: Response, name: string): string {
   return name + '=' + match![1];
 }
 
-async function authorize(client: RelayTestClient, token = 'token-b') {
-  const created = await client.call(token as 'token-a' | 'token-b', 'POST',
-    '/v1/wake-pairings?work_address_id=work-b');
+async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' | 'token-c' = 'token-b', work = 'work-b') {
+  const created = await client.call(token, 'POST',
+    '/v1/wake-pairings?work_address_id=' + work);
   expect(created.status).toBe(201);
   expect(created.body.data).toMatchObject({
-    status: 'awaiting_user', workAddressId: 'work-b',
+    status: 'awaiting_user', workAddressId: work,
   });
   expect(created.body.data.pairingUrl).toMatch(
     /^https:\/\/agent-relay\.company-notes\.com\/wake-pair\/[a-f0-9]{64}$/,
@@ -137,10 +137,10 @@ describe('user-controlled Wake Pairing', () => {
   it('rejects foreign OAuth accounts, unsanctioned forms, forged state, and consumed links', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const { created, state, oauthCookie } = await authorize(client);
+    const { created, state, oauthCookie } = await authorize(client, 'token-c', 'work-c');
 
     const forged = await open(origin + '/wake-pair/oauth/callback?' +
-      new URLSearchParams({ state, code: 'owned-work' }), '__Host-nuwa_pair_oauth=fake');
+      new URLSearchParams({ state, code: 'owned-c' }), '__Host-nuwa_pair_oauth=fake');
     expect(forged.status).toBe(403);
 
     const otherAccount = await open(origin + '/wake-pair/oauth/callback?' +
@@ -148,7 +148,7 @@ describe('user-controlled Wake Pairing', () => {
     expect(otherAccount.status).toBe(403);
 
     const legitimate = await open(origin + '/wake-pair/oauth/callback?' +
-      new URLSearchParams({ state, code: 'owned-work' }), oauthCookie);
+      new URLSearchParams({ state, code: 'owned-c' }), oauthCookie);
     expect(legitimate.status).toBe(303);
     const sessionCookie = extractCookie(legitimate, '__Host-nuwa_pair_session');
 
@@ -176,8 +176,8 @@ describe('user-controlled Wake Pairing', () => {
     expect(wrongOrigin.status).toBe(403);
     expect(client.wakeRequests).toHaveLength(0);
 
-    const secondInvitation = await client.call('token-b', 'POST',
-      '/v1/wake-pairings?work_address_id=work-b');
+    const secondInvitation = await client.call('token-c', 'POST',
+      '/v1/wake-pairings?work_address_id=work-c');
     expect(secondInvitation.status).toBe(429);
 
     // Confirm the initial invitation cannot be re-used after completion.
@@ -198,9 +198,9 @@ describe('user-controlled Wake Pairing', () => {
   it('keeps sensitive callback paths and key values out of pairing, OAuth and HTML responses', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const { state, oauthCookie } = await authorize(client);
+    const { state, oauthCookie } = await authorize(client, 'token-a', 'work-a');
     const callback = await open(origin + '/wake-pair/oauth/callback?' +
-      new URLSearchParams({ state, code: 'owned-work' }), oauthCookie);
+      new URLSearchParams({ state, code: 'owned-a' }), oauthCookie);
     expect(callback.status).toBe(303);
 
     const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
