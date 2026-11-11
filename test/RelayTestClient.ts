@@ -40,10 +40,11 @@ export class RelayTestClient {
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
   readonly wakeChallenges: Array<{ verificationId: string; challenge: string; workAddressId: string }> = [];
-  readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string }> = [];
+  readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string; redirect: RequestRedirect | undefined }> = [];
 
   failNextMail = false;
   failNextWake = false;
+  redirectNextWake = false;
   failAddressStatus = false;
   failNextRouteCreation = false;
   failNextRouteLookup = false;
@@ -406,6 +407,11 @@ export class RelayTestClient {
   }
 
   private async externalFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    // Cloudflare Workers rejects redirect: 'error' before making an outbound
+    // request. Node's mocked fetch must enforce the same runtime restriction.
+    if (init?.redirect === 'error') {
+      throw new TypeError('Unsupported redirect mode: error');
+    }
     const url = new URL(typeof input === 'string' ? input : input.toString());
 
     if (url.origin === MAILTRIGGER_TEST_ORIGIN && init?.method === 'POST' &&
@@ -441,7 +447,10 @@ export class RelayTestClient {
     if (['agent-hook.example.com', 'api2.cursor.sh', 'agent-demo.ngrok-free.app'].includes(url.hostname)) {
       const body = JSON.parse(String(init?.body));
       const headers = new Headers(init?.headers);
-      this.wakeRequests.push({ body, authorization: headers.get('authorization'), url: url.toString() });
+      this.wakeRequests.push({
+        body, authorization: headers.get('authorization'),
+        url: url.toString(), redirect: init?.redirect,
+      });
 
       if (body.event === 'nuwa.wake.verification') {
         this.wakeChallenges.push(body);
@@ -449,6 +458,13 @@ export class RelayTestClient {
         this.wakeCallbacks.push({
           body,
           signature: headers.get('x-nuwa-wake-signature'),
+        });
+      }
+
+      if (this.redirectNextWake) {
+        this.redirectNextWake = false;
+        return new Response(null, {
+          status: 302, headers: { location: 'https://untrusted.example.net/steal' },
         });
       }
 

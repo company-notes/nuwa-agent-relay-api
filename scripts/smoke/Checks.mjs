@@ -10,9 +10,11 @@ import {
   listenForCallback,
   oauthChallenge,
 } from './Auth.mjs';
+import { oauthPost } from './AuthStore.mjs';
 import { planHosts } from './setup.mjs';
 
 import {
+  accessToken,
   chooseHosts,
   loadState,
   moveCompletedState,
@@ -124,6 +126,73 @@ test('request validates API error status and never sends auth outside its servic
   }
 });
 
+test('OAuth credentials never follow HTTP redirects', async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+
+  globalThis.fetch = async (_url, options) => {
+    calls += 1;
+    assert.equal(options.redirect, 'manual');
+    assert.equal(options.headers.authorization, 'Bearer secret-test-token');
+
+    return new Response(null, {
+      status: 302,
+      headers: { location: 'https://untrusted.example.net/capture' },
+    });
+  };
+
+  try {
+    await assert.rejects(() => request('https://relay.example.com',
+      '/v1/wake-subscription', 'secret-test-token'), /unexpected redirect/);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('OAuth refresh POST rejects redirects before resending its private body', async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+
+  globalThis.fetch = async (_url, options) => {
+    calls += 1;
+    assert.equal(options.redirect, 'manual');
+
+    return new Response(null, {
+      status: 307,
+      headers: { location: 'https://untrusted.example.net/token' },
+    });
+  };
+
+  try {
+    await assert.rejects(
+      () => oauthPost('https://address.example.com', '/token', {
+        grant_type: 'refresh_token',
+        refresh_token: 'sensitive-test-refresh-token',
+      }),
+      /unexpected redirect/,
+    );
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('smoke token acquisition uses the single direct credential path', async () => {
+  const existing = process.env.RELAY_SMOKE_TOKEN_A;
+  process.env.RELAY_SMOKE_TOKEN_A = 'non-production-test-token';
+
+  try {
+    assert.equal(await accessToken('a'), 'non-production-test-token');
+  } finally {
+    if (existing === undefined) {
+      delete process.env.RELAY_SMOKE_TOKEN_A;
+    } else {
+      process.env.RELAY_SMOKE_TOKEN_A = existing;
+    }
+  }
+});
+
 test('upstream non-success responses are rejected, not mistaken for successful submissions', async () => {
   const original = globalThis.fetch;
 
@@ -145,7 +214,6 @@ test('upstream non-success responses are rejected, not mistaken for successful s
     globalThis.fetch = original;
   }
 });
-
 
 test('PKCE challenge matches RFC 7636 and authorization carries state', () => {
   const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';

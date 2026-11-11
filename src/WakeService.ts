@@ -3,6 +3,7 @@ import { APIError, HTTP } from './HTTP';
 import type { IdentityContext } from './IdentityContext';
 import { WakeRegistration } from './WakeRegistration';
 import { WakeTarget, type WakeAuthMode } from './WakeTarget';
+import { Logger } from './Logger';
 
 type WakeRow = {
   messageId: string;
@@ -14,6 +15,7 @@ type WakeRow = {
 };
 
 export class WakeService {
+  private static readonly logger = Logger.forModule('wake.dispatch');
 
   constructor(
     private readonly env: Env,
@@ -121,8 +123,17 @@ export class WakeService {
           };
         success = await WakeTarget.send(config, body);
         reason = success ? '' : 'http_rejected';
-      } catch {
-        // No target URLs or secrets in external responses or logs.
+        if (!success) {
+          WakeService.logger.warning('callback_http_rejected', {
+            messageId: event.messageId,
+            attempt: event.attempts + 1,
+          });
+        }
+      } catch (error) {
+        WakeService.logger.exception('callback_delivery_failed', error, {
+          messageId: event.messageId,
+          attempt: event.attempts + 1,
+        });
       }
 
       const attempts = event.attempts + 1;

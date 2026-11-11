@@ -1,8 +1,9 @@
 import { env } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MailReceipt } from '../src/MailReceipt';
 import { WakeService } from '../src/WakeService';
+import { WakeTarget } from '../src/WakeTarget';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Self-service signed Wake registration', () => {
@@ -76,6 +77,7 @@ describe('Self-service signed Wake registration', () => {
     expect(registration.body.data.challengeDelivered).toBe(true);
     expect(JSON.stringify(registration.body)).not.toContain(bearer);
     expect(client.wakeRequests[0].authorization).toBe('Bearer ' + bearer);
+    expect(client.wakeRequests[0].redirect).toBe('manual');
 
     const attempt = await env.DB.prepare(
       'SELECT encrypted_target AS ciphertext, callback_url AS url FROM wake_registration_attempts WHERE work_address_id = ?',
@@ -169,4 +171,59 @@ describe('Self-service signed Wake registration', () => {
     expect(repeat.status).toBe(429);
     expect(client.wakeChallenges).toHaveLength(1);
   });
+  it('never follows a 302 Webhook redirect or treats it as verification delivery', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    client.redirectNextWake = true;
+
+    const result = await client.call('token-c', 'POST',
+      '/v1/wake-subscription?work_address_id=work-c', {
+        callbackUrl: 'https://api2.cursor.sh/automations/webhook/redirect-test',
+        authMode: 'bearer',
+        bearerToken: 'example-test-token-long-enough',
+      });
+
+    expect(result.status).toBe(201);
+    expect(result.body.data.status).toBe('pending_verification');
+    expect(result.body.data.challengeDelivered).toBe(false);
+    expect(client.wakeRequests).toHaveLength(1);
+    expect(client.wakeRequests[0].redirect).toBe('manual');
+
+    const pending = await client.call('token-c', 'GET',
+      '/v1/wake-subscription?work_address_id=work-c');
+    expect(pending.body.data.pending).not.toBeNull();
+  });
+
+
+  it('logs a caught Wake challenge transport exception without recording the URL or bearer credential', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+
+    const outbound = vi.spyOn(WakeTarget, 'send')
+      .mockRejectedValueOnce(new TypeError('private bearer test marker must not be logged'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const result = await client.call('token-a', 'POST',
+        '/v1/wake-subscription?work_address_id=work-a', {
+          callbackUrl: 'https://api2.cursor.sh/automations/webhook/secret-test-path',
+          authMode: 'bearer',
+          bearerToken: 'private-bearer-test-marker',
+        });
+
+      expect(result.status).toBe(201);
+      expect(result.body.data.challengeDelivered).toBe(false);
+      expect(log).toHaveBeenCalledWith('wake.registration.challenge_delivery_failed',
+        expect.objectContaining({ errorType: 'TypeError' }));
+
+      const recorded = JSON.stringify(log.mock.calls);
+      expect(recorded).not.toContain('secret-test-path');
+      expect(recorded).not.toContain('private-bearer-test-marker');
+      expect(recorded).not.toContain('private bearer test marker');
+    } finally {
+      outbound.mockRestore();
+      log.mockRestore();
+    }
+  });
+
 });

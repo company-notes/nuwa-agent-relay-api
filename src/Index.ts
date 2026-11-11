@@ -157,6 +157,46 @@ export class RelayAPI {
     return null;
   }
 
+  private async routeWake(
+    request: Request,
+    pathname: string,
+    wake: WakeService,
+  ): Promise<Response | null> {
+    if (request.method === 'POST' && pathname === '/v1/wake-subscription') {
+      const data = await HTTP.json(request);
+      const callback = HTTP.requiredString(data, 'callbackUrl', 2048);
+      const authMode = HTTP.optionalString(data, 'authMode', 32) ?? 'hmac';
+      const bearerToken = HTTP.optionalString(data, 'bearerToken', 2048) ?? undefined;
+
+      return HTTP.response(await wake.subscribe(
+        callback, authMode as 'hmac' | 'bearer' | 'capability', bearerToken,
+      ), 201);
+    }
+
+    if (pathname === '/v1/wake-subscription/verification' && request.method === 'POST') {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(await wake.verify(
+        HTTP.requiredString(data, 'verificationId', 64),
+        HTTP.requiredString(data, 'challenge', 128),
+      ));
+    }
+
+    if (pathname === '/v1/wake-subscription' && request.method === 'GET') {
+      return HTTP.response(await wake.getSubscription());
+    }
+
+    if (pathname === '/v1/wake-subscription' && request.method === 'DELETE') {
+      return HTTP.response(await wake.unsubscribe());
+    }
+
+    if (pathname === '/v1/wake-events' && request.method === 'GET') {
+      return HTTP.response(await wake.deliveries());
+    }
+
+    return null;
+  }
+
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
@@ -189,36 +229,11 @@ export class RelayAPI {
     const relay = new RelayService(this.env, identity, addressClient);
     const aliases = new AliasService(this.env, identity);
 
-    if (request.method === 'POST' && pathname === '/v1/wake-subscription') {
-      const data = await HTTP.json(request);
-      const callback = HTTP.requiredString(data, 'callbackUrl', 2048);
-      const authMode = HTTP.optionalString(data, 'authMode', 32) ?? 'hmac';
-      const bearerToken = HTTP.optionalString(data, 'bearerToken', 2048) ?? undefined;
-
-      return HTTP.response(await new WakeService(this.env, identity).subscribe(
-        callback, authMode as 'hmac' | 'bearer' | 'capability', bearerToken,
-      ), 201);
-    }
-
-    if (pathname === '/v1/wake-subscription/verification' && request.method === 'POST') {
-      const data = await HTTP.json(request);
-
-      return HTTP.response(await new WakeService(this.env, identity).verify(
-        HTTP.requiredString(data, 'verificationId', 64),
-        HTTP.requiredString(data, 'challenge', 128),
-      ));
-    }
-
-    if (pathname === '/v1/wake-subscription' && request.method === 'GET') {
-      return HTTP.response(await new WakeService(this.env, identity).getSubscription());
-    }
-
-    if (pathname === '/v1/wake-subscription' && request.method === 'DELETE') {
-      return HTTP.response(await new WakeService(this.env, identity).unsubscribe());
-    }
-
-    if (pathname === '/v1/wake-events' && request.method === 'GET') {
-      return HTTP.response(await new WakeService(this.env, identity).deliveries());
+    const wakeResponse = await this.routeWake(
+      request, pathname, new WakeService(this.env, identity),
+    );
+    if (wakeResponse) {
+      return wakeResponse;
     }
 
     const messageId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)$/);

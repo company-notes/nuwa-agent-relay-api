@@ -2,6 +2,7 @@ import type { Env } from './Env';
 import { APIError } from './HTTP';
 import type { IdentityContext } from './IdentityContext';
 import { WakeTarget, type WakeAuthMode } from './WakeTarget';
+import { Logger } from './Logger';
 
 type PendingRegistration = {
   verificationId: string;
@@ -15,6 +16,7 @@ type PendingRegistration = {
 };
 
 export class WakeRegistration {
+  private static readonly logger = Logger.forModule('wake.registration');
   constructor(
     private readonly env: Env,
     private readonly identity: IdentityContext,
@@ -89,8 +91,12 @@ export class WakeRegistration {
         challenge,
         workAddressId: this.identity.work.id,
       });
-    } catch {
-      // Network errors are not evidence of registration; it remains pending.
+      if (!challengeDelivered) {
+        WakeRegistration.logger.warning('challenge_http_rejected', { verificationId });
+      }
+    } catch (error) {
+      // Keep the registration pending, but never suppress its delivery failure.
+      WakeRegistration.logger.exception('challenge_delivery_failed', error, { verificationId });
     }
 
     return {

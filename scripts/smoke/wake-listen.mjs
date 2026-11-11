@@ -4,6 +4,9 @@ import { dirname, join } from 'node:path';
 
 import { accessToken, assert, execute, loadState, request, statePath, workQuery } from './Shared.mjs';
 import { verifyWakeSignature } from './WakeAuth.mjs';
+import { SmokeLogger } from './Logger.mjs';
+
+const logger = new SmokeLogger('smoke.wake');
 
 await execute(async () => {
   const state = await loadState();
@@ -51,7 +54,8 @@ await execute(async () => {
 
     try {
       event = JSON.parse(body);
-    } catch {
+    } catch (error) {
+      logger.exception('invalid_json', error);
       reply(400, { ok: false });
       return;
     }
@@ -82,8 +86,9 @@ await execute(async () => {
       console.log(JSON.stringify(message, null, 2));
       // This is the integration point for the actual local Agent runtime.
       reply(200, { ok: true });
-    } catch {
+    } catch (error) {
       // Do not acknowledge failed OAuth fetches; the Worker will retry.
+      logger.exception('message_fetch_failed', error);
       reply(503, { ok: false });
     }
   });

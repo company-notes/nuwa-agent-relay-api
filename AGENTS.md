@@ -1,12 +1,14 @@
 # Development guidance
 
-Follow the team's `CODE_PRINCIPLES.md` and `TESTING.md`, adapted to this TypeScript Cloudflare Workers project.
+Follow the checked-in [`CODE_PRINCIPLES.md`](CODE_PRINCIPLES.md) as the authoritative coding standard, adapted to this TypeScript Cloudflare Workers project. Test commands and integration boundaries are defined below.
 
 ## Coding
 
 - Use camelCase for TypeScript identifiers and runtime JSON. Preserve the existing SQL column names and external API/URL query parameter contracts.
 - Always use braces with JavaScript/TypeScript control-flow statements.
 - Keep state and helpers in the class responsible for them. Prefer early returns and clear failure paths to deep nesting or silent fallbacks.
+- **Rules #11–12:** report every caught operational exception through the shared `Logger` with event name and safe metadata. Never log credentials, callback paths, raw network error messages or request bodies. Rethrow at ownership boundaries unless a failed attempt is explicitly represented and observable.
+- **Rule #14:** use braces on separate lines for all TypeScript/JavaScript control statements.
 - **Rule #20:** use one blank line between meaningful phases (authentication, validation, persistence, transport and response). Keep related statements together, and keep `if/else` and `try/catch/finally` contiguous. Never insert a blank line after every `if` automatically.
 - Do not change public routes, database schema or secrets handling as part of a formatting-only change.
 
@@ -30,4 +32,4 @@ node --check scripts/prepare-deploy.mjs
 
 ## Deployment
 
-Create a PR for refactors, run CI, then merge only when tests pass. `main` may deploy if `RELAY_DEPLOY_ENABLED=true`; the deployment workflow also supports manual dispatch. Never print secrets, reuse the Agent Address database, or treat a successful Wrangler deploy as proof that a real message was delivered.
+Create a PR for refactors, run CI, then merge only when tests pass and production rollout is authorized. A verified push to `main` triggers the production deployment workflow; draft PR branches do not deploy. Never print secrets, reuse the Agent Address database, or treat a successful Wrangler deploy as proof that a real message was delivered.

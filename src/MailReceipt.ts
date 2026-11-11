@@ -1,6 +1,7 @@
 import type { Env } from './Env';
 import { APIError, HTTP } from './HTTP';
 import { MailTriggerClient } from './MailTriggerClient';
+import { Logger } from './Logger';
 
 type IncomingReceipt = {
   from: string;
@@ -9,6 +10,7 @@ type IncomingReceipt = {
 };
 
 export class MailReceipt {
+  private static readonly logger = Logger.forModule('mail.receipt');
   private static readonly SUBJECT_PATTERN = /^\[NAR:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]/i;
 
   constructor(private readonly env: Env) {}
@@ -116,7 +118,6 @@ export class MailReceipt {
     return HTTP.response({ matched: true, messageId, duplicate: Boolean(result.receivedAt) });
   }
 
-
   /**
    * Confirm a MailTrigger-side arrival without treating a send-API 201 as
    * evidence. Updating the receipt and queuing a subscribed Work's wake are
@@ -150,14 +151,12 @@ export class MailReceipt {
   }
 
   /**
-   * The original ReleaseBot queried recipient MailTrigger Archives on Inbox.
-   * This bounded Cron reconciliation restores that independent evidence, so
-   * a configured MailTrigger inbound webhook is optional (but faster).
-   * Unmatched or unarchived mail never triggers a Wake.
+   * Explicit, bounded Archive reconciliation for diagnostics and tests.
+   * Production Cron retries Wake events; it does not poll MailTrigger Archives.
+   * Only independently confirmed arrivals may enqueue a Wake.
    */
   static async reconcileArchives(env: Env): Promise<void> {
-    // Archive reconciliation is an Agent wake feature. With no configured
-    // receiving callbacks, do not poll every unconfirmed historical mailbox.
+    // With no configured receiving callbacks, avoid querying unrelated mailboxes.
     if (!env.MAILTRIGGER_API_TOKEN) {
       return;
     }
@@ -193,10 +192,9 @@ export class MailReceipt {
 
       try {
         archived = await provider.archivedProtocolMessageIds(mailboxId);
-      } catch {
-        // No false-positive receipt and no aborted retry cycle if a provider
-        // mailbox is unavailable. The next Cron will try the same IDs again.
-        console.warn('MailTrigger archive reconciliation failed for a mailbox.');
+      } catch (error) {
+        // No false-positive receipt if one provider mailbox is unavailable.
+        MailReceipt.logger.exception('archive_reconciliation_failed', error);
         continue;
       }
 
