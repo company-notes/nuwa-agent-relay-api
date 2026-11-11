@@ -208,9 +208,15 @@ export class MailTriggerRouteProvisioner {
   }
 
   private static parameterName(row: Resource): string | null {
-    if (typeof row.name === 'string') return row.name;
-    if (typeof row.parameterName === 'string') return row.parameterName;
-    if (typeof row.fieldName === 'string') return row.fieldName;
+    if (typeof row.name === 'string') {
+      return row.name;
+    }
+    if (typeof row.parameterName === 'string') {
+      return row.parameterName;
+    }
+    if (typeof row.fieldName === 'string') {
+      return row.fieldName;
+    }
     if (row.field && typeof row.field === 'object' && !Array.isArray(row.field) &&
       'name' in row.field && typeof row.field.name === 'string') {
       return row.field.name;
@@ -376,14 +382,14 @@ export class MailTriggerRouteProvisioner {
   }
 
   private static includesID(values: unknown, expected: number): boolean {
-    return Array.isArray(values) &&
-      values.some((value: unknown) => {
-        try {
-          return MailTriggerRouteProvisioner.positiveId(value) === expected;
-        } catch {
-          return false;
-        }
-      });
+    if (!Array.isArray(values)) {
+      return false;
+    }
+
+    // A malformed provider link is a consistency failure, not a missing
+    // reference. Let positiveId reject it before any destructive cleanup.
+    return values.some((value: unknown) =>
+      MailTriggerRouteProvisioner.positiveId(value) === expected);
   }
 
   private static validateRoute(
@@ -639,7 +645,9 @@ export class MailTriggerRouteProvisioner {
         'Multiple Relay to Origin Route entries belong to this mailbox; refusing deletion.');
     }
 
-    if (matches.length === 0) return;
+    if (matches.length === 0) {
+      return;
+    }
 
     const fallback = matches[0];
     const fallbackId = MailTriggerRouteProvisioner.positiveId(fallback.id);

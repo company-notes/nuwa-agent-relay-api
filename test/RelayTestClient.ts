@@ -166,7 +166,9 @@ export class RelayTestClient {
 
       const item = this.webhookParameters.get(Number(parameterItem[1]))?.find((row) =>
         Number(row.id) === Number(parameterItem[2]));
-      if (!item) return new Response(null, { status: 404 });
+      if (!item) {
+          return new Response(null, { status: 404 });
+        }
 
       const incoming = JSON.parse(String(init.body)) as Record<string, unknown>;
       if (typeof incoming.value !== 'string') {
@@ -287,7 +289,9 @@ export class RelayTestClient {
 
       rows.splice(index, 1);
 
-      if (resource[1] === 'actions') this.webhookParameters.delete(Number(resource[2]));
+      if (resource[1] === 'actions') {
+        this.webhookParameters.delete(Number(resource[2]));
+      }
 
       return new Response(null, { status: 204 });
     }
@@ -422,7 +426,9 @@ export class RelayTestClient {
       const mailboxId = Number(url.pathname.match(/mailbox\/(\d+)\/mail\/send/)?.[1]);
       const from = this.mailboxes.find((box) => box.id === mailboxId);
 
-      if (!from) throw new Error('Unknown sender mailbox in early receipt test.');
+      if (!from) {
+        throw new Error('Unknown sender mailbox in early receipt test.');
+      }
 
       const arrived = await this.callWithHeaders('POST', '/v1/mailtrigger/receipt', {
         from: from.username + '@relay-test.example',
