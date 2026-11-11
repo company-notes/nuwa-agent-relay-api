@@ -79,8 +79,10 @@ describe('user-controlled Wake Pairing', () => {
     const secondCookie = extractCookie(secondStart,
       '__Host-nuwa_pair_oauth_' + secondState!.split('.')[1]);
 
+    // A real browser sends both cookies after opening the link in two tabs.
     const callback = await open(origin + '/wake-pair/oauth/callback?' +
-      new URLSearchParams({ state, code: 'owned-work' }), oauthCookie);
+      new URLSearchParams({ state, code: 'owned-work' }),
+      oauthCookie + '; ' + secondCookie);
 
     expect(callback.status).toBe(303);
 
