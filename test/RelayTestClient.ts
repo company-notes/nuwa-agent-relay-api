@@ -1,5 +1,8 @@
-import { exports } from 'cloudflare:workers';
+import { env, exports } from 'cloudflare:workers';
 import { expect, vi } from 'vitest';
+
+// Route mocked MailTrigger requests to the exact origin configured for this test Worker.
+const MAILTRIGGER_TEST_ORIGIN = new URL(env.MAILTRIGGER_API_URL).origin;
 
 type AgentAddress = {
   id: string;
@@ -394,7 +397,7 @@ export class RelayTestClient {
   private async externalFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = new URL(typeof input === 'string' ? input : input.toString());
 
-    if (url.hostname === 'app.mailtrigger.app' && init?.method === 'POST' &&
+    if (url.origin === MAILTRIGGER_TEST_ORIGIN && init?.method === 'POST' &&
       url.pathname.endsWith('/mail/send/') && this.autoReceiptDuringMailSend) {
       const body = JSON.parse(String(init.body)) as {
         subject: string; to: string[];
@@ -420,7 +423,7 @@ export class RelayTestClient {
       return this.requestAgentAddress(url, token);
     }
 
-    if (url.hostname === 'app.mailtrigger.app') {
+    if (url.origin === MAILTRIGGER_TEST_ORIGIN) {
       return this.requestMailTrigger(url, init);
     }
 
