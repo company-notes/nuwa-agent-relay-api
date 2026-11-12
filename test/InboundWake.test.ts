@@ -192,8 +192,9 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     const callback = client.wakeCallbacks[0];
     expect(callback.body).toEqual({
       event: 'nuwa.message.available',
-      messageId: sent.body.data.id,
-      sessionID: 'session-b',
+      eventVersion: 2,
+      messageID: sent.body.data.id,
+      recipientSessionID: 'session-b',
     });
     expect(JSON.stringify(callback.body)).not.toContain('Wake me');
 
@@ -317,7 +318,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
       row.messageId === sent.body.data.id)).toHaveLength(1);
     await WakeService.dispatchDue(env);
     const deliveredForMessage = client.wakeCallbacks.filter((item) =>
-      item.body.messageId === sent.body.data.id);
+      item.body.messageID === sent.body.data.id);
     expect(deliveredForMessage).toHaveLength(1);
   });
 
