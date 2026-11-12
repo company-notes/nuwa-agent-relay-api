@@ -36,6 +36,32 @@ describe('External identity aliases', () => {
     );
     expect(verified.status).toBe(200);
 
+    const listed = await client.call('token-b', 'GET', '/v2/aliases?session_id=session-b');
+    expect(listed.status).toBe(200);
+    expect(listed.body.data).toEqual([{
+      id: emailAlias.body.data.id,
+      agentID: 'agent-000b',
+      sessionID: 'session-b',
+      provider: 'email',
+      externalId: 'reviewer@example.com',
+      verified: true,
+      createdAt: emailAlias.body.data.createdAt,
+    }]);
+
+    const persisted = await env.DB.prepare(
+      'SELECT agent_id AS agentID, session_id AS sessionID, external_id AS externalID ' +
+        'FROM agent_aliases WHERE id = ?',
+    ).bind(emailAlias.body.data.id).first<{
+      agentID: string;
+      sessionID: string;
+      externalID: string;
+    }>();
+    expect(persisted).toMatchObject({
+      agentID: 'agent-000b',
+      sessionID: 'session-b',
+      externalID: 'reviewer@example.com',
+    });
+
     const routed = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
       to: 'REVIEWER@example.com',
       body: 'Please review this change.',
