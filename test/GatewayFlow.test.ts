@@ -10,6 +10,12 @@ class GatewayScenario {
 
   async setup() {
     this.client.installExternalTestTransport();
+
+    // Each scenario starts with its own recipient configuration, including D1 bindings.
+    const cleared = await this.client.call('token-b', 'DELETE',
+      '/v2/gateway-routes/current?session_id=session-b');
+    expect(cleared.status).toBe(200);
+
     await this.client.provisionAgentMailboxes();
     await this.client.registerVerifiedWake();
   }
