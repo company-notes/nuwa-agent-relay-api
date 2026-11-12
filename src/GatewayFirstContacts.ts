@@ -1,9 +1,14 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
 
+export enum GatewayFirstContactStatus {
+  Pending = 'pending',
+  Completed = 'completed',
+}
+
 type FirstContactRow = {
   messageID: string;
-  status: 'pending' | 'completed';
+  status: GatewayFirstContactStatus;
   nativeThreadID: string | null;
 };
 
@@ -78,11 +83,13 @@ export class GatewayFirstContacts {
         'No matching first-contact reservation exists for this Message and sender.');
     }
 
-    if (first.status === 'completed') {
+    if (first.status === GatewayFirstContactStatus.Completed) {
       if (first.nativeThreadID !== nativeThreadID) {
         throw new APIError(409, 'gateway_first_contact_conflict',
           'First contact was already confirmed with a different native Thread.');
       }
+
+      await this.releaseWakes(senderSessionID, messageID);
 
       return { senderSessionID, recipientSessionID: this.recipientSessionID,
         nativeThreadID, alreadyConfirmed: true };
@@ -116,16 +123,21 @@ export class GatewayFirstContacts {
     if (completed.meta.changes !== 1) {
       const current = await this.get(senderSessionID);
 
-      if (current?.status !== 'completed' || current.nativeThreadID !== nativeThreadID) {
+      if (current?.status !== GatewayFirstContactStatus.Completed || current.nativeThreadID !== nativeThreadID) {
         throw new APIError(409, 'gateway_first_contact_conflict',
           'The native Thread confirmation changed during submission.');
       }
     }
 
-    // A successful native-tool confirmation attests that the initial message
-    // was submitted already. Never replay that bootstrap message on Wake retry.
-    // Release only this sender/recipient pair's other received pending Wakes.
-    // No new message is created and no MailTrigger email is resent.
+    await this.releaseWakes(senderSessionID, messageID);
+
+    return { senderSessionID, recipientSessionID: this.recipientSessionID,
+      nativeThreadID, alreadyConfirmed: false };
+  }
+
+  private async releaseWakes(senderSessionID: string, messageID: string): Promise<void> {
+    // Confirmation attests the initial native-tool submission. Do not replay
+    // it on a Wake retry; release only later messages to this recipient.
     const now = new Date().toISOString();
 
     await this.env.DB.batch([
@@ -147,9 +159,6 @@ export class GatewayFirstContacts {
       ).bind(now, this.recipientSessionID, messageID, this.organizationID,
         senderSessionID, this.recipientSessionID),
     ]);
-
-    return { senderSessionID, recipientSessionID: this.recipientSessionID,
-      nativeThreadID, alreadyConfirmed: false };
   }
 
   /** Explicit operator recovery if a bootstrap event may have been lost. */
