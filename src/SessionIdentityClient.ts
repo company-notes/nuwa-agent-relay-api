@@ -35,7 +35,7 @@ export class SessionIdentityClient {
     }
   }
 
-  private async request<T>(method: 'GET' | 'POST', path: string, body?: Record<string, string>): Promise<T> {
+  private async request<T>(method: 'GET' | 'PATCH', path: string, body?: Record<string, string>): Promise<T> {
     const response = await this.requester(new URL(path, this.addressURL), {
       method,
       headers: {
