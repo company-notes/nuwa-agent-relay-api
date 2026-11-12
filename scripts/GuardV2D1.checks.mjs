@@ -9,8 +9,8 @@ const v2 = [
 ];
 
 test('accepts only a new empty or fully migrated V2 database', () => {
-  assert.equal(classifyDatabase(['d1_migrations']), 'empty');
-  assert.equal(classifyDatabase([...v2, 'd1_migrations']), 'v2');
+  assert.equal(classifyDatabase(['d1_migrations', '_cf_KV', '_cf_METADATA']), 'empty');
+  assert.equal(classifyDatabase([...v2, 'd1_migrations', '_cf_KV']), 'v2');
   assert.equal(classifyDatabase(v2, true), 'v2');
 });
 
@@ -20,6 +20,8 @@ test('blocks old production D1, mixed and partial schemas before migrate or depl
     [...v2, 'paired_hosts'],
     ['agent_mailboxes', 'messages'],
     ['secrets'],
+    ['_cf_KV', 'paired_hosts'],
+    ['_cf_UNKNOWN'],
   ]) {
     assert.throws(() => classifyDatabase(names));
   }
