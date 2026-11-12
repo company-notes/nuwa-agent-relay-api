@@ -15,7 +15,7 @@ const REQUIRED = [
   'wake_pairing_oauth_attempts',
 ];
 
-const KNOWN_INFRASTRUCTURE = new Set(['d1_migrations', 'sqlite_sequence']);
+const KNOWN_INFRASTRUCTURE = new Set(['d1_migrations', 'sqlite_sequence', '_cf_KV', '_cf_METADATA']);
 
 export function classifyDatabase(names, requireMigrated = false) {
   assert.ok(Array.isArray(names) && names.every((name) => typeof name === 'string'),
@@ -68,7 +68,7 @@ export function guardRemoteDatabase(requireMigrated = false) {
   const query = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name";
   const output = execFileSync('npx', [
     'wrangler', 'd1', 'execute', 'DB', '--remote',
-    '--command', query, '--json',
+    '--config', '.wrangler.deploy.jsonc', '--command', query, '--json',
   ], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
