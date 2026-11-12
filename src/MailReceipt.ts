@@ -250,7 +250,7 @@ export class MailReceipt {
         await MailReceipt.confirmArrival(this.env, messageId, 'archive');
 
         // Re-read status through the same authorized query. No second archive call.
-        return this.status(messageId, organizationId, workId, false);
+        return this.status(messageId, organizationId, sessionID, false);
       }
     }
 
