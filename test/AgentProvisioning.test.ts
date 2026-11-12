@@ -96,7 +96,7 @@ describe('automatic managed SMTP provisioning', () => {
       .toMatchObject({ mailbox: mailboxA, isActive: true });
   });
 
-  it('also cleans up the legacy SMTP to Origin default for the same mailbox', async () => {
+  it('also cleans up the existing SMTP to Origin default for the same mailbox', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
 
