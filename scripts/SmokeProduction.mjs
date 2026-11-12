@@ -31,7 +31,7 @@ for (const origin of origins) {
   assert.equal(payload?.data?.service, 'nuwa-agent-relay-api');
   assert.equal(payload?.data?.status, 'ok');
 
-  const protectedPaths = ['/v2/inbox', '/v2/agent-inbox', '/v2/agents/mailbox'];
+  const protectedPaths = ['/v2/inbox', '/v2/agent-inbox', '/v2/agent-mailboxes'];
 
   for (const path of protectedPaths) {
     const response = await request(origin, path);

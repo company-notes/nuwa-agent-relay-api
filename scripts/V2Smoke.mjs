@@ -101,8 +101,8 @@ async function addressSession(config, side) {
   }
 
   await call(config.address, side,
-    '/v2/account/sessions/' + encodeURIComponent(side.sessionID) + '/heartbeat',
-    { method: 'POST', body: { runtimeToken: side.runtime }, relay: false });
+    '/v2/account/sessions/' + encodeURIComponent(side.sessionID) + '/runtime-lease',
+    { method: 'PATCH', body: { runtimeToken: side.runtime }, relay: false });
 
   return { orgID: status.organization.id, session };
 }
@@ -152,8 +152,8 @@ export async function runSmoke(config = configuration()) {
     throw new Error('Recipient Session inbox did not contain the verified message.');
   }
 
-  const read = await call(config.relay, b, '/v2/messages/' + message.id + '/read', {
-    method: 'POST',
+  const read = await call(config.relay, b, '/v2/messages/' + message.id + '/read-receipt', {
+    method: 'PUT',
   });
 
   if (read.sessionID !== b.sessionID || !read.readAt) {
@@ -186,11 +186,11 @@ export async function runSmoke(config = configuration()) {
     throw new Error('Agent inbox did not contain the verified Handoff.');
   }
 
-  const acceptance = await call(config.relay, b, '/v2/handoffs/' + handoff.id + '/accept', {
-    method: 'POST',
+  const acceptance = await call(config.relay, b, '/v2/handoffs/' + handoff.id + '/acceptance', {
+    method: 'PUT',
   });
   await requireArrival(config, b, acceptance.id);
-  const handoffReply = await call(config.relay, b, '/v2/handoffs/' + handoff.id + '/reply', {
+  const handoffReply = await call(config.relay, b, '/v2/handoffs/' + handoff.id + '/replies', {
     method: 'POST',
     body: { body: 'Staging Handoff accepted by B ' + probe },
   });

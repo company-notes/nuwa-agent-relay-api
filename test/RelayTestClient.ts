@@ -89,7 +89,7 @@ export class RelayTestClient {
       });
     }
 
-    const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/heartbeat)?$/);
+    const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
 
     if (matched) {
       const session = [this.sessionA, this.sessionB, this.sessionC]
@@ -103,7 +103,7 @@ export class RelayTestClient {
         const provided = JSON.parse(String(init?.body)) as { runtimeToken: string };
         const expected = session.id.replace('session-', 'runtime-');
 
-        if (init?.method !== 'POST' || provided.runtimeToken !== expected) {
+        if (init?.method !== 'PATCH' || provided.runtimeToken !== expected) {
           return Response.json({ ok: false, error: { code: 'runtime_not_owner' } }, { status: 409 });
         }
 
@@ -115,7 +115,7 @@ export class RelayTestClient {
       return Response.json({ ok: true, data: session });
     }
 
-    if (url.pathname === '/v2/account/resolve') {
+    if (url.pathname === '/v2/account/addresses') {
       const input = url.searchParams.get('address');
       const session = [this.sessionA, this.sessionB, this.sessionC].find((item) =>
         input === item.canonical ||
@@ -579,8 +579,8 @@ export class RelayTestClient {
   }
 
   async provisionAgentMailboxes(): Promise<void> {
-    const first = await this.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
-    const second = await this.call('token-b', 'POST', '/v2/agents/mailbox?session_id=session-b');
+    const first = await this.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
+    const second = await this.call('token-b', 'POST', '/v2/agent-mailboxes?session_id=session-b');
 
     expect(first.status, 'Sender Agent mailbox should be provisioned').toBe(201);
     expect(second.status, 'Recipient Agent mailbox should be provisioned').toBe(201);

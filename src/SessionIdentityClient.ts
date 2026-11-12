@@ -98,7 +98,7 @@ export class SessionIdentityClient {
   async resolve(address: string): Promise<ResolvedSession> {
     const session = await this.request<ResolvedSession>(
       'GET',
-      '/v2/account/resolve?address=' + encodeURIComponent(address),
+      '/v2/account/addresses?address=' + encodeURIComponent(address),
     );
 
     return SessionIdentityClient.requireSession(session);
@@ -127,8 +127,8 @@ export class SessionIdentityClient {
     // Heartbeat atomically proves current Runtime ownership and renews its lease.
     // OAuth membership and knowledge of a Session ID alone never grant execution rights.
     const lease = await this.request<Lease>(
-      'POST',
-      '/v2/account/sessions/' + encodeURIComponent(sessionID) + '/heartbeat',
+      'PATCH',
+      '/v2/account/sessions/' + encodeURIComponent(sessionID) + '/runtime-lease',
       { runtimeToken },
     );
 
