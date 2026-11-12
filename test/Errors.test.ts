@@ -13,7 +13,7 @@ describe('Relay API failure and access boundaries', () => {
     const response = await client.call('token-a', 'GET', '/v2/inbox?session_id=session-a');
 
     expect(response.status, 'An Agent Address outage must be treated as an upstream failure').toBe(502);
-    expect(response.body.error.code).toBe('address_lookup_failed');
+    expect(response.body.error.code).toBe('address_authorization_failed');
   });
 
   it('rejects invalid artifact links with a client error instead of an internal error', async () => {
