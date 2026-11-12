@@ -117,6 +117,9 @@ CREATE TABLE wake_pairing_requests (
   link_digest TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
+  oauth_state_digest TEXT,
+  oauth_client_id TEXT,
+  oauth_started_at TEXT,
   session_digest TEXT,
   session_expires_at TEXT,
   consumed_at TEXT
