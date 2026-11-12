@@ -134,6 +134,7 @@ export class WakeService {
           organizationID: event.organizationID,
           body: event.body,
         });
+
         const config = event.encryptedTarget
           ? await WakeTarget.decrypt(env, event.encryptedTarget)
           : {
@@ -141,6 +142,7 @@ export class WakeService {
             authMode: 'hmac' as const,
             signingSecret: event.signingSecret,
           };
+
         success = await WakeTarget.send(config, body);
         reason = success ? '' : 'http_rejected';
         if (!success) {
