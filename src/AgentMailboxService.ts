@@ -3,8 +3,8 @@ import { APIError } from './HTTP';
 import { MailTriggerClient, type ManagedMailbox } from './MailTriggerClient';
 
 type MailboxRow = {
-  mailbox_id: string;
-  mailbox_email: string;
+  mailboxID: string;
+  mailboxEmail: string;
 };
 
 export class AgentMailboxService {
@@ -24,7 +24,8 @@ export class AgentMailboxService {
 
   async require(organizationID: string, agentID: string): Promise<MailboxRow> {
     const row = await this.env.DB.prepare(
-      'SELECT mailbox_id, mailbox_email FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',
+      'SELECT mailbox_id AS mailboxID, mailbox_email AS mailboxEmail ' +
+        'FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',
     ).bind(organizationID, agentID).first<MailboxRow>();
 
     if (!row) {
@@ -37,13 +38,14 @@ export class AgentMailboxService {
   async provision(organizationID: string, agentID: string): Promise<ManagedMailbox> {
     const username = AgentMailboxService.username(agentID);
     const existing = await this.env.DB.prepare(
-      'SELECT mailbox_id, mailbox_email FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',
+      'SELECT mailbox_id AS mailboxID, mailbox_email AS mailboxEmail ' +
+        'FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',
     ).bind(organizationID, agentID).first<MailboxRow>();
 
     const mailbox = await this.mail.ensureManagedMailbox(username);
 
-    if (existing && (existing.mailbox_id !== mailbox.mailboxId ||
-        existing.mailbox_email !== mailbox.mailboxEmail)) {
+    if (existing && (existing.mailboxID !== mailbox.mailboxId ||
+        existing.mailboxEmail !== mailbox.mailboxEmail)) {
       throw new APIError(409, 'agent_mailbox_mismatch', 'Managed mailbox identity has changed.');
     }
 
@@ -59,7 +61,7 @@ export class AgentMailboxService {
 
     const saved = await this.require(organizationID, agentID);
 
-    if (saved.mailbox_id !== mailbox.mailboxId || saved.mailbox_email !== mailbox.mailboxEmail) {
+    if (saved.mailboxID !== mailbox.mailboxId || saved.mailboxEmail !== mailbox.mailboxEmail) {
       throw new APIError(409, 'agent_mailbox_mismatch', 'Concurrent mailbox registration conflicts.');
     }
 
