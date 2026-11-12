@@ -23,20 +23,20 @@ describe('Agent handoff flow', () => {
     expect(waiting.body.data[0].body).toBe('Please sign the attached artifacts.');
 
     const rejectedUnacceptedReply = await client.call(
-      'token-b', 'POST', `/v2/handoffs/${handoffId}/reply?session_id=session-b`,
+      'token-b', 'POST', `/v2/handoffs/${handoffId}/replies?session_id=session-b`,
       { body: 'Not accepted yet' },
     );
     expect(rejectedUnacceptedReply.status).toBe(404);
 
     const accepted = await client.call(
-      'token-b', 'POST', `/v2/handoffs/${handoffId}/accept?session_id=session-b`,
+      'token-b', 'PUT', `/v2/handoffs/${handoffId}/acceptance?session_id=session-b`,
     );
     expect(accepted.status).toBe(201);
     expect(accepted.body.data.acceptedBy).toBe('relay-test-org/beta/reviewer');
 
     const deliveriesAfterAcceptance = client.deliveries.length;
     const alreadyAccepted = await client.call(
-      'token-b', 'POST', `/v2/handoffs/${handoffId}/accept?session_id=session-b`,
+      'token-b', 'PUT', `/v2/handoffs/${handoffId}/acceptance?session_id=session-b`,
     );
     expect(alreadyAccepted.status, 'The same accepting Session is idempotent').toBe(201);
     expect(alreadyAccepted.body.data.id).toBe(accepted.body.data.id);
@@ -44,7 +44,7 @@ describe('Agent handoff flow', () => {
     expect(client.deliveries, 'A duplicate accept must not send again').toHaveLength(deliveriesAfterAcceptance);
 
     const reply = await client.call(
-      'token-b', 'POST', `/v2/handoffs/${handoffId}/reply?session_id=session-b`,
+      'token-b', 'POST', `/v2/handoffs/${handoffId}/replies?session_id=session-b`,
       { body: 'The release is signed.' },
     );
     expect(reply.status).toBe(201);
@@ -76,8 +76,8 @@ describe('Agent handoff flow', () => {
 
     client.failNextMail = true;
     const failed = await client.call(
-      'token-b', 'POST',
-      `/v2/handoffs/${handoff.body.data.id}/accept?session_id=session-b`,
+      'token-b', 'PUT',
+      `/v2/handoffs/${handoff.body.data.id}/acceptance?session_id=session-b`,
     );
 
     expect(failed.status, 'MailTrigger failure must be surfaced').toBe(502);
@@ -87,8 +87,8 @@ describe('Agent handoff flow', () => {
 
     const transmissions = client.deliveries.length;
     const retry = await client.call(
-      'token-b', 'POST',
-      `/v2/handoffs/${handoff.body.data.id}/accept?session_id=session-b`,
+      'token-b', 'PUT',
+      `/v2/handoffs/${handoff.body.data.id}/acceptance?session_id=session-b`,
     );
 
     expect(retry.status, 'The accepting Session can read its committed outcome').toBe(201);
@@ -115,8 +115,8 @@ describe('Agent handoff flow', () => {
     expect(handoff.status).toBe(201);
 
     client.loseNextMailAcknowledgement = true;
-    const interrupted = await client.call('token-b', 'POST',
-      `/v2/handoffs/${handoff.body.data.id}/accept?session_id=session-b`);
+    const interrupted = await client.call('token-b', 'PUT',
+      `/v2/handoffs/${handoff.body.data.id}/acceptance?session_id=session-b`);
     expect(interrupted.status, 'A missing provider acknowledgement must remain visible').toBe(502);
 
     const owner = await env.DB.prepare(
@@ -152,18 +152,18 @@ describe('Agent handoff flow', () => {
     expect(confirmed?.deliveryStatus).toBe('sent');
 
     const deliveryCount = client.deliveries.length;
-    const retried = await client.call('token-b', 'POST',
-      `/v2/handoffs/${handoff.body.data.id}/accept?session_id=session-b`);
+    const retried = await client.call('token-b', 'PUT',
+      `/v2/handoffs/${handoff.body.data.id}/acceptance?session_id=session-b`);
     expect(retried.status, 'The same Session may safely retry the accepted operation').toBe(201);
     expect(retried.body.data.id).toBe(acceptance.results[0].id);
     expect(client.deliveries, 'The retry must not submit a second acceptance').toHaveLength(deliveryCount);
 
-    const competing = await client.call('token-c', 'POST',
-      `/v2/handoffs/${handoff.body.data.id}/accept?session_id=session-c`);
+    const competing = await client.call('token-c', 'PUT',
+      `/v2/handoffs/${handoff.body.data.id}/acceptance?session_id=session-c`);
     expect(competing.status, 'A sibling Session must never steal the Handoff').toBe(409);
 
     const reply = await client.call('token-b', 'POST',
-      `/v2/handoffs/${handoff.body.data.id}/reply?session_id=session-b`,
+      `/v2/handoffs/${handoff.body.data.id}/replies?session_id=session-b`,
       { body: 'Release reviewed by the original accepting Session.' });
     expect(reply.status).toBe(201);
 
@@ -189,13 +189,13 @@ describe('Agent handoff flow', () => {
     expect(pending.body.data.some((item: { id: string }) => item.id === handoff.body.data.id))
       .toBe(true);
 
-    const accepted = await client.call('token-c', 'POST',
-      '/v2/handoffs/' + handoff.body.data.id + '/accept?session_id=session-c');
+    const accepted = await client.call('token-c', 'PUT',
+      '/v2/handoffs/' + handoff.body.data.id + '/acceptance?session_id=session-c');
     expect(accepted.status).toBe(201);
     expect(accepted.body.data.acceptedBy).toBe('relay-test-org/beta/observer');
 
-    const duplicate = await client.call('token-b', 'POST',
-      '/v2/handoffs/' + handoff.body.data.id + '/accept?session_id=session-b');
+    const duplicate = await client.call('token-b', 'PUT',
+      '/v2/handoffs/' + handoff.body.data.id + '/acceptance?session_id=session-b');
     expect(duplicate.status).toBe(409);
 
     const foreignHistory = await client.call('token-b', 'GET',
@@ -203,7 +203,7 @@ describe('Agent handoff flow', () => {
     expect(foreignHistory.status).toBe(404);
 
     const reply = await client.call('token-c', 'POST',
-      '/v2/handoffs/' + handoff.body.data.id + '/reply?session_id=session-c',
+      '/v2/handoffs/' + handoff.body.data.id + '/replies?session_id=session-c',
       { body: 'Reviewed by the accepted Session.' });
     expect(reply.status).toBe(201);
 

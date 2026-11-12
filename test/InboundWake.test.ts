@@ -10,8 +10,8 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
 
-    const readyA = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
-    const readyB = await client.call('token-b', 'POST', '/v2/agents/mailbox?session_id=session-b');
+    const readyA = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
+    const readyB = await client.call('token-b', 'POST', '/v2/agent-mailboxes?session_id=session-b');
 
     expect(readyA.status).toBe(201);
     expect(readyB.status).toBe(201);
@@ -83,21 +83,21 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     expect(confirmed.body.data.receiptSource).toBe('webhook');
     expect(confirmed.body.data.readBy).toHaveLength(0);
 
-    const unauthorizedRead = await client.call('token-a', 'POST',
-      '/v2/messages/' + mail.body.data.id + '/read?session_id=session-a');
+    const unauthorizedRead = await client.call('token-a', 'PUT',
+      '/v2/messages/' + mail.body.data.id + '/read-receipt?session_id=session-a');
     expect(unauthorizedRead.status).toBe(404);
 
-    const outsiderRead = await client.call('token-c', 'POST',
-      '/v2/messages/' + mail.body.data.id + '/read?session_id=session-c');
+    const outsiderRead = await client.call('token-c', 'PUT',
+      '/v2/messages/' + mail.body.data.id + '/read-receipt?session_id=session-c');
     expect(outsiderRead.status).toBe(404);
 
-    const read = await client.call('token-b', 'POST',
-      '/v2/messages/' + mail.body.data.id + '/read?session_id=session-b');
+    const read = await client.call('token-b', 'PUT',
+      '/v2/messages/' + mail.body.data.id + '/read-receipt?session_id=session-b');
     expect(read.status).toBe(201);
     expect(read.body.data.sessionID).toBe('session-b');
 
-    const againRead = await client.call('token-b', 'POST',
-      '/v2/messages/' + mail.body.data.id + '/read?session_id=session-b');
+    const againRead = await client.call('token-b', 'PUT',
+      '/v2/messages/' + mail.body.data.id + '/read-receipt?session_id=session-b');
     expect(againRead.body.data.readAt).toBe(read.body.data.readAt);
 
     const senderSeesReceipt = await client.call('token-a', 'GET', receiptPath);
@@ -118,7 +118,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     });
     expect(mail.status).toBe(201);
 
-    const second = await client.call('token-b', 'POST', '/v2/agents/mailbox?session_id=session-b');
+    const second = await client.call('token-b', 'POST', '/v2/agent-mailboxes?session_id=session-b');
     client.archiveDeliveredEmail(
       second.body.data.mailboxId, '[NAR:00000000-0000-0000-0000-000000000000] Unrelated',
     );
@@ -170,7 +170,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     await WakeService.dispatchDue(env);
     expect(client.wakeCallbacks).toHaveLength(0);
 
-    const b = await client.call('token-b', 'POST', '/v2/agents/mailbox?session_id=session-b');
+    const b = await client.call('token-b', 'POST', '/v2/agent-mailboxes?session_id=session-b');
     client.archiveDeliveredEmail(
       b.body.data.mailboxId,
       '[NAR:' + sent.body.data.id + '] Agent Relay message',
@@ -228,7 +228,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
       body: 'One provider receipt, one concurrent dispatch.',
     });
     const recipient = await client.call('token-b', 'POST',
-      '/v2/agents/mailbox?session_id=session-b');
+      '/v2/agent-mailboxes?session_id=session-b');
     client.archiveDeliveredEmail(
       recipient.body.data.mailboxId, '[NAR:' + mail.body.data.id + '] Hello',
     );
@@ -259,7 +259,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
     // The retry path is tested after Archive evidence rather than after a
     // Webhook, so no independent waitUntil races this controlled retry test.
     const recipient = await client.call('token-b', 'POST',
-      '/v2/agents/mailbox?session_id=session-b');
+      '/v2/agent-mailboxes?session_id=session-b');
     client.archiveDeliveredEmail(
       recipient.body.data.mailboxId,
       '[NAR:' + sent.body.data.id + '] Agent Relay message',
