@@ -29,9 +29,12 @@ jobs:
         run: npm test
       - name: Test live smoke harness offline
         run: npm run test:smoke
-      - name: Validate deployment and Gateway staging scripts
+      - name: Validate deployment scripts
         run: |
           node --check scripts/prepare-deploy.mjs
+          node --check scripts/ResolveRelayD1.mjs
+          node --check scripts/GuardV2D1.mjs
+          node --check scripts/SmokeProduction.mjs
           node --check scripts/GatewayFirstContactConfirm.mjs
 
   deploy:
@@ -73,11 +76,38 @@ jobs:
               exit 1
             fi
           done
+      - name: Resolve original Relay D1 resource using GitHub's existing Cloudflare credentials
+        run: node scripts/ResolveRelayD1.mjs
       - name: Prepare deployment config
         run: node scripts/prepare-deploy.mjs
-      - name: Apply D1 migrations
+      - name: Verify canonical Worker, D1 and unchanged MailTrigger transport settings
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const c = JSON.parse(readFileSync(".wrangler.deploy.jsonc"));
+            if (process.env.CLOUDFLARE_ACCOUNT_ID !== "b471fa2c14470c664eec0a37616accd6" ||
+                c.name !== "nuwa-agent-relay-api" ||
+                c.d1_databases?.find(x => x.binding === "DB")?.database_name !== "nuwa-agent-relay-api" ||
+                c.d1_databases?.find(x => x.binding === "DB")?.database_id !== process.env.CLOUDFLARE_D1_DATABASE_ID ||
+                c.routes?.[0]?.pattern !== "agent-relay.company-notes.com" ||
+                c.routes?.[0]?.custom_domain !== true ||
+                c.vars?.ADDRESS_API_URL !== "https://address.company-notes.com" ||
+                c.vars?.MAILTRIGGER_API_URL !== "https://route.mxnodes.com" ||
+                c.vars?.MAILTRIGGER_AUTH_SCHEME !== "Token" ||
+                c.vars?.MAILTRIGGER_RECEIPT_URL !==
+                  "https://agent-relay.company-notes.com/v1/mailtrigger/receipt") {
+              throw Error("Relay canonical deployment or MailTrigger webhook configuration mismatch.");
+            }
+          '
+      - name: Dry-run Worker bundle before touching remote D1
+        run: npx wrangler deploy --dry-run --config .wrangler.deploy.jsonc --outdir .wrangler-check
+      - name: Reject legacy, mixed or unknown remote D1 tables
+        run: node scripts/GuardV2D1.mjs --remote
+      - name: Apply clean Relay D1 migrations
         run: npx wrangler d1 migrations apply DB --remote --config .wrangler.deploy.jsonc
-      - name: Deploy Worker
+      - name: Verify complete V2 D1 schema before deployment
+        run: node scripts/GuardV2D1.mjs --remote --require-migrated
+      - name: Deploy official Relay Worker
         run: npx wrangler deploy --config .wrangler.deploy.jsonc
       - name: Set MailTrigger Worker secret
         shell: bash
@@ -93,3 +123,17 @@ jobs:
         if: env.MAILTRIGGER_INBOUND_KEY != ''
         shell: bash
         run: printf '%s' "$MAILTRIGGER_INBOUND_KEY" | npx wrangler secret put MAILTRIGGER_INBOUND_KEY --config .wrangler.deploy.jsonc
+
+  smoke:
+    name: Verify official Relay and MailTrigger webhook
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Verify HTTP V2 routes and unchanged MailTrigger receipt webhook
+        run: node scripts/SmokeProduction.mjs

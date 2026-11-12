@@ -272,6 +272,11 @@ export class GatewayBindings {
       return minimal;
     }
 
+    if (!message.senderCanonicalAddress) {
+      throw new APIError(409, 'gateway_sender_identity_unavailable',
+        'Historical Message predates verified canonical sender storage.');
+    }
+
     const dispatch: Record<string, unknown> = {
       ...minimal,
       relayThreadID: message.threadID,
