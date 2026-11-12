@@ -16,7 +16,7 @@ type WakeRow = {
   recipientAgentID: string;
   recipientSessionID: string | null;
   body: string;
-  callbackUrl: string;
+  callbackURL: string;
   signingSecret: string;
   encryptedTarget: string | null;
   attempts: number;
@@ -88,7 +88,7 @@ export class WakeService {
     const now = new Date().toISOString();
     const rows = await env.DB.prepare(
       `SELECT e.message_id AS messageId, e.session_id AS sessionID,
-              e.attempts, s.callback_url AS callbackUrl, s.signing_secret AS signingSecret,
+              e.attempts, s.callback_url AS callbackURL, s.signing_secret AS signingSecret,
               s.encrypted_target AS encryptedTarget,
               t.org_id AS organizationID, m.thread_id AS threadID,
               m.sender_session_id AS senderSessionID,
@@ -138,7 +138,7 @@ export class WakeService {
         const config = event.encryptedTarget
           ? await WakeTarget.decrypt(env, event.encryptedTarget)
           : {
-            callbackURL: event.callbackUrl,
+            callbackURL: event.callbackURL,
             authMode: 'hmac' as const,
             signingSecret: event.signingSecret,
           };
