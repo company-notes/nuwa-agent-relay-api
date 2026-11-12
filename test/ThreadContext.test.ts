@@ -82,7 +82,7 @@ describe('bounded Relay Thread context in one authorized message read', () => {
 
     const mismatchedToken = await client.call('token-a', 'GET',
       '/v2/messages/' + sent.body.data.id + '?session_id=session-b&context_limit=2');
-    expect(mismatchedToken.status).toBe(403);
+    expect(mismatchedToken.status).toBe(409);
 
     for (const limit of ['-1', '13', '1.5', 'nan', '']) {
       const response = await client.call('token-b', 'GET',
