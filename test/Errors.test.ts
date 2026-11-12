@@ -10,7 +10,7 @@ describe('Relay API failure and access boundaries', () => {
     client.installExternalTestTransport();
     client.failAddressStatus = true;
 
-    const response = await client.call('token-a', 'GET', '/v1/inbox?work_address_id=work-a');
+    const response = await client.call('token-a', 'GET', '/v2/inbox?session_id=session-a');
 
     expect(response.status, 'An Agent Address outage must be treated as an upstream failure').toBe(502);
     expect(response.body.error.code).toBe('address_lookup_failed');
@@ -20,8 +20,8 @@ describe('Relay API failure and access boundaries', () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
 
-    const invalid = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
-      to: '@beta/reviewer',
+    const invalid = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: 'relay-test-org/beta/reviewer',
       body: 'This message must not be delivered.',
       artifactLinks: ['not-a-url'],
     });
@@ -34,11 +34,11 @@ describe('Relay API failure and access boundaries', () => {
   it('stores failed external deliveries without showing them in the recipient inbox', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    await client.provisionBothHosts();
+    await client.provisionAgentMailboxes();
 
     client.failNextMail = true;
-    const response = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
-      to: '@beta/reviewer',
+    const response = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: 'relay-test-org/beta/reviewer',
       body: 'This send should fail.',
     });
 
@@ -52,27 +52,27 @@ describe('Relay API failure and access boundaries', () => {
     expect(rows.results, 'The failed delivery remains available for diagnosis').toHaveLength(1);
     expect(rows.results[0].delivery_status).toBe('failed');
 
-    const inbox = await client.call('token-b', 'GET', '/v1/inbox?work_address_id=work-b');
+    const inbox = await client.call('token-b', 'GET', '/v2/inbox?session_id=session-b');
     expect(inbox.body.data, 'Failed messages must not be presented as delivered').toHaveLength(0);
   });
 
   it('does not disclose a thread to a nonparticipant in the same organization', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    await client.provisionBothHosts();
+    await client.provisionAgentMailboxes();
 
-    const message = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
-      to: '@beta/reviewer',
+    const message = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: 'relay-test-org/beta/reviewer',
       body: 'Only the participants may read this.',
     });
     expect(message.status).toBe(201);
 
     const threadId = message.body.data.threadId;
-    const denied = await client.call('token-c', 'GET', `/v1/threads/${threadId}?work_address_id=work-c`);
+    const denied = await client.call('token-c', 'GET', `/v2/threads/${threadId}?session_id=session-c`);
     expect(denied.status, 'A separate work identity must not read thread history').toBe(404);
     expect(denied.body.error.code).toBe('thread_not_found');
 
-    const foreignInbox = await client.call('token-c', 'GET', '/v1/inbox?work_address_id=work-c');
+    const foreignInbox = await client.call('token-c', 'GET', '/v2/inbox?session_id=session-c');
     expect(foreignInbox.status).toBe(200);
     expect(foreignInbox.body.data, 'A nonparticipant must not receive another work identity inbox').toHaveLength(0);
   });
