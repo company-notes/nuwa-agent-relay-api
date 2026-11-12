@@ -23,6 +23,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Typecheck
         run: npm run check
+      - name: Enforce Code Principles (control blocks and exception handlers)
+        run: npm run style:check
       - name: Enforce dependency security (high/critical)
         run: npm run audit:check
       - name: Test Worker and D1
