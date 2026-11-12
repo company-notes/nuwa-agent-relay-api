@@ -7,8 +7,6 @@ export type HandoffAcceptanceInput = {
   acceptingAgentID: string;
   acceptingSessionID: string;
   acceptingCanonicalAddress: string;
-  senderAgentID: string;
-  senderSessionID: string;
 };
 
 export type HandoffAcceptanceResult = {
@@ -43,14 +41,14 @@ export class HandoffAcceptance {
       this.env.DB.prepare(
         `INSERT OR IGNORE INTO messages
            (id, thread_id, kind, sender_agent_id, sender_session_id,
-            recipient_agent_id, recipient_session_id, subject, body,
-            artifacts_json, delivery_status, created_at)
-         SELECT ?, t.id, 'acceptance', ?, ?, t.sender_agent_id, t.sender_session_id,
+            sender_canonical_address, recipient_agent_id, recipient_session_id,
+            subject, body, artifacts_json, delivery_status, created_at)
+         SELECT ?, t.id, 'acceptance', ?, ?, ?, t.sender_agent_id, t.sender_session_id,
                 ?, ?, '[]', 'pending', ?
            FROM threads t
           WHERE t.id = ? AND t.org_id = ? AND t.accepted_session_id = ?`,
       ).bind(messageID, input.acceptingAgentID, input.acceptingSessionID,
-        HandoffAcceptance.SUBJECT, HandoffAcceptance.body(input.acceptingCanonicalAddress),
+        input.acceptingCanonicalAddress, HandoffAcceptance.SUBJECT, HandoffAcceptance.body(input.acceptingCanonicalAddress),
         createdAt, input.threadID, input.organizationID, input.acceptingSessionID),
     ]);
 
