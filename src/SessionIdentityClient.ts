@@ -72,18 +72,26 @@ export class SessionIdentityClient {
     return payload.data as T;
   }
 
+  private static requireSession(value: unknown): ResolvedSession {
+    const session = value as ResolvedSession | null;
+
+    if (!session || typeof session.id !== 'string' || !session.id ||
+        typeof session.agentId !== 'string' || !session.agentId ||
+        typeof session.canonical !== 'string' ||
+        session.canonical.split('/').length !== 3) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address returned an invalid Session.');
+    }
+
+    return session;
+  }
+
   async resolve(address: string): Promise<ResolvedSession> {
     const session = await this.request<ResolvedSession>(
       'GET',
       '/v2/account/resolve?address=' + encodeURIComponent(address),
     );
 
-    if (!session || typeof session.id !== 'string' || typeof session.agentId !== 'string' ||
-        typeof session.canonical !== 'string' || session.canonical.split('/').length !== 3) {
-      throw new APIError(502, 'address_response_invalid', 'Agent Address returned an invalid Session.');
-    }
-
-    return session;
+    return SessionIdentityClient.requireSession(session);
   }
 
   async authorize(sessionID: string, runtimeToken: string): Promise<SessionIdentity> {
@@ -104,10 +112,10 @@ export class SessionIdentityClient {
       '/v2/account/sessions/' + encodeURIComponent(sessionID),
     );
 
-    if (!session || session.id !== sessionID || typeof session.agentId !== 'string' ||
-        typeof session.canonical !== 'string' ||
-        session.canonical.split('/').length !== 3 ||
-        session.canonical.split('/')[0] !== organization.slug) {
+    const verifiedSession = SessionIdentityClient.requireSession(session);
+
+    if (verifiedSession.id !== sessionID ||
+        verifiedSession.canonical.split('/')[0] !== organization.slug) {
       throw new APIError(502, 'address_response_invalid', 'Session identity does not match its Organization.');
     }
 
@@ -128,9 +136,9 @@ export class SessionIdentityClient {
     return {
       organizationID: organization.id,
       organizationSlug: organization.slug,
-      agentID: session.agentId,
-      sessionID: session.id,
-      canonicalAddress: session.canonical,
+      agentID: verifiedSession.agentId,
+      sessionID: verifiedSession.id,
+      canonicalAddress: verifiedSession.canonical,
     };
   }
 }
