@@ -19,7 +19,7 @@ export class WakeRegistration {
   private static readonly logger = Logger.forModule('wake.registration');
   constructor(
     private readonly env: Env,
-    private readonly identity: SessionIdentity,
+    private readonly identity: Pick<SessionIdentity, 'organizationID' | 'sessionID'>,
   ) {}
 
   private static hex(bytes: Uint8Array): string {
