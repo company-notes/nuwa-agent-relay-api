@@ -1,4 +1,5 @@
 import { AgentMailboxService } from './AgentMailboxService';
+import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
 import { APIError, type JSONRecord } from './HTTP';
 import { MailTriggerClient } from './MailTriggerClient';
@@ -36,7 +37,7 @@ type MessageRow = {
 };
 
 export type RelayMessageInput = {
-  to: string;
+  to: Recipient;
   subject: string;
   body: string;
   artifactLinks: string[];
@@ -46,6 +47,7 @@ export class RelayV2Service {
   private static readonly logger = Logger.forModule('relay.v2');
   private readonly mail: MailTriggerClient;
   private readonly mailboxes: AgentMailboxService;
+  private readonly aliases: AliasService;
 
   constructor(
     private readonly env: Env,
@@ -54,10 +56,11 @@ export class RelayV2Service {
   ) {
     this.mail = new MailTriggerClient(env);
     this.mailboxes = new AgentMailboxService(env);
+    this.aliases = new AliasService(env, identity, address);
   }
 
-  private async recipient(address: string): Promise<ResolvedSession> {
-    const recipient = await this.address.resolve(address);
+  private async recipient(address: Recipient): Promise<ResolvedSession> {
+    const recipient = await this.aliases.resolve(address);
 
     if (recipient.canonical.split('/')[0] !== this.identity.organizationSlug) {
       throw new APIError(403, 'cross_organization_unsupported',
@@ -142,7 +145,8 @@ export class RelayV2Service {
 
   async send(kind: ThreadKind, request: RelayMessageInput) {
     const recipient = await this.recipient(request.to);
-    const agentHandoff = kind === 'handoff' && request.to.split('/').length === 2;
+    const agentHandoff = kind === 'handoff' &&
+      typeof request.to === 'string' && request.to.split('/').length === 2;
     const recipientSessionID = agentHandoff ? null : recipient.id;
 
     await this.provisionMailbox();
