@@ -312,7 +312,10 @@ export class GatewayBindings {
       await GatewayFirstContacts.reserve(env, message.organizationID, message.senderSessionID,
         message.recipientWakeSessionID, message.id);
 
-      return { ...dispatch, gatewayAction: 'create_native_thread' };
+      // A null native Thread indicates a reserved explicit first contact.
+      // Omission means the platform manages its own Thread (e.g. GrokBot).
+      // The existing V2 Studio Wake Receiver permits this optional field.
+      return { ...dispatch, recipientPlatformThreadID: null };
     }
 
     return { ...dispatch, recipientPlatformThreadID: conversation.nativeThreadID };
