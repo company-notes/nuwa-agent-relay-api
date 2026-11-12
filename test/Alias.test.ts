@@ -84,7 +84,7 @@ describe('External identity aliases', () => {
     expect(noLongerRoutable.status).toBe(404);
   });
 
-  it('refuses to deliver through an alias whose canonical target no longer matches its owner', async () => {
+  it('rejects an alias retargeted to another Agent without re-verification', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     await client.provisionAgentMailboxes();
@@ -104,9 +104,9 @@ describe('External identity aliases', () => {
     );
     expect(verified.status).toBe(200);
 
-    // Simulate stale registry state after an external mapping changes.
-    await env.DB.prepare('UPDATE agent_aliases SET canonical_address = ? WHERE id = ?')
-      .bind('relay-test-org/alpha/author', registered.body.data.id)
+    // An alias is bound to immutable Agent and Session IDs, never a mutable address string.
+    await env.DB.prepare('UPDATE agent_aliases SET session_id = ? WHERE id = ?')
+      .bind('session-a', registered.body.data.id)
       .run();
 
     const response = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
@@ -114,8 +114,8 @@ describe('External identity aliases', () => {
       body: 'Must not reach the wrong agent.',
     });
 
-    expect(response.status, 'Aliases must never silently retarget another work identity').toBe(409);
-    expect(response.body.error.code).toBe('stale_alias');
+    expect(response.status, 'Aliases must never silently retarget another Agent').toBe(409);
+    expect(response.body.error.code).toBe('alias_identity_mismatch');
     expect(client.deliveries).toHaveLength(0);
   });
 
