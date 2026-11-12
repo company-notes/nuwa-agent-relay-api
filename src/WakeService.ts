@@ -159,6 +159,21 @@ export class WakeService {
         });
       }
 
+      if (reason === 'gateway_first_contact_pending') {
+        // First contact is waiting for a recipient-authorized native Thread
+        // confirmation. This is not an external delivery failure and must not
+        // exhaust the normal six-attempt Wake retry budget.
+        await env.DB.prepare(
+          `UPDATE wake_events
+              SET next_attempt_at = ?, last_error = ?,
+                  lease_owner = NULL, lease_until = NULL
+            WHERE message_id = ? AND status = 'pending' AND lease_owner = ?`,
+        ).bind(new Date(Date.now() + 30_000).toISOString(), reason,
+          event.messageId, leaseOwner).run();
+
+        continue;
+      }
+
       const attempts = event.attempts + 1;
       const state = success ? 'delivered' : attempts >= 6 ? 'failed' : 'pending';
       const backoff = Math.min(60, 2 ** attempts);
