@@ -1,4 +1,5 @@
 import type { Env } from './Env';
+import { GatewayBindings } from './GatewayBindings';
 import { APIError, HTTP } from './HTTP';
 import type { SessionIdentity } from './SessionIdentityClient';
 import { WakeRegistration } from './WakeRegistration';
@@ -8,6 +9,13 @@ import { Logger } from './Logger';
 type WakeRow = {
   messageId: string;
   sessionID: string;
+  organizationID: string;
+  threadID: string;
+  senderSessionID: string;
+  senderCanonicalAddress: string;
+  recipientAgentID: string;
+  recipientSessionID: string | null;
+  body: string;
   callbackUrl: string;
   signingSecret: string;
   encryptedTarget: string | null;
@@ -80,10 +88,17 @@ export class WakeService {
     const now = new Date().toISOString();
     const rows = await env.DB.prepare(
       `SELECT e.message_id AS messageId, e.session_id AS sessionID,
-              e.attempts, s.callback_url AS callbackUrl, s.signing_secret AS signingSecret, s.encrypted_target AS encryptedTarget
+              e.attempts, s.callback_url AS callbackUrl, s.signing_secret AS signingSecret,
+              s.encrypted_target AS encryptedTarget,
+              t.org_id AS organizationID, m.thread_id AS threadID,
+              m.sender_session_id AS senderSessionID,
+              m.sender_canonical_address AS senderCanonicalAddress,
+              m.recipient_agent_id AS recipientAgentID,
+              m.recipient_session_id AS recipientSessionID, m.body
          FROM wake_events e
          JOIN wake_subscriptions s ON s.session_id = e.session_id
          JOIN messages m ON m.id = e.message_id
+         JOIN threads t ON t.id = m.thread_id AND t.org_id = s.org_id
         WHERE e.status = 'pending' AND e.next_attempt_at <= ?
           AND m.received_at IS NOT NULL
           AND (e.lease_until IS NULL OR e.lease_until <= ?)
@@ -104,16 +119,21 @@ export class WakeService {
         continue;
       }
 
-      const body = {
-        event: 'nuwa.message.available',
-        messageId: event.messageId,
-        sessionID: event.sessionID,
-      };
-
       let success = false;
       let reason = 'network_error';
 
       try {
+        const body = await GatewayBindings.dispatch(env, {
+          id: event.messageId,
+          threadID: event.threadID,
+          senderSessionID: event.senderSessionID,
+          senderCanonicalAddress: event.senderCanonicalAddress,
+          recipientAgentID: event.recipientAgentID,
+          recipientSessionID: event.recipientSessionID,
+          recipientWakeSessionID: event.sessionID,
+          organizationID: event.organizationID,
+          body: event.body,
+        });
         const config = event.encryptedTarget
           ? await WakeTarget.decrypt(env, event.encryptedTarget)
           : {
@@ -130,6 +150,7 @@ export class WakeService {
           });
         }
       } catch (error) {
+        reason = error instanceof APIError ? error.code : 'network_error';
         WakeService.logger.exception('callback_delivery_failed', error, {
           messageId: event.messageId,
           attempt: event.attempts + 1,
