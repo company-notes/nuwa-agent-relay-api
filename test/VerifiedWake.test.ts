@@ -100,8 +100,9 @@ describe('Self-service signed Wake registration', () => {
     expect(last.authorization).toBe('Bearer ' + bearer);
     expect(last.body).toMatchObject({
       event: 'nuwa.message.available',
-      messageId: sent.body.data.id,
-      sessionID: 'session-b',
+      eventVersion: 2,
+      messageID: sent.body.data.id,
+      recipientSessionID: 'session-b',
     });
 
     const status = await client.call('token-b', 'GET',
