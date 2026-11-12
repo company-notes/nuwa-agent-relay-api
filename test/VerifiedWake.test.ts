@@ -7,12 +7,12 @@ import { WakeTarget } from '../src/WakeTarget';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Self-service signed Wake registration', () => {
-  it('requires proof from the callback before activating and isolates OAuth Work', async () => {
+  it('requires proof from the callback before activating and isolates OAuth Session', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
 
     const registration = await client.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b', {
+      '/v2/wake-subscription?session_id=session-b', {
         callbackUrl: 'https://agent-hook.example.com/wake',
       });
     expect(registration.status).toBe(201);
@@ -23,21 +23,21 @@ describe('Self-service signed Wake registration', () => {
     expect(JSON.stringify(registration.body)).not.toContain(client.wakeChallenges[0].challenge);
 
     const pending = await client.call('token-b', 'GET',
-      '/v1/wake-subscription?work_address_id=work-b');
+      '/v2/wake-subscription?session_id=session-b');
     expect(pending.body.data.enabled).toBe(false);
     expect(pending.body.data.pending.verificationId)
       .toBe(registration.body.data.verificationId);
 
     const challenge = client.wakeChallenges[0];
     const stranger = await client.call('token-a', 'POST',
-      '/v1/wake-subscription/verification?work_address_id=work-a', {
+      '/v2/wake-subscription/verification?session_id=session-a', {
         verificationId: challenge.verificationId,
         challenge: challenge.challenge,
       });
     expect(stranger.status).toBe(409);
 
     const invalid = await client.call('token-b', 'POST',
-      '/v1/wake-subscription/verification?work_address_id=work-b', {
+      '/v2/wake-subscription/verification?session_id=session-b', {
         verificationId: challenge.verificationId, challenge: 'wrong',
       });
     expect(invalid.status).toBe(403);
@@ -45,7 +45,7 @@ describe('Self-service signed Wake registration', () => {
     await client.confirmLatestWake();
 
     const activated = await client.call('token-b', 'GET',
-      '/v1/wake-subscription?work_address_id=work-b');
+      '/v2/wake-subscription?session_id=session-b');
     expect(activated.body.data).toMatchObject({
       enabled: true,
       callbackHost: 'agent-hook.example.com',
@@ -55,7 +55,7 @@ describe('Self-service signed Wake registration', () => {
     expect(JSON.stringify(activated.body)).not.toContain('signingSecret');
 
     const replay = await client.call('token-b', 'POST',
-      '/v1/wake-subscription/verification?work_address_id=work-b', {
+      '/v2/wake-subscription/verification?session_id=session-b', {
         verificationId: challenge.verificationId,
         challenge: challenge.challenge,
       });
@@ -65,12 +65,12 @@ describe('Self-service signed Wake registration', () => {
   it('delivers a Bearer-authenticated GrokBot wake and keeps credentials encrypted and undisclosed', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    await client.provisionBothHosts();
+    await client.provisionAgentMailboxes();
 
     const bearer = 'grokbot-private-key-THIS-IS-SECRET';
-    const url = 'https://api2.cursor.sh/automations/webhook/agent-b';
+    const url = 'https://api2.cursor.sh/automations/webhook/agent-000b';
     const registration = await client.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b', {
+      '/v2/wake-subscription?session_id=session-b', {
         callbackUrl: url, authMode: 'bearer', bearerToken: bearer,
       });
     expect(registration.status).toBe(201);
@@ -80,16 +80,16 @@ describe('Self-service signed Wake registration', () => {
     expect(client.wakeRequests[0].redirect).toBe('manual');
 
     const attempt = await env.DB.prepare(
-      'SELECT encrypted_target AS ciphertext, callback_url AS url FROM wake_registration_attempts WHERE work_address_id = ?',
-    ).bind('work-b').first<{ ciphertext: string; url: string }>();
+      'SELECT encrypted_target AS ciphertext, callback_url AS url FROM wake_registration_attempts WHERE session_id = ?',
+    ).bind('session-b').first<{ ciphertext: string; url: string }>();
     expect(attempt!.url).toBe('https://api2.cursor.sh');
     expect(attempt!.ciphertext).not.toContain(bearer);
     expect(attempt!.ciphertext).not.toContain('automations/webhook');
 
     await client.confirmLatestWake();
     const sent = await client.call('token-a', 'POST',
-      '/v1/messages?work_address_id=work-a', {
-        to: '@beta/reviewer', body: 'Public GrokBot callback test.',
+      '/v2/messages?session_id=session-a', {
+        to: 'relay-test-org/beta/reviewer', body: 'Public GrokBot callback test.',
       });
     const arrival = await MailReceipt.confirmArrival(env, sent.body.data.id, 'webhook');
     expect(arrival).toBe(true);
@@ -100,12 +100,13 @@ describe('Self-service signed Wake registration', () => {
     expect(last.authorization).toBe('Bearer ' + bearer);
     expect(last.body).toMatchObject({
       event: 'nuwa.message.available',
-      messageId: sent.body.data.id,
-      workAddressId: 'work-b',
+      eventVersion: 2,
+      messageID: sent.body.data.id,
+      recipientSessionID: 'session-b',
     });
 
     const status = await client.call('token-b', 'GET',
-      '/v1/wake-subscription?work_address_id=work-b');
+      '/v2/wake-subscription?session_id=session-b');
     expect(JSON.stringify(status.body)).not.toContain(bearer);
     expect(JSON.stringify(status.body)).not.toContain('automations/webhook');
   });
@@ -113,11 +114,11 @@ describe('Self-service signed Wake registration', () => {
   it('supports a tunnelled OpenMausBot capability URL without exposing the secret path', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    await client.provisionBothHosts();
+    await client.provisionAgentMailboxes();
 
     const url = 'https://agent-demo.ngrok-free.app/hooks/wh_private/whsec_super-secret';
     const registration = await client.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b', {
+      '/v2/wake-subscription?session_id=session-b', {
         callbackUrl: url, authMode: 'capability',
       });
     expect(registration.status).toBe(201);
@@ -127,13 +128,13 @@ describe('Self-service signed Wake registration', () => {
 
     await client.confirmLatestWake();
     const now = await client.call('token-b', 'GET',
-      '/v1/wake-subscription?work_address_id=work-b');
+      '/v2/wake-subscription?session_id=session-b');
     expect(JSON.stringify(now.body)).not.toContain('/hooks/');
     expect(now.body.data.callbackHost).toBe('agent-demo.ngrok-free.app');
 
     const sent = await client.call('token-a', 'POST',
-      '/v1/messages?work_address_id=work-a', {
-        to: '@beta/reviewer', body: 'OpenMausBot webhook test.',
+      '/v2/messages?session_id=session-a', {
+        to: 'relay-test-org/beta/reviewer', body: 'OpenMausBot webhook test.',
       });
     await MailReceipt.confirmArrival(env, sent.body.data.id, 'webhook');
     await WakeService.dispatchDue(env);
@@ -155,17 +156,17 @@ describe('Self-service signed Wake registration', () => {
       'https://person:secret@agent-hook.example.com/wake',
     ]) {
       const failed = await client.call('token-b', 'POST',
-        '/v1/wake-subscription?work_address_id=work-b', { callbackUrl });
+        '/v2/wake-subscription?session_id=session-b', { callbackUrl });
       expect(failed.status).toBe(400);
     }
 
     const registered = await client.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b', {
+      '/v2/wake-subscription?session_id=session-b', {
         callbackUrl: 'https://agent-hook.example.com/wake',
       });
     expect(registered.status).toBe(201);
     const repeat = await client.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b', {
+      '/v2/wake-subscription?session_id=session-b', {
         callbackUrl: 'https://agent-hook.example.com/wake',
       });
     expect(repeat.status).toBe(429);
@@ -177,7 +178,7 @@ describe('Self-service signed Wake registration', () => {
     client.redirectNextWake = true;
 
     const result = await client.call('token-c', 'POST',
-      '/v1/wake-subscription?work_address_id=work-c', {
+      '/v2/wake-subscription?session_id=session-c', {
         callbackUrl: 'https://api2.cursor.sh/automations/webhook/redirect-test',
         authMode: 'bearer',
         bearerToken: 'example-test-token-long-enough',
@@ -190,7 +191,7 @@ describe('Self-service signed Wake registration', () => {
     expect(client.wakeRequests[0].redirect).toBe('manual');
 
     const pending = await client.call('token-c', 'GET',
-      '/v1/wake-subscription?work_address_id=work-c');
+      '/v2/wake-subscription?session_id=session-c');
     expect(pending.body.data.pending).not.toBeNull();
   });
 
@@ -205,7 +206,7 @@ describe('Self-service signed Wake registration', () => {
 
     try {
       const result = await client.call('token-a', 'POST',
-        '/v1/wake-subscription?work_address_id=work-a', {
+        '/v2/wake-subscription?session_id=session-a', {
           callbackUrl: 'https://api2.cursor.sh/automations/webhook/secret-test-path',
           authMode: 'bearer',
           bearerToken: 'private-bearer-test-marker',

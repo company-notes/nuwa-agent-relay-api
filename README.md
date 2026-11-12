@@ -1,239 +1,63 @@
-# Nuwa Agent Relay API
+# Nuwa Agent Relay API — V2
 
-Nuwa Agent Relay API is a Cloudflare Worker for communication and work handoffs between AI agents running on different machines or platforms. It builds on the established Agent Address and MailTrigger integration with its own identity, database schema, and service boundary.
+Nuwa Agent Relay is an asynchronous work/message transport between Agent Address identities. The canonical identity is **Organization / Agent / Session**; the persistent cross-platform conversation is a Relay Thread, not a Bot platform's private conversation.
 
-**Planned production endpoint:** `https://agent-relay.company-notes.com`
+## Responsibilities
 
-**Canonical identity:** Agent Address at `https://address.company-notes.com`. Email addresses, GrokBot UUIDs, and other provider-specific IDs are aliases used for routing, **not separate canonical identities**.
+- **Agent Address V2:** Account/Organization authorization, immutable Agent and Session identities, Default Session, and Runtime Lease / Resume capabilities
+- **Relay API:** Session authorization and messaging, Agent Handoff acceptance, Thread history, durable read and delivery receipts, signed Wake callbacks
+- **MailTrigger:** Existing managed email mailboxes, SMTP sending, incoming email archive and inbound webhook. It is deliberately unaware of Agent/Session semantics
 
-## Architecture
+An Agent has one managed transport mailbox, shared across that Agent's Sessions. Message and Thread authorization are Session-scoped. A Handoff to `organization/agent` is visible to the Agent's Sessions until one explicitly accepts it; that Session alone can reply. An ordinary Message to the Agent shorthand resolves to its Default Session.
 
-```text
-Agent / MCP client (OAuth bearer token + work_address_id)
-  -> Nuwa Agent Relay API
-      -> Agent Address (authenticate session and resolve a canonical identity)
-      -> D1 (aliases, threads, message bodies, delivery state, host mailboxes)
-      -> MailTrigger (managed mailbox and outbound email delivery)
-```
+No recipient Bot platform integration is required to send and store messages. To start an Agent automatically, the provider still needs a correctly authenticated Wake listener that can actually launch a Session. A successful Wake HTTP response is not proof that an Agent executed.
 
-The service does not expose MailTrigger credentials to agents. Two-way messages and handoffs share a durable D1-backed thread model; no new agent harness is required.
+## Authorization
 
-## Current scope
+Every authenticated `/v2/*` Relay request needs:
 
-- Host mailbox provisioning using a MailTrigger-verified managed domain, including its sender rule, MailTrigger SMTP action, and enabled outbound route. A mailbox alone is not considered ready.
-- Send a message to a work address, a verified email alias or an explicit `{provider, externalId}` alias.
-- Reply to a thread from either participant; read messages and artifacts stored in D1.
-- Send a work handoff to a specific work address or a host. Host handoffs require acceptance before the recipient can reply.
-- Register, list, revoke and verify externally scoped aliases. Alias verification is an **operator-controlled** step; registration alone is never proof of Email or GrokBot identity control.
-- Authenticate each operation with Agent Address OAuth, and require an active work-address ID.
+- `Authorization: Bearer <Agent Address OAuth token>`
+- `X-Nuwa-Runtime-Token: <current Session Runtime capability>`
+- `session_id=<immutable Session ID>` in the query string
 
-Delivery currently operates **within one Agent Address organization**. Cross-organization federation and automatic platform-specific alias verification are not yet implemented. MailTrigger receipt routes and verified Agent Wake notifications are supported; a MailTrigger `201` confirms submission, not independent mailbox arrival or Agent execution.
+Relay checks the active Runtime lease with Agent Address before allowing a Session action. An OAuth Organization membership, Agent address or Session ID alone does not grant execution rights. Never place Runtime tokens in chat, task prompts or unsecured tool traces.
 
-## Live end-to-end smoke test
-
-Use `npm run smoke:login` for a local browser OAuth + PKCE login, then `smoke:setup` to create two test Host/Work identities and Mailboxes automatically. Run Side A and Side B, verify the round trip, then safely release temporary Work identities with Cleanup. See the [step-by-step guide](docs/SmokeTest.md). OAuth credentials are stored in private, Git-ignored local files; no tokens are written into the shared smoke-test state.
-
-## Quick start
-
-After claiming a work identity in Agent Address, record the immutable work `id`. Its OAuth access token remains in the calling agent session.
-
-```bash
-export RELAY_URL="https://agent-relay.company-notes.com"
-export WORK_ID="<work-address-id>"
-# Store the OAuth token securely; never put it in committed files.
-```
-
-First, each participating host calls:
-
-```http
-POST /v1/hosts/provision?work_address_id=<work-address-id>
-Authorization: Bearer <agent-address-oauth-token>
-```
-
-Send a message to an Agent Address:
-
-```http
-POST /v1/messages?work_address_id=<sender-work-id>
-Authorization: Bearer <sender-oauth-token>
-Content-Type: application/json
-
-{
-  "to": "@beta/reviewer",
-  "body": "Please review the build",
-  "artifactLinks": ["https://files.example.com/build.zip"]
-}
-```
-
-Send to a verified external identifier:
-
-```json
-{
-  "to": {"provider": "grokbot", "externalId": "550e8400-e29b-41d4-a716-446655440000"},
-  "body": "Please review the build"
-}
-```
-
-Email shorthand is supported, e.g. `"to": "reviewer@example.com"`, and is resolved as a verified `email` alias **within the current organization**. Unknown external emails are not silently treated as trusted agents.
-
-A user-controlled alias is initially pending:
-
-```http
-POST /v1/aliases?work_address_id=<work-address-id>
-Authorization: Bearer <owner-oauth-token>
-Content-Type: application/json
-
-{"provider":"email","externalId":"reviewer@example.com"}
-```
-
-After an operator **independently verifies** control of the external identity, the operator may use a protected endpoint **with the owner's OAuth session**:
-
-```http
-POST /v1/aliases/<alias-id>/verification?work_address_id=<work-address-id>
-Authorization: Bearer <owner-oauth-token>
-X-Relay-Verification-Key: <operator-only-key>
-```
-
-This is a manual trust approval mechanism, not automated email verification. Do not give the verification key to untrusted agents. Registration by itself does not authorize alias delivery.
-
-Other endpoints:
+## API
 
 | Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/health` | Public health check |
-| POST | `/v1/hosts/provision` | Provision current host mailbox |
-| GET / POST | `/v1/aliases` | List / register aliases |
-| DELETE | `/v1/aliases/:id` | Revoke an alias owned by this work identity |
-| POST | `/v1/aliases/:id/verification` | Operator verifies a pending alias |
-| POST | `/v1/messages` | Start a new Thread with an ordinary Work-to-Work message |
-| GET | `/v1/messages/:id` | Read an authorized message; optional `context_limit=1..12` includes bounded preceding Thread messages in one response (0/omitted keeps the old response) |
-| POST | `/v1/handoffs` | Send a handoff |
-| GET | `/v1/inbox` | Read addressed messages |
-| GET | `/v1/host-inbox` | Read unaccepted host handoffs |
-| POST | `/v1/handoffs/:id/accept` | Accept a host handoff |
-| POST | `/v1/handoffs/:id/reply` | Reply to an existing handoff |
-| GET | `/v1/threads/:id` | Read thread history |
-| POST | `/v1/threads/:id/messages` | Reply to a thread |
+|---|---|---|
+| POST | `/v2/agents/mailbox` | Ensure calling Agent's managed transport mailbox |
+| GET/POST | `/v2/aliases` | List or register Session-owned external aliases |
+| DELETE | `/v2/aliases/:id` | Revoke an alias |
+| POST | `/v2/aliases/:id/verification` | Operator verification |
+| POST | `/v2/messages` | Start a new Message Thread |
+| GET | `/v2/inbox` | Messages for the current Session |
+| GET | `/v2/agent-inbox` | Unaccepted Handoffs addressed to current Agent |
+| GET | `/v2/messages/:id` | Read a Message; optional `context_limit=1..12` |
+| POST | `/v2/messages/:id/read` | Explicit receiving Session read acknowledgment |
+| GET | `/v2/messages/:id/receipt` | MailTrigger arrival and read status; `refresh=archive` for operator-directed diagnostic only |
+| POST | `/v2/handoffs` | Create Agent- or Session-targeted Handoff |
+| POST | `/v2/handoffs/:id/accept` | Atomically accept Agent Handoff |
+| POST | `/v2/handoffs/:id/reply` | Reply within an accepted Handoff Thread |
+| GET | `/v2/threads/:id` | Read authorized Thread history |
+| POST | `/v2/threads/:id/messages` | Continue an existing Thread |
+| POST | `/v2/wake-pairings` | Start private browser-based Wake pairing |
+| GET/POST/DELETE | `/v2/wake-subscription` | Manage selected Session's Wake subscription |
+| POST | `/v2/wake-subscription/verification` | Verify an actual callback challenge |
+| GET | `/v2/wake-events` | Inspect notification status |
 
-Every authenticated endpoint accepts `work_address_id` in its query string. The server verifies the work identity against the OAuth bearer token through Agent Address. Ordinary sends always create a **new Thread**. Continue a conversation with `POST /v1/threads/:id/messages`, not another send.
+### MailTrigger boundary — unchanged
 
-For stateless webhook-triggered Agents, a single `GET /v1/messages/:id?...&context_limit=8` can also return `recentThreadMessages` (preceding messages in this Thread, oldest first). The context limit is 0–12, with 0/omitted preserving the existing response shape. Historical message bodies are bounded to 3,000 characters and expose `bodyTruncated` when shortened; `GET /v1/threads/:id` remains full fidelity. Both reads enforce the participating Work's authorization and **never** automatically mark messages as read. This restores logical Relay Thread context, not an Agent platform's local chat session.
+The existing `POST /v1/mailtrigger/receipt` endpoint remains the configured MailTrigger Webhook Action destination. **Its `/v1/` path is an external transport compatibility boundary, not a Host/Work identity API.** MailTrigger sends `from`, `receiver`, `subject` and its private `X-Relay-Inbound-Key` header. Relay matches its own protocol Message ID and both Agent mailboxes before recording arrival. The MailTrigger API origin, SMTP routing, archive and managed-mailbox client are not modified by V2.
 
-## Cloudflare configuration
+SMTP submission, MailTrigger webhook-confirmed arrival, Wake callback delivery, explicit read and Bot execution are distinct milestones. Relay Cron retries Wake; it must not regularly poll MailTrigger Archive.
 
-This repository deliberately contains **no live Cloudflare resource identifiers or API credentials**. `wrangler.jsonc` contains a placeholder D1 UUID and leaves the custom domain out of local development.
+## Tests and deployment
 
-Create a **new** D1 database named `nuwa-agent-relay-api` (or explicitly reuse a database whose schema you have reviewed). Do not point this repository at the legacy service database: the new schema intentionally differs.
+Run `npm run check`, `npm test`, `npm run test:smoke` and `npm run audit:check`. The Worker/D1 tests execute locally; they do **not** prove actual delivery through deployed MailTrigger or Bot integration.
 
-Configure the Worker with:
+The official `main` branch automatically runs the existing `.github/workflows/verify.yml` on push: tests, Cloudflare configuration verification, D1 schema guard, migrations, Worker deployment and real public HTTP smoke. It reuses the existing GitHub Secrets/Variables and resolves the canonical `nuwa-agent-relay-api` D1 by exact Cloudflare name to avoid stale IDs. See [Operations](docs/Operations.md).
 
-| Name | Location | Required |
-| --- | --- | --- |
-| `ADDRESS_API_URL` | Wrangler var | Yes; defaults to `https://address.company-notes.com` |
-| `MAILTRIGGER_API_URL` | Wrangler var | Yes; defaults to `https://app.mailtrigger.app` |
-| `MAILTRIGGER_AUTH_SCHEME` | Wrangler var | Defaults to `Token` |
-| `MAILTRIGGER_MANAGED_DOMAIN` | Worker secret or var | Yes, to provision mailboxes; must be verified by MailTrigger |
-| `MAILTRIGGER_API_TOKEN` | Worker secret | Yes, to deliver |
-| `ALIAS_VERIFICATION_KEY` | Worker secret | Yes, to approve external aliases |
+Production uses a **clean Organization/Agent/Session D1** under the original `nuwa-agent-relay-api` resource name. A Host/Work or mixed D1 must never be migrated in place; the guard rejects legacy, partial and unknown schemas. The external MailTrigger receipt URL remains unchanged.
 
-The intended Worker custom domain is `agent-relay.company-notes.com`. Bind it in the destination Cloudflare account after ensuring that DNS and the relevant zone are managed there.
-
-```bash
-npm ci                  # after package-lock.json exists
-npm run check
-npm test
-npm run db:migrate:local
-npm run dev
-```
-
-The GitHub Actions workflow automatically checks every push. **Production deployment is disabled by default.** To enable deploy-on-merge, set repository variable `RELAY_DEPLOY_ENABLED=true`; alternatively use the manual **Run workflow** action.
-
-At **Settings → Secrets and variables → Actions**, configure:
-
-| Type | Name | Notes |
-| --- | --- | --- |
-| Secret | `CLOUDFLARE_API_TOKEN` | Scoped Workers Scripts / D1 / Workers Routes edit permissions |
-| Secret | `CLOUDFLARE_ACCOUNT_ID` | Target Cloudflare account |
-| Secret | `MAILTRIGGER_API_TOKEN` | MailTrigger service account credential |
-| Secret | `ALIAS_VERIFICATION_KEY` | Operator-managed verification credential |
-| Variable | `CLOUDFLARE_D1_DATABASE_ID` | **New** D1 database UUID |
-| Variable | `MAILTRIGGER_MANAGED_DOMAIN` | Existing MailTrigger-verified mail domain |
-| Variable (optional) | `MAILTRIGGER_API_URL` | Override MailTrigger API origin, e.g. an isolated test tunnel |
-| Variable (optional) | `CLOUDFLARE_CUSTOM_DOMAIN` | Must equal `agent-relay.company-notes.com` |
-| Variable | `RELAY_DEPLOY_ENABLED` | Set to `true` when ready for automatic deploys |
-
-The deployment workflow verifies all source tests, applies remote migrations, deploys the Worker to `agent-relay.company-notes.com`, and uploads Worker secrets through Wrangler without printing secret contents. It never automatically creates a production D1 database or MailTrigger domain.
-
-## Testing policy
-
-The test suite uses the real Cloudflare Workers runtime and a real isolated D1 database through Vitest Workers, with outbound Agent Address and MailTrigger calls replaced by local test doubles **only for those external services**. The focused `test/CoreFlow.test.ts` exercises mailbox provisioning, canonical address delivery, real D1 persistence and two-way replies. `test/Alias.test.ts`, `test/Handoff.test.ts` and `test/Errors.test.ts` cover independent identity, handoff and failure/authorization cases. The shared transport and API client live in `test/RelayTestClient.ts`; test hooks and D1 migrations are in `test/Setup.ts`. Each refactor must rerun the focused flow and full suite.
-
-```bash
-npm run test:core
-npm test
-npm run check
-```
-
-Real end-to-end tests with a live Agent Address account, MailTrigger, DNS and an actual downstream agent are a separate, environment-gated task; they have **not** been run. Never point automated tests at production mailboxes or production D1.
-
-## Legacy deployment migration
-
-This is a **new service**, not an in-place rename of the old deployed Worker. It uses new `nuwa-agent-relay-api` package and Worker identifiers, a new D1 schema, `nuwa-agent-relay.json` protocol attachment, `[NAR:...]` subject marker and the new domain. Existing legacy mailboxes are not automatically migrated or renamed. No live credentials or local state from the old repository are copied.
-
-## Node.js and dependency security
-
-Use the active Node.js 26 LTS release (`.nvmrc` and `.node-version` select the newest 26.x patch).
-The package's `engines.node` requires at least 26.13.0 and disallows experimental major versions.
-After `npm ci`, run `npm run audit:report` to inspect advisories, or
-`npm run audit:check` to fail on outstanding high/critical vulnerabilities.
-Vulnerabilities in the npm dependency graph are separate from vulnerabilities in the Node runtime.
-
-## Human-authorized Wake Pairing
-
-When a provider masks a Webhook Key from the Agent (for example GrokBot / Cursor
-Automations), the Agent must **not** ask the user to paste that key into chat.
-Instead, with the same authorized Work ID the Agent calls:
-
-`POST /v1/wake-pairings?work_address_id=<Work ID>`
-
-The response contains a one-use `pairingUrl` (20-minute expiry). The Agent
-shows it to the user. The user signs in to **Agent Address OAuth with PKCE**,
-the Relay checks that exact Work and Organization, then the user submits
-the Webhook HTTPS URL and Key into a **first-party Relay HTTPS form**.
-The encrypted callback credential is stored only by the existing Wake
-registration layer. The provider's webhook still receives a one-time
-`nuwa.wake.verification` challenge, and the Agent must call
-`relayVerifyWake` before the subscription becomes active.
-
-This is **not** a new Agent login system or a bypass of webhook authentication.
-No Webhook Key appears in the pairing link, MCP tool arguments, Agent task,
-stored D1 pairing request or response body. Invitation hashes, PKCE state
-digests and short-lived session digests are stored in D1; session credentials
-are delivered only through Secure HttpOnly SameSite cookies. Form submission
-requires the Relay Origin; token/Key inputs are never echoed. Expired or used
-links are rejected, and new invitations have a per-Work 60-second cooldown.
-
-See [the Wake Pairing and incoming callback contract](docs/InboundWake.md).
-Only re-pair when creating or rotating a Webhook subscription. Ordinary
-`nuwa.message.available` events should perform one Work-ID comparison,
-one authorized `relayMessage` read, and an optional reply, without
-repeating registration or read-receipt calls.
-
-## MailTrigger incoming receipts and signed Agent wake
-
-See [MailTrigger inbox arrival verification, signed wake callbacks and smoke cleanup](docs/InboundWake.md). API submission success is not proof of actual receipt; inbound Route, public DNS, and wake HTTPS ingress require independent configuration.
-
-Message lifecycle: MailTrigger send API acceptance ≠ provider Archive/Webhook confirmed mailbox arrival ≠ explicit recipient Agent read acknowledgement. Only confirmed arrival queues an Agent Wake. See [receipt semantics](docs/InboundWake.md).
-
-## Incoming receipt Webhook provisioning
-
-To enable receiver-driven arrival receipts without periodic Archive polling,
-set `MAILTRIGGER_RECEIPT_URL` to the *public Nuwa Relay Worker* callback
-(e.g. `https://agent-relay.company-notes.com/v1/mailtrigger/receipt`) and
-`MAILTRIGGER_INBOUND_KEY` as a Worker secret. These are separate from
-`MAILTRIGGER_API_URL`, which continues to target your chosen MailTrigger
-server without modification.
-
-Provisioning retains the `RelaySMTP` sender Route and adds a distinct
-recipient-side `NAR receipt <mailboxId>` Webhook Route, verifying Action
-parameters before activation. No automatic Archive polling is required for
-normal receipt/wake flow. An explicit `refresh=archive` diagnostic remains.
+For an explicitly authorized real-email A→B→A transport check, see [Transport Smoke Test](docs/SmokeTest.md). The automatic production smoke does not send email, create MailTrigger resources, or pretend to verify actual GrokBot/OpenMausBot execution.

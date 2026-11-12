@@ -1,6 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
-export type WakeWorkScope = { work: { id: string }; organization: { id: string } };
+import type { SessionIdentity } from './SessionIdentityClient';
 import { WakeTarget, type WakeAuthMode } from './WakeTarget';
 import { Logger } from './Logger';
 
@@ -19,7 +19,7 @@ export class WakeRegistration {
   private static readonly logger = Logger.forModule('wake.registration');
   constructor(
     private readonly env: Env,
-    private readonly identity: WakeWorkScope,
+    private readonly identity: Pick<SessionIdentity, 'organizationID' | 'sessionID'>,
   ) {}
 
   private static hex(bytes: Uint8Array): string {
@@ -60,10 +60,10 @@ export class WakeRegistration {
 
     const updated = await this.env.DB.prepare(
       `INSERT INTO wake_registration_attempts
-        (work_address_id, org_id, verification_id, callback_url, auth_mode,
+        (session_id, org_id, verification_id, callback_url, auth_mode,
          encrypted_target, verification_digest, expires_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(work_address_id) DO UPDATE SET
+       ON CONFLICT(session_id) DO UPDATE SET
          org_id = excluded.org_id,
          verification_id = excluded.verification_id,
          callback_url = excluded.callback_url,
@@ -74,7 +74,7 @@ export class WakeRegistration {
          created_at = excluded.created_at,
          failures = 0
        WHERE wake_registration_attempts.created_at < ?`,
-    ).bind(this.identity.work.id, this.identity.organization.id, verificationId,
+    ).bind(this.identity.sessionID, this.identity.organizationID, verificationId,
       publicURL, authMode, encryptedTarget, digest, expiresAt, createdAt, cooldown).run();
 
     if (updated.meta.changes !== 1) {
@@ -89,7 +89,7 @@ export class WakeRegistration {
         event: 'nuwa.wake.verification',
         verificationId,
         challenge,
-        workAddressId: this.identity.work.id,
+        sessionID: this.identity.sessionID,
       });
       if (!challengeDelivered) {
         WakeRegistration.logger.warning('challenge_http_rejected', { verificationId });
@@ -101,7 +101,7 @@ export class WakeRegistration {
 
     return {
       status: 'pending_verification',
-      workAddressId: this.identity.work.id,
+      sessionID: this.identity.sessionID,
       callbackHost: new URL(publicURL).hostname,
       authMode,
       verificationId,
@@ -116,8 +116,8 @@ export class WakeRegistration {
       `SELECT verification_id AS verificationId, callback_url AS callbackURL,
               auth_mode AS authMode, expires_at AS expiresAt,
               failures FROM wake_registration_attempts
-         WHERE work_address_id = ? AND org_id = ?`,
-    ).bind(this.identity.work.id, this.identity.organization.id).first<{
+         WHERE session_id = ? AND org_id = ?`,
+    ).bind(this.identity.sessionID, this.identity.organizationID).first<{
       verificationId: string; callbackURL: string; authMode: WakeAuthMode;
       expiresAt: string; failures: number;
     }>();
@@ -144,13 +144,13 @@ export class WakeRegistration {
               expires_at AS expiresAt, created_at AS createdAt,
               failures
          FROM wake_registration_attempts
-        WHERE work_address_id = ? AND org_id = ?`,
-    ).bind(this.identity.work.id, this.identity.organization.id).first<PendingRegistration>();
+        WHERE session_id = ? AND org_id = ?`,
+    ).bind(this.identity.sessionID, this.identity.organizationID).first<PendingRegistration>();
 
     if (!row || row.verificationId !== verificationId ||
       row.expiresAt <= new Date().toISOString()) {
       throw new APIError(409, 'wake_verification_not_pending',
-        'No matching unexpired Wake verification is pending for this Work.');
+        'No matching unexpired Wake verification is pending for this Session.');
     }
 
     if (row.failures >= 5) {
@@ -163,8 +163,8 @@ export class WakeRegistration {
     if (!WakeRegistration.matches(actual, row.verificationDigest)) {
       await this.env.DB.prepare(
         `UPDATE wake_registration_attempts SET failures = failures + 1
-          WHERE work_address_id = ? AND org_id = ? AND verification_id = ?`,
-      ).bind(this.identity.work.id, this.identity.organization.id, verificationId).run();
+          WHERE session_id = ? AND org_id = ? AND verification_id = ?`,
+      ).bind(this.identity.sessionID, this.identity.organizationID, verificationId).run();
 
       throw new APIError(403, 'wake_verification_invalid', 'Invalid Wake verification response.');
     }
@@ -173,25 +173,25 @@ export class WakeRegistration {
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO wake_subscriptions
-           (work_address_id, org_id, callback_url, signing_secret, created_at,
+           (session_id, org_id, callback_url, signing_secret, created_at,
             encrypted_target, auth_mode)
-         SELECT work_address_id, org_id, callback_url, '', ?, encrypted_target, auth_mode
+         SELECT session_id, org_id, callback_url, '', ?, encrypted_target, auth_mode
            FROM wake_registration_attempts
-          WHERE work_address_id = ? AND org_id = ? AND verification_id = ?
+          WHERE session_id = ? AND org_id = ? AND verification_id = ?
             AND expires_at > ? AND failures < 5
-         ON CONFLICT(work_address_id) DO UPDATE SET
+         ON CONFLICT(session_id) DO UPDATE SET
            org_id = excluded.org_id,
            callback_url = excluded.callback_url,
            signing_secret = excluded.signing_secret,
            created_at = excluded.created_at,
            encrypted_target = excluded.encrypted_target,
            auth_mode = excluded.auth_mode`,
-      ).bind(new Date().toISOString(), this.identity.work.id, this.identity.organization.id,
+      ).bind(new Date().toISOString(), this.identity.sessionID, this.identity.organizationID,
         verificationId, new Date().toISOString()),
       this.env.DB.prepare(
         `DELETE FROM wake_registration_attempts
-          WHERE work_address_id = ? AND org_id = ? AND verification_id = ?`,
-      ).bind(this.identity.work.id, this.identity.organization.id, verificationId),
+          WHERE session_id = ? AND org_id = ? AND verification_id = ?`,
+      ).bind(this.identity.sessionID, this.identity.organizationID, verificationId),
     ]);
 
     if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1) {
@@ -202,7 +202,7 @@ export class WakeRegistration {
     return {
       status: 'active',
       enabled: true,
-      workAddressId: this.identity.work.id,
+      sessionID: this.identity.sessionID,
       callbackHost: new URL(row.publicURL).hostname,
       authMode: row.authMode,
     };

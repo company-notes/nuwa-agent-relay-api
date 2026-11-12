@@ -1,16 +1,12 @@
 import { env, exports } from 'cloudflare:workers';
 import { expect, vi } from 'vitest';
 
-// Route mocked MailTrigger requests to the exact origin configured for this test Worker.
 const MAILTRIGGER_TEST_ORIGIN = new URL(env.MAILTRIGGER_API_URL).origin;
 
-type AgentAddress = {
+type Session = {
   id: string;
-  org: string;
-  path: string;
-  address: string;
+  agentId: string;
   canonical: string;
-  parentAddressId: string | null;
 };
 
 export class RelayTestClient {
@@ -39,7 +35,7 @@ export class RelayTestClient {
   readonly webhookParameters = new Map<number, Array<Record<string, unknown>>>();
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
-  readonly wakeChallenges: Array<{ verificationId: string; challenge: string; workAddressId: string }> = [];
+  readonly wakeChallenges: Array<{ verificationId: string; challenge: string; sessionID: string }> = [];
   readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string; redirect: RequestRedirect | undefined }> = [];
 
   failNextMail = false;
@@ -55,98 +51,82 @@ export class RelayTestClient {
   autoReceiptDuringMailSend = false;
   duplicateWebhookParameterFields = false;
 
-  private readonly hostA: AgentAddress = {
-    id: 'host-a',
-    org: RelayTestClient.slug,
-    path: 'alpha',
-    address: '@alpha',
-    canonical: `${RelayTestClient.slug}/alpha`,
-    parentAddressId: null,
+  private readonly sessionA: Session = {
+    id: 'session-a',
+    agentId: 'agent-000a',
+    canonical: RelayTestClient.slug + '/alpha/author',
   };
-  private readonly hostB: AgentAddress = {
-    id: 'host-b',
-    org: RelayTestClient.slug,
-    path: 'beta',
-    address: '@beta',
-    canonical: `${RelayTestClient.slug}/beta`,
-    parentAddressId: null,
+  private readonly sessionB: Session = {
+    id: 'session-b',
+    agentId: 'agent-000b',
+    canonical: RelayTestClient.slug + '/beta/reviewer',
   };
-  private readonly workA: AgentAddress = {
-    id: 'work-a',
-    org: RelayTestClient.slug,
-    path: 'alpha/author',
-    address: '@alpha/author',
-    canonical: `${RelayTestClient.slug}/alpha/author`,
-    parentAddressId: 'host-a',
-  };
-  private readonly workC: AgentAddress = {
-    id: 'work-c',
-    org: RelayTestClient.slug,
-    path: 'beta/observer',
-    address: '@beta/observer',
-    canonical: `${RelayTestClient.slug}/beta/observer`,
-    parentAddressId: 'host-b',
+  private readonly sessionC: Session = {
+    id: 'session-c',
+    agentId: 'agent-000b',
+    canonical: RelayTestClient.slug + '/beta/observer',
   };
 
-  private readonly workB: AgentAddress = {
-    id: 'work-b',
-    org: RelayTestClient.slug,
-    path: 'beta/reviewer',
-    address: '@beta/reviewer',
-    canonical: `${RelayTestClient.slug}/beta/reviewer`,
-    parentAddressId: 'host-b',
-  };
-
-  private requestAgentAddress(url: URL, token: string | null): Response {
-    if (token !== 'Bearer token-a' && token !== 'Bearer token-b' && token !== 'Bearer token-c') {
-      return Response.json({ ok: false, error: { message: 'Invalid OAuth token' } }, { status: 401 });
+  private requestAgentAddress(url: URL, token: string | null, init?: RequestInit): Response {
+    if (!['Bearer token-a', 'Bearer token-b', 'Bearer token-c', 'Bearer token-foreign'].includes(token ?? '')) {
+      return Response.json({ ok: false, error: { code: 'unauthorized' } }, { status: 401 });
     }
 
-    const isAuthor = token === 'Bearer token-a';
-    const host = isAuthor ? this.hostA : this.hostB;
-    let work = this.workC;
-
-    if (isAuthor) {
-      work = this.workA;
-    } else if (token === 'Bearer token-b') {
-      work = this.workB;
-    }
-
-    if (url.pathname === '/v1/account/status') {
+    if (url.pathname === '/v2/account/status') {
       if (this.failAddressStatus) {
-        return Response.json({ ok: false, error: { message: 'Upstream unavailable' } }, { status: 503 });
-      }
-
-      const requestedWorkId = url.searchParams.get('work_address_id');
-
-      if (requestedWorkId && requestedWorkId !== work.id) {
-        return Response.json({ ok: false, error: { message: 'Work not owned' } }, { status: 403 });
+        return Response.json({ ok: false, error: { code: 'unavailable' } }, { status: 503 });
       }
 
       return Response.json({
         ok: true,
         data: {
-          organization: { id: 'org-id', slug: RelayTestClient.slug },
-          hosts: [host],
-          work: requestedWorkId ? work : null,
+          account: { email: 'test@example.com' },
+          organization: token === 'Bearer token-foreign'
+            ? { id: 'org-other', slug: 'other-organization' }
+            : { id: 'org-id', slug: RelayTestClient.slug },
         },
       });
     }
 
-    if (url.pathname === '/v1/account/resolve') {
-      const address = url.searchParams.get('address');
-      const found = [this.hostA, this.hostB, this.workA, this.workB, this.workC].find(
-        (candidate) => address === candidate.address || address === candidate.canonical,
-      );
+    const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/heartbeat)?$/);
 
-      if (!found) {
-        return Response.json({ ok: false, error: { message: 'Not found' } }, { status: 404 });
+    if (matched) {
+      const session = [this.sessionA, this.sessionB, this.sessionC]
+        .find((candidate) => candidate.id === matched[1]);
+
+      if (!session) {
+        return Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
       }
 
-      return Response.json({ ok: true, data: found });
+      if (matched[2]) {
+        const provided = JSON.parse(String(init?.body)) as { runtimeToken: string };
+        const expected = session.id.replace('session-', 'runtime-');
+
+        if (init?.method !== 'POST' || provided.runtimeToken !== expected) {
+          return Response.json({ ok: false, error: { code: 'runtime_not_owner' } }, { status: 409 });
+        }
+
+        return Response.json({
+          ok: true, data: { expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() },
+        });
+      }
+
+      return Response.json({ ok: true, data: session });
     }
 
-    throw new Error(`Unexpected Agent Address request: ${url.pathname}`);
+    if (url.pathname === '/v2/account/resolve') {
+      const input = url.searchParams.get('address');
+      const session = [this.sessionA, this.sessionB, this.sessionC].find((item) =>
+        input === item.canonical ||
+        input === item.canonical.split('/').slice(0, 2).join('/') &&
+          item.id !== this.sessionC.id);
+
+      return session
+        ? Response.json({ ok: true, data: session })
+        : Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
+    }
+
+    throw new Error('Unexpected Agent Address request: ' + url.pathname);
   }
 
   private requestRoutingResource(url: URL, init?: RequestInit): Response | null {
@@ -458,15 +438,15 @@ export class RelayTestClient {
         expect(init.redirect).toBe('manual');
 
         return Response.json({
-          access_token: request.get('code') === 'owned-a' || request.get('code') === 'different-owner'
-            ? 'token-a' : request.get('code') === 'owned-c' ? 'token-c' : 'token-b',
+          access_token: request.get('code') === 'different-owner'
+            ? 'token-foreign' : request.get('code') === 'owned-a' ? 'token-a' : request.get('code') === 'owned-c' ? 'token-c' : 'token-b',
           token_type: 'Bearer',
         });
       }
 
       const token = new Headers(init?.headers).get('authorization');
 
-      return this.requestAgentAddress(url, token);
+      return this.requestAgentAddress(url, token, init);
     }
 
     if (url.origin === MAILTRIGGER_TEST_ORIGIN) {
@@ -524,6 +504,7 @@ export class RelayTestClient {
 
     if (token) {
       headers.authorization = `Bearer ${token}`;
+      headers['x-nuwa-runtime-token'] = token.replace('token-', 'runtime-');
     }
 
     if (data !== undefined) {
@@ -549,7 +530,7 @@ export class RelayTestClient {
     const challenge = this.wakeChallenges.at(-1);
     expect(challenge, 'A real challenge POST must reach the target').toBeTruthy();
     const response = await this.call(token, 'POST',
-      '/v1/wake-subscription/verification?work_address_id=' + challenge!.workAddressId,
+      '/v2/wake-subscription/verification?session_id=' + challenge!.sessionID,
       { verificationId: challenge!.verificationId, challenge: challenge!.challenge });
     expect(response.status).toBe(200);
     expect(response.body.data.status).toBe('active');
@@ -558,7 +539,7 @@ export class RelayTestClient {
   async registerVerifiedWake(callbackURL = 'https://agent-hook.example.com/wake',
                              authMode = 'hmac', bearerToken?: string) {
     const response = await this.call('token-b', 'POST',
-      '/v1/wake-subscription?work_address_id=work-b',
+      '/v2/wake-subscription?session_id=session-b',
       { callbackUrl: callbackURL, authMode, ...(bearerToken ? { bearerToken } : {}) });
     expect(response.status).toBe(201);
     await this.confirmLatestWake();
@@ -570,21 +551,6 @@ export class RelayTestClient {
     const archive = this.mailboxArchives.get(id) || [];
     archive.push({ id: 'mailtrigger-archive-' + archive.length, subject, body: 'archived provider content' });
     this.mailboxArchives.set(id, archive);
-  }
-
-  enableSmokeIdentities(runId: string): void {
-    for (const side of [
-      { host: this.hostA, work: this.workA, suffix: 'a' },
-      { host: this.hostB, work: this.workB, suffix: 'b' },
-    ]) {
-      const name = 'relay-smoke-' + runId + '-' + side.suffix;
-      side.host.path = name;
-      side.host.address = '@' + name;
-      side.host.canonical = RelayTestClient.slug + '/' + name;
-      side.work.path = name + '/' + name;
-      side.work.address = '@' + side.work.path;
-      side.work.canonical = RelayTestClient.slug + '/' + side.work.path;
-    }
   }
 
   async callWithHeaders(
@@ -604,11 +570,11 @@ export class RelayTestClient {
     return { status: response.status, body: await response.json() };
   }
 
-  async provisionBothHosts(): Promise<void> {
-    const first = await this.call('token-a', 'POST', '/v1/hosts/provision?work_address_id=work-a');
-    const second = await this.call('token-b', 'POST', '/v1/hosts/provision?work_address_id=work-b');
+  async provisionAgentMailboxes(): Promise<void> {
+    const first = await this.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const second = await this.call('token-b', 'POST', '/v2/agents/mailbox?session_id=session-b');
 
-    expect(first.status, 'Sender mailbox should be provisioned').toBe(201);
-    expect(second.status, 'Recipient mailbox should be provisioned').toBe(201);
+    expect(first.status, 'Sender Agent mailbox should be provisioned').toBe(201);
+    expect(second.status, 'Recipient Agent mailbox should be provisioned').toBe(201);
   }
 }

@@ -34,12 +34,12 @@ function extractCookie(response: Response, name: string): string {
   return name + '=' + match![1];
 }
 
-async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' | 'token-c' = 'token-b', work = 'work-b') {
+async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' | 'token-c' = 'token-b', sessionID = 'session-b') {
   const created = await client.call(token, 'POST',
-    '/v1/wake-pairings?work_address_id=' + work);
+    '/v2/wake-pairings?session_id=' + sessionID);
   expect(created.status).toBe(201);
   expect(created.body.data).toMatchObject({
-    status: 'awaiting_user', workAddressId: work,
+    status: 'awaiting_user', sessionID,
   });
   expect(created.body.data.pairingUrl).toMatch(
     /^https:\/\/agent-relay\.company-notes\.com\/wake-pair\/[a-f0-9]{64}$/,
@@ -63,7 +63,7 @@ async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' |
 }
 
 describe('user-controlled Wake Pairing', () => {
-  it('OAuth-verifies exact Work, accepts key only in private browser form, and emits one challenge', async () => {
+  it('OAuth-verifies exact Session, accepts key only in private browser form, and emits one challenge', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     const { created, state, oauthCookie } = await authorize(client);
@@ -83,9 +83,9 @@ describe('user-controlled Wake Pairing', () => {
     const storedAttempts = await env.DB.prepare(
       `SELECT state_digest AS digest FROM wake_pairing_oauth_attempts
        WHERE pairing_id = (
-         SELECT id FROM wake_pairing_requests WHERE work_address_id = ?
+         SELECT id FROM wake_pairing_requests WHERE session_id = ?
        )`,
-    ).bind('work-b').all<{ digest: string }>();
+    ).bind('session-b').all<{ digest: string }>();
     expect(storedAttempts.results).toHaveLength(2);
     expect(new Set(storedAttempts.results.map((entry) => entry.digest)).size).toBe(2);
     for (const attempt of storedAttempts.results) {
@@ -113,7 +113,7 @@ describe('user-controlled Wake Pairing', () => {
     const form = await open(origin + '/wake-pair/complete', sessionCookie);
     expect(form.status).toBe(200);
     const html = await form.text();
-    expect(html).toContain('work-b');
+    expect(html).toContain('session-b');
     expect(html).toContain('name="bearerToken"');
     expect(html).toContain('type="password"');
     expect(form.headers.get('content-security-policy')).toContain("form-action 'self'");
@@ -146,20 +146,20 @@ describe('user-controlled Wake Pairing', () => {
       authorization: 'Bearer ' + bearerToken,
       redirect: 'manual',
     });
-    expect(client.wakeChallenges[0].workAddressId).toBe('work-b');
+    expect(client.wakeChallenges[0].sessionID).toBe('session-b');
 
     const stored = await env.DB.prepare(
       'SELECT encrypted_target AS encrypted, callback_url AS publicURL ' +
-      'FROM wake_registration_attempts WHERE work_address_id = ?',
-    ).bind('work-b').first<{ encrypted: string; publicURL: string }>();
+      'FROM wake_registration_attempts WHERE session_id = ?',
+    ).bind('session-b').first<{ encrypted: string; publicURL: string }>();
     expect(stored!.publicURL).toBe('https://api2.cursor.sh');
     expect(stored!.encrypted).not.toContain(bearerToken);
     expect(stored!.encrypted).not.toContain('private-path');
 
     const savedPair = await env.DB.prepare(
       'SELECT consumed_at AS consumedAt, link_digest AS linkDigest ' +
-      'FROM wake_pairing_requests WHERE work_address_id = ?',
-    ).bind('work-b').first<{ consumedAt: string | null; linkDigest: string }>();
+      'FROM wake_pairing_requests WHERE session_id = ?',
+    ).bind('session-b').first<{ consumedAt: string | null; linkDigest: string }>();
     expect(savedPair!.consumedAt).toBeTruthy();
     expect(savedPair!.linkDigest).not.toContain(created.body.data.pairingUrl.split('/').at(-1));
 
@@ -172,20 +172,20 @@ describe('user-controlled Wake Pairing', () => {
     expect(client.wakeChallenges).toHaveLength(1);
 
     const subscriptionBefore = await client.call('token-b', 'GET',
-      '/v1/wake-subscription?work_address_id=work-b');
+      '/v2/wake-subscription?session_id=session-b');
     expect(subscriptionBefore.body.data.enabled).toBe(false);
 
     await client.confirmLatestWake();
 
     const subscriptionAfter = await client.call('token-b', 'GET',
-      '/v1/wake-subscription?work_address_id=work-b');
+      '/v2/wake-subscription?session_id=session-b');
     expect(subscriptionAfter.body.data.enabled).toBe(true);
   });
 
   it('rejects foreign OAuth accounts, unsanctioned forms, forged state, and consumed links', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const { created, state, oauthCookie } = await authorize(client, 'token-c', 'work-c');
+    const { created, state, oauthCookie } = await authorize(client, 'token-c', 'session-c');
 
     const forged = await open(origin + '/wake-pair/oauth/callback?' +
       new URLSearchParams({ state, code: 'owned-c' }), '__Host-nuwa_pair_oauth=fake');
@@ -281,7 +281,7 @@ describe('user-controlled Wake Pairing', () => {
     expect(client.wakeRequests).toHaveLength(0);
 
     const secondInvitation = await client.call('token-c', 'POST',
-      '/v1/wake-pairings?work_address_id=work-c');
+      '/v2/wake-pairings?session_id=session-c');
     expect(secondInvitation.status).toBe(429);
 
     // Failed cross-origin and missing-token requests must not consume the link.
@@ -303,7 +303,7 @@ describe('user-controlled Wake Pairing', () => {
   it('keeps sensitive callback paths and key values out of pairing, OAuth and HTML responses', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const { state, oauthCookie } = await authorize(client, 'token-a', 'work-a');
+    const { state, oauthCookie } = await authorize(client, 'token-a', 'session-a');
     const callback = await open(origin + '/wake-pair/oauth/callback?' +
       new URLSearchParams({ state, code: 'owned-a' }), oauthCookie);
     expect(callback.status).toBe(303);

@@ -1,15 +1,15 @@
-import { AddressClient } from './AddressClient';
 import { AliasService } from './AliasService';
 import type { Env } from './Env';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
-import { IdentityContext } from './IdentityContext';
 import { MailReceipt } from './MailReceipt';
-import { WakeService } from './WakeService';
+import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
+import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 import { WakePairing } from './WakePairing';
-import { ThreadContextReader } from './ThreadContextReader';
-import { RelayService, type NewMessage } from './RelayService';
+import { WakeService } from './WakeService';
 
 export class RelayAPI {
+  constructor(private readonly env: Env) {}
+
   private static authorization(request: Request): string {
     const header = request.headers.get('authorization');
 
@@ -20,167 +20,166 @@ export class RelayAPI {
     return header;
   }
 
-  private static readMessage(data: JSONRecord, handoff: boolean): NewMessage {
-    const body = HTTP.requiredString(data, 'body', 100_000);
-    const subject = handoff
-      ? HTTP.requiredString(data, 'subject', 255)
-      : HTTP.optionalString(data, 'subject', 255) ?? 'Agent Relay message';
+  private static match(path: string, pattern: RegExp): string | null {
+    return path.match(pattern)?.[1] ?? null;
+  }
 
+  private static message(data: JSONRecord, handoff: boolean): RelayMessageInput {
     return {
       to: AliasService.readRecipient(data.to),
-      subject,
-      body,
+      subject: handoff
+        ? HTTP.requiredString(data, 'subject', 255)
+        : HTTP.optionalString(data, 'subject', 255) ?? 'Agent Relay message',
+      body: HTTP.requiredString(data, 'body', 100_000),
       artifactLinks: HTTP.artifacts(data),
     };
   }
 
-  private static match(pathname: string, pattern: RegExp): string | null {
-    return pathname.match(pattern)?.[1] ?? null;
-  }
-
-  constructor(private readonly env: Env) {}
-
-  private async routeAliases(
-    request: Request,
-    pathname: string,
-    aliases: AliasService,
+  private async aliases(
+    request: Request, path: string, aliases: AliasService,
   ): Promise<Response | null> {
-    if (request.method === 'POST' && pathname === '/v1/aliases') {
+    if (path === '/v2/aliases' && request.method === 'POST') {
       const data = await HTTP.json(request);
-      const alias = await aliases.create(
+
+      return HTTP.response(await aliases.create(
         HTTP.requiredString(data, 'provider', 32),
         HTTP.requiredString(data, 'externalId', 255),
-      );
-
-      return HTTP.response(alias, 201);
-    }
-
-    if (request.method === 'GET' && pathname === '/v1/aliases') {
-      return HTTP.response(await aliases.list());
-    }
-
-    const aliasId = RelayAPI.match(pathname, /^\/v1\/aliases\/([^/]+)$/);
-
-    if (request.method === 'DELETE' && aliasId) {
-      return HTTP.response(await aliases.revoke(aliasId));
-    }
-
-    const verificationId = RelayAPI.match(pathname, /^\/v1\/aliases\/([^/]+)\/verification$/);
-
-    if (request.method === 'POST' && verificationId) {
-      const key = request.headers.get('x-relay-verification-key');
-
-      return HTTP.response(await aliases.verify(verificationId, key));
-    }
-
-    return null;
-  }
-
-  private async routeMessages(
-    request: Request,
-    pathname: string,
-    relay: RelayService,
-  ): Promise<Response | null> {
-    if (request.method === 'POST' && (pathname === '/v1/messages' || pathname === '/v1/handoffs')) {
-      const data = await HTTP.json(request);
-      const handoff = pathname === '/v1/handoffs';
-      const message = RelayAPI.readMessage(data, handoff);
-
-      return HTTP.response(await relay.send(handoff ? 'handoff' : 'message', message), 201);
-    }
-
-    if (request.method === 'GET' && pathname === '/v1/inbox') {
-      return HTTP.response(await relay.inbox());
-    }
-
-    if (request.method === 'GET' && pathname === '/v1/host-inbox') {
-      return HTTP.response(await relay.hostInbox());
-    }
-
-    return null;
-  }
-
-  private async routeHandoffs(
-    request: Request,
-    pathname: string,
-    relay: RelayService,
-  ): Promise<Response | null> {
-    const handoffAcceptanceId = RelayAPI.match(pathname, /^\/v1\/handoffs\/([^/]+)\/accept$/);
-
-    if (request.method === 'POST' && handoffAcceptanceId) {
-      return HTTP.response(await relay.acceptHandoff(handoffAcceptanceId), 201);
-    }
-
-    const handoffReplyId = RelayAPI.match(pathname, /^\/v1\/handoffs\/([^/]+)\/reply$/);
-
-    if (request.method === 'POST' && handoffReplyId) {
-      const data = await HTTP.json(request);
-
-      return HTTP.response(
-        await relay.replyToHandoff(
-          handoffReplyId,
-          HTTP.requiredString(data, 'body', 100_000),
-          HTTP.artifacts(data),
-        ),
-        201,
-      );
-    }
-
-    return null;
-  }
-
-  private async routeThreads(
-    request: Request,
-    pathname: string,
-    relay: RelayService,
-  ): Promise<Response | null> {
-    const threadId = RelayAPI.match(pathname, /^\/v1\/threads\/([^/]+)$/);
-
-    if (request.method === 'GET' && threadId) {
-      return HTTP.response(await relay.history(threadId));
-    }
-
-    const threadReplyId = RelayAPI.match(pathname, /^\/v1\/threads\/([^/]+)\/messages$/);
-
-    if (request.method === 'POST' && threadReplyId) {
-      const data = await HTTP.json(request);
-
-      return HTTP.response(
-        await relay.reply(
-          threadReplyId,
-          HTTP.requiredString(data, 'body', 100_000),
-          HTTP.optionalString(data, 'subject', 255),
-          HTTP.artifacts(data),
-        ),
-        201,
-      );
-    }
-
-    return null;
-  }
-
-  private async routeWake(
-    request: Request,
-    pathname: string,
-    wake: WakeService,
-    scope: IdentityContext,
-  ): Promise<Response | null> {
-    if (request.method === 'POST' && pathname === '/v1/wake-pairings') {
-      return HTTP.response(await new WakePairing(this.env).create(scope), 201);
-    }
-
-    if (request.method === 'POST' && pathname === '/v1/wake-subscription') {
-      const data = await HTTP.json(request);
-      const callback = HTTP.requiredString(data, 'callbackUrl', 2048);
-      const authMode = HTTP.optionalString(data, 'authMode', 32) ?? 'hmac';
-      const bearerToken = HTTP.optionalString(data, 'bearerToken', 2048) ?? undefined;
-
-      return HTTP.response(await wake.subscribe(
-        callback, authMode as 'hmac' | 'bearer' | 'capability', bearerToken,
       ), 201);
     }
 
-    if (pathname === '/v1/wake-subscription/verification' && request.method === 'POST') {
+    if (path === '/v2/aliases' && request.method === 'GET') {
+      return HTTP.response(await aliases.list());
+    }
+
+    const aliasID = RelayAPI.match(path, /^\/v2\/aliases\/([^/]+)$/);
+
+    if (aliasID && request.method === 'DELETE') {
+      return HTTP.response(await aliases.revoke(aliasID));
+    }
+
+    const verificationID = RelayAPI.match(path, /^\/v2\/aliases\/([^/]+)\/verification$/);
+
+    if (verificationID && request.method === 'POST') {
+      return HTTP.response(await aliases.verify(
+        verificationID, request.headers.get('x-relay-verification-key'),
+      ));
+    }
+
+    return null;
+  }
+
+  private async messages(
+    request: Request, path: string, relay: RelayV2Service,
+  ): Promise<Response | null> {
+    if (request.method === 'POST' && (path === '/v2/messages' || path === '/v2/handoffs')) {
+      const handoff = path === '/v2/handoffs';
+      const data = await HTTP.json(request);
+
+      return HTTP.response(await relay.send(
+        handoff ? 'handoff' : 'message',
+        RelayAPI.message(data, handoff),
+      ), 201);
+    }
+
+    if (path === '/v2/inbox' && request.method === 'GET') {
+      return HTTP.response(await relay.inbox());
+    }
+
+    if (path === '/v2/agent-inbox' && request.method === 'GET') {
+      return HTTP.response(await relay.agentInbox());
+    }
+
+    const messageID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)$/);
+
+    if (messageID && request.method === 'GET') {
+      const rawLimit = new URL(request.url).searchParams.get('context_limit');
+      const contextLimit = rawLimit === null ? 0 : Number(rawLimit);
+
+      if (rawLimit !== null && !/^(?:0|[1-9]|1[0-2])$/.test(rawLimit)) {
+        throw new APIError(400, 'invalid_context_limit', 'Context limit must be 0–12.');
+      }
+
+      return HTTP.response(await relay.message(messageID, contextLimit));
+    }
+
+    const readID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)\/read$/);
+
+    if (readID && request.method === 'POST') {
+      return HTTP.response(await relay.acknowledgeRead(readID), 201);
+    }
+
+    return null;
+  }
+
+  private async handoffs(
+    request: Request, path: string, relay: RelayV2Service,
+  ): Promise<Response | null> {
+    const acceptanceID = RelayAPI.match(path, /^\/v2\/handoffs\/([^/]+)\/accept$/);
+
+    if (acceptanceID && request.method === 'POST') {
+      return HTTP.response(await relay.acceptHandoff(acceptanceID), 201);
+    }
+
+    const replyID = RelayAPI.match(path, /^\/v2\/handoffs\/([^/]+)\/reply$/);
+
+    if (replyID && request.method === 'POST') {
+      const body = await HTTP.json(request);
+
+      return HTTP.response(await relay.replyHandoff(
+        replyID, HTTP.requiredString(body, 'body', 100_000),
+        HTTP.artifacts(body),
+      ), 201);
+    }
+
+    return null;
+  }
+
+  private async threads(
+    request: Request, path: string, relay: RelayV2Service,
+  ): Promise<Response | null> {
+    const threadID = RelayAPI.match(path, /^\/v2\/threads\/([^/]+)$/);
+
+    if (threadID && request.method === 'GET') {
+      return HTTP.response(await relay.history(threadID));
+    }
+
+    const replyID = RelayAPI.match(path, /^\/v2\/threads\/([^/]+)\/messages$/);
+
+    if (replyID && request.method === 'POST') {
+      const body = await HTTP.json(request);
+
+      return HTTP.response(await relay.reply(
+        replyID,
+        HTTP.requiredString(body, 'body', 100_000),
+        HTTP.optionalString(body, 'subject', 255),
+        HTTP.artifacts(body),
+      ), 201);
+    }
+
+    return null;
+  }
+
+  private async wake(
+    request: Request, path: string, identity: SessionIdentity,
+  ): Promise<Response | null> {
+    const wake = new WakeService(this.env, identity);
+
+    if (path === '/v2/wake-pairings' && request.method === 'POST') {
+      return HTTP.response(await new WakePairing(this.env).create(identity), 201);
+    }
+
+    if (path === '/v2/wake-subscription' && request.method === 'POST') {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(await wake.subscribe(
+        HTTP.requiredString(data, 'callbackUrl', 2048),
+        (HTTP.optionalString(data, 'authMode', 32) ?? 'hmac') as
+          'hmac' | 'bearer' | 'capability',
+        HTTP.optionalString(data, 'bearerToken', 2048) ?? undefined,
+      ), 201);
+    }
+
+    if (path === '/v2/wake-subscription/verification' && request.method === 'POST') {
       const data = await HTTP.json(request);
 
       return HTTP.response(await wake.verify(
@@ -189,15 +188,15 @@ export class RelayAPI {
       ));
     }
 
-    if (pathname === '/v1/wake-subscription' && request.method === 'GET') {
+    if (path === '/v2/wake-subscription' && request.method === 'GET') {
       return HTTP.response(await wake.getSubscription());
     }
 
-    if (pathname === '/v1/wake-subscription' && request.method === 'DELETE') {
+    if (path === '/v2/wake-subscription' && request.method === 'DELETE') {
       return HTTP.response(await wake.unsubscribe());
     }
 
-    if (pathname === '/v1/wake-events' && request.method === 'GET') {
+    if (path === '/v2/wake-events' && request.method === 'GET') {
       return HTTP.response(await wake.deliveries());
     }
 
@@ -205,105 +204,63 @@ export class RelayAPI {
   }
 
   async handle(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const { pathname } = url;
+    const path = new URL(request.url).pathname;
 
-    if (pathname.startsWith('/wake-pair/')) {
+    if (path.startsWith('/wake-pair/')) {
       return new WakePairing(this.env).handlePublic(request);
     }
 
-    if (request.method === 'GET' && pathname === '/health') {
+    if (path === '/health' && request.method === 'GET') {
       return HTTP.response({ service: 'nuwa-agent-relay-api', status: 'ok' });
     }
 
-    // MailTrigger uses a separate high-entropy key; never require Agent Address
-    // OAuth on a server-to-server inbound receipt.
-    if (request.method === 'POST' && pathname === '/v1/mailtrigger/receipt') {
+    // This endpoint is the configured MailTrigger webhook contract.
+    // Keep its HTTP URL independent of the Agent Address identity version.
+    if (path === '/v1/mailtrigger/receipt' && request.method === 'POST') {
       return new MailReceipt(this.env).receive(request);
     }
 
-    if (request.method === 'GET' && pathname === '/') {
-      return HTTP.response({
-        service: 'Nuwa Agent Relay API',
-        canonicalHost: url.host,
-        documentation: 'https://github.com/company-notes/nuwa-agent-relay-api',
-      });
-    }
-
     const authorization = RelayAPI.authorization(request);
-    const addressClient = new AddressClient(this.env, authorization);
-    const status = await addressClient.getStatus(
-      url.searchParams.get('work_address_id') ?? undefined,
-    );
-    const identity = new IdentityContext(status);
+    const sessionID = new URL(request.url).searchParams.get('session_id');
+    const runtimeToken = request.headers.get('x-nuwa-runtime-token');
 
-    const relay = new RelayService(this.env, identity, addressClient);
-    const aliases = new AliasService(this.env, identity);
-
-    const wakeResponse = await this.routeWake(
-      request, pathname, new WakeService(this.env, identity), identity,
-    );
-    if (wakeResponse) {
-      return wakeResponse;
+    if (!sessionID || !runtimeToken) {
+      throw new APIError(400, 'session_capability_required',
+        'Authenticated requests require session_id and a Runtime capability header.');
     }
 
-    const messageId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)$/);
+    const address = new SessionIdentityClient(this.env.ADDRESS_API_URL, authorization);
+    const identity = await address.authorize(sessionID, runtimeToken);
+    const relay = new RelayV2Service(this.env, identity, address);
+    const aliases = new AliasService(this.env, identity, address);
 
-    if (request.method === 'GET' && messageId) {
-      const contextLimit = ThreadContextReader.parseLimit(
-        url.searchParams.get('context_limit'),
-      );
-
-      return HTTP.response(await relay.messageById(messageId, contextLimit));
+    if (path === '/v2/agents/mailbox' && request.method === 'POST') {
+      return HTTP.response(await relay.provisionMailbox(), 201);
     }
 
-    const readId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/read$/);
+    const receiptID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)\/receipt$/);
 
-    if (request.method === 'POST' && readId) {
-      return HTTP.response(await relay.acknowledgeRead(readId), 201);
-    }
-
-    const receiptId = RelayAPI.match(pathname, /^\/v1\/messages\/([^/]+)\/receipt$/);
-
-    if (request.method === 'GET' && receiptId) {
+    if (receiptID && request.method === 'GET') {
       return new MailReceipt(this.env).status(
-        receiptId, identity.organization.id, identity.work.id,
-        url.searchParams.get('refresh') === 'archive',
+        receiptID, identity.organizationID, identity.sessionID,
+        new URL(request.url).searchParams.get('refresh') === 'archive',
       );
     }
 
-    if (request.method === 'DELETE' && pathname === '/v1/smoke/host') {
-      const runId = HTTP.requiredString(
-        { runId: url.searchParams.get('run_id') },
-        'runId',
-        10,
-      );
+    const handlers = [
+      () => this.aliases(request, path, aliases),
+      () => this.messages(request, path, relay),
+      () => this.handoffs(request, path, relay),
+      () => this.threads(request, path, relay),
+      () => this.wake(request, path, identity),
+    ];
 
-      return HTTP.response(await relay.cleanupSmokeHost(runId));
-    }
+    for (const handler of handlers) {
+      const response = await handler();
 
-    if (request.method === 'POST' && pathname === '/v1/hosts/provision') {
-      return HTTP.response(await relay.provisionHost(), 201);
-    }
-
-    const aliasResponse = await this.routeAliases(request, pathname, aliases);
-    if (aliasResponse) {
-      return aliasResponse;
-    }
-
-    const messageResponse = await this.routeMessages(request, pathname, relay);
-    if (messageResponse) {
-      return messageResponse;
-    }
-
-    const handoffResponse = await this.routeHandoffs(request, pathname, relay);
-    if (handoffResponse) {
-      return handoffResponse;
-    }
-
-    const threadResponse = await this.routeThreads(request, pathname, relay);
-    if (threadResponse) {
-      return threadResponse;
+      if (response) {
+        return response;
+      }
     }
 
     throw new APIError(404, 'not_found', 'Endpoint not found.');
@@ -312,8 +269,6 @@ export class RelayAPI {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    // Receipt Webhook is the live arrival path. Do not poll provider Archives
-    // periodically; only retry persisted Wake events here.
     await WakeService.dispatchDue(env);
   },
 
@@ -327,7 +282,8 @@ export default {
         headers: {
           'access-control-allow-origin': '*',
           'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
-          'access-control-allow-headers': 'authorization,content-type,x-relay-verification-key',
+          'access-control-allow-headers':
+            'authorization,content-type,x-nuwa-runtime-token,x-relay-verification-key',
           'access-control-max-age': '86400',
         },
       });
@@ -337,8 +293,6 @@ export default {
       const response = await new RelayAPI(env).handle(request);
       response.headers.set('access-control-allow-origin', '*');
 
-      // The authenticated MailTrigger Route can accelerate wake delivery.
-      // Cron remains the durable retry/fallback. Never dispatch on send-201.
       if (request.method === 'POST' &&
         new URL(request.url).pathname === '/v1/mailtrigger/receipt' &&
         response.ok && context) {

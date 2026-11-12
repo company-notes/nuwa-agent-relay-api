@@ -1,13 +1,13 @@
 import type { Env } from './Env';
 import { APIError, HTTP } from './HTTP';
-import type { IdentityContext } from './IdentityContext';
+import type { SessionIdentity } from './SessionIdentityClient';
 import { WakeRegistration } from './WakeRegistration';
 import { WakeTarget, type WakeAuthMode } from './WakeTarget';
 import { Logger } from './Logger';
 
 type WakeRow = {
   messageId: string;
-  workAddressId: string;
+  sessionID: string;
   callbackUrl: string;
   signingSecret: string;
   encryptedTarget: string | null;
@@ -19,7 +19,7 @@ export class WakeService {
 
   constructor(
     private readonly env: Env,
-    private readonly identity: IdentityContext,
+    private readonly identity: SessionIdentity,
   ) {}
 
   async subscribe(callbackURL: string, authMode: WakeAuthMode = 'hmac', bearerToken?: string) {
@@ -32,14 +32,14 @@ export class WakeService {
 
   async getSubscription(): Promise<Record<string, unknown>> {
     const row = await this.env.DB.prepare(
-      'SELECT callback_url AS callbackURL, auth_mode AS authMode FROM wake_subscriptions WHERE work_address_id = ? AND org_id = ?',
-    ).bind(this.identity.work.id, this.identity.organization.id)
+      'SELECT callback_url AS callbackURL, auth_mode AS authMode FROM wake_subscriptions WHERE session_id = ? AND org_id = ?',
+    ).bind(this.identity.sessionID, this.identity.organizationID)
       .first<{ callbackURL: string; authMode: string }>();
 
     const pending = await new WakeRegistration(this.env, this.identity).pending();
 
     return {
-      workAddressId: this.identity.work.id,
+      sessionID: this.identity.sessionID,
       enabled: Boolean(row),
       callbackHost: row ? new URL(row.callbackURL).hostname : null,
       authMode: row?.authMode ?? null,
@@ -49,17 +49,17 @@ export class WakeService {
 
   async unsubscribe(): Promise<Record<string, unknown>> {
     await this.env.DB.prepare(
-      'DELETE FROM wake_subscriptions WHERE work_address_id = ? AND org_id = ?',
-    ).bind(this.identity.work.id, this.identity.organization.id).run();
+      'DELETE FROM wake_subscriptions WHERE session_id = ? AND org_id = ?',
+    ).bind(this.identity.sessionID, this.identity.organizationID).run();
 
     await this.env.DB.prepare(
-      'DELETE FROM wake_registration_attempts WHERE work_address_id = ? AND org_id = ?',
-    ).bind(this.identity.work.id, this.identity.organization.id).run();
+      'DELETE FROM wake_registration_attempts WHERE session_id = ? AND org_id = ?',
+    ).bind(this.identity.sessionID, this.identity.organizationID).run();
 
     // Unsubscribe also removes retry jobs to avoid contacting the old endpoint.
     await this.env.DB.prepare(
-      "DELETE FROM wake_events WHERE work_address_id = ? AND status = 'pending'",
-    ).bind(this.identity.work.id).run();
+      "DELETE FROM wake_events WHERE session_id = ? AND status = 'pending'",
+    ).bind(this.identity.sessionID).run();
 
     return { removed: true };
   }
@@ -69,9 +69,9 @@ export class WakeService {
       `SELECT message_id AS messageId, attempts, status, notified_at AS notifiedAt,
               last_error AS lastError
          FROM wake_events
-        WHERE work_address_id = ?
+        WHERE session_id = ?
         ORDER BY next_attempt_at DESC LIMIT 100`,
-    ).bind(this.identity.work.id).all();
+    ).bind(this.identity.sessionID).all();
 
     return result.results as Record<string, unknown>[];
   }
@@ -79,10 +79,10 @@ export class WakeService {
   static async dispatchDue(env: Env): Promise<void> {
     const now = new Date().toISOString();
     const rows = await env.DB.prepare(
-      `SELECT e.message_id AS messageId, e.work_address_id AS workAddressId,
+      `SELECT e.message_id AS messageId, e.session_id AS sessionID,
               e.attempts, s.callback_url AS callbackUrl, s.signing_secret AS signingSecret, s.encrypted_target AS encryptedTarget
          FROM wake_events e
-         JOIN wake_subscriptions s ON s.work_address_id = e.work_address_id
+         JOIN wake_subscriptions s ON s.session_id = e.session_id
          JOIN messages m ON m.id = e.message_id
         WHERE e.status = 'pending' AND e.next_attempt_at <= ?
           AND m.received_at IS NOT NULL
@@ -106,8 +106,9 @@ export class WakeService {
 
       const body = {
         event: 'nuwa.message.available',
-        messageId: event.messageId,
-        workAddressId: event.workAddressId,
+        eventVersion: 2,
+        messageID: event.messageId,
+        recipientSessionID: event.sessionID,
       };
 
       let success = false;

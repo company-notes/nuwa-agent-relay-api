@@ -5,11 +5,11 @@ import { WakePairingOAuth } from './WakePairingOAuth';
 import { WakeRegistration } from './WakeRegistration';
 import { WakeTarget } from './WakeTarget';
 
-type WorkScope = { work: { id: string }; organization: { id: string } };
+type SessionScope = { organizationID: string; sessionID: string };
 
 type PairingRow = {
   id: string;
-  workAddressId: string;
+  sessionID: string;
   orgId: string;
   expiresAt: string;
   sessionDigest: string | null;
@@ -138,15 +138,15 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 
   private async byId(id: string): Promise<PairingRow | null> {
     return this.env.DB.prepare(
-      `SELECT id, work_address_id AS workAddressId, org_id AS orgId,
+      `SELECT id, session_id AS sessionID, org_id AS orgId,
               expires_at AS expiresAt, session_digest AS sessionDigest,
               session_expires_at AS sessionExpiresAt, consumed_at AS consumedAt
        FROM wake_pairing_requests WHERE id = ?`,
     ).bind(id).first<PairingRow>();
   }
 
-  async create(scope: WorkScope): Promise<{
-    status: string; workAddressId: string; pairingUrl: string; expiresAt: string;
+  async create(scope: SessionScope): Promise<{
+    status: string; sessionID: string; pairingUrl: string; expiresAt: string;
   }> {
     const id = crypto.randomUUID();
     const secret = WakePairing.random();
@@ -163,9 +163,9 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 
     const result = await this.env.DB.prepare(
       `INSERT INTO wake_pairing_requests
-         (id, org_id, work_address_id, link_digest, created_at, expires_at)
+         (id, org_id, session_id, link_digest, created_at, expires_at)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(work_address_id) DO UPDATE SET
+       ON CONFLICT(session_id) DO UPDATE SET
          id = excluded.id,
          org_id = excluded.org_id,
          link_digest = excluded.link_digest,
@@ -178,17 +178,17 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
          session_expires_at = NULL,
          consumed_at = NULL
        WHERE wake_pairing_requests.created_at < ?`,
-    ).bind(id, scope.organization.id, scope.work.id, digest,
+    ).bind(id, scope.organizationID, scope.sessionID, digest,
       now.toISOString(), expiresAt, cooldown).run();
 
     if (result.meta.changes !== 1) {
       throw new APIError(429, 'pairing_cooldown',
-        'Wait 60 seconds before creating another pairing link for this Work.');
+        'Wait 60 seconds before creating another pairing link for this Session.');
     }
 
     return {
       status: 'awaiting_user',
-      workAddressId: scope.work.id,
+      sessionID: scope.sessionID,
       pairingUrl: WakePairingOAuth.origin + '/wake-pair/' + secret,
       expiresAt,
     };
@@ -261,7 +261,7 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
     const now = new Date();
     const digest = await WakePairing.digest(state);
     const row = await this.env.DB.prepare(
-      `SELECT p.id, p.work_address_id AS workAddressId,
+      `SELECT p.id, p.session_id AS sessionID,
               p.org_id AS orgId, p.expires_at AS expiresAt,
               p.session_digest AS sessionDigest,
               p.session_expires_at AS sessionExpiresAt,
@@ -289,8 +289,8 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
         'This pairing login has expired. Start again from a new pairing link.');
     }
 
-    await new WakePairingOAuth(this.env).verifyWork(
-      row.oauthClientId, code, verifier, row.workAddressId, row.orgId,
+    await new WakePairingOAuth(this.env).verifySession(
+      row.oauthClientId, code, verifier, row.sessionID, row.orgId,
     );
 
     const sessionSecret = WakePairing.random();
@@ -344,14 +344,14 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 
   private async showForm(request: Request): Promise<Response> {
     const row = await this.session(request);
-    const safeWork = WakePairing.escape(row.workAddressId);
+    const safeWork = WakePairing.escape(row.sessionID);
     const csrfToken = await WakePairing.csrfToken(
       WakePairing.cookie(request, WakePairing.sessionCookie)!,
     );
 
     const response = WakePairing.page('安全連接 Webhook', `
 <p>已透過 Agent Address 驗證這個 Work 的管理權限。</p>
-<p>Work ID：<code>${safeWork}</code></p>
+<p>Session ID：<code>${safeWork}</code></p>
 <p>請從你的 Automation 設定複製 Webhook URL 與金鑰，直接貼到這個頁面。
 金鑰只會傳給 Relay Worker，不需要讓助理讀取。</p>
 <form method="post" action="/wake-pair/complete" autocomplete="off">
@@ -440,10 +440,10 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
     }
 
     // WakeRegistration owns encryption, the cooldown and the one-time challenge.
-    // The OAuth browser proved ownership of this exact organization and Work.
-    const scope: WorkScope = {
-      organization: { id: row.orgId },
-      work: { id: row.workAddressId },
+    // The OAuth browser proved ownership of this exact Organization and Session.
+    const scope: SessionScope = {
+      organizationID: row.orgId,
+      sessionID: row.sessionID,
     };
 
     try {
@@ -452,7 +452,7 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
       );
 
       return WakePairing.page('Webhook 已提交驗證', `
-<p>Work ID：<code>${WakePairing.escape(row.workAddressId)}</code></p>
+<p>Session ID：<code>${WakePairing.escape(row.sessionID)}</code></p>
 <p>${result.challengeDelivered
   ? '驗證事件已送達 Webhook。請讓已授權的 Agent 呼叫 relayVerifyWake 完成一次性驗證。'
   : 'Relay 尚未確認 Webhook 收到 Challenge，請檢查 Automation 執行紀錄後重新建立配對連結。'}</p>

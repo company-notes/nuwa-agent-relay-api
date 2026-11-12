@@ -1,7 +1,6 @@
-import type { AddressStatus } from './AddressClient';
+import { SessionIdentityClient } from './SessionIdentityClient';
 import type { Env } from './Env';
 import { APIError } from './HTTP';
-import { IdentityContext } from './IdentityContext';
 import { Logger } from './Logger';
 
 export class WakePairingOAuth {
@@ -86,54 +85,44 @@ export class WakePairingOAuth {
     return url.toString();
   }
 
-  async verifyWork(clientId: string, code: string, verifier: string,
-                   workAddressID: string, orgID: string): Promise<void> {
+  async verifySession(
+    clientID: string,
+    code: string,
+    verifier: string,
+    sessionID: string,
+    organizationID: string,
+  ): Promise<void> {
     const tokenResponse = await this.post('/token', new URLSearchParams({
       grant_type: 'authorization_code',
-      client_id: clientId,
+      client_id: clientID,
       code,
       redirect_uri: WakePairingOAuth.callbackURL,
       code_verifier: verifier,
     }));
-    const accessToken = tokenResponse.access_token;
+    const token = tokenResponse.access_token;
 
-    if (typeof accessToken !== 'string' || !accessToken ||
-      accessToken.length > 4096 || /[\r\n\t ]/.test(accessToken)) {
+    if (typeof token !== 'string' || !token || token.length > 4096 ||
+        /[\r\n\t ]/.test(token)) {
       throw new APIError(502, 'pairing_oauth_invalid', 'OAuth did not issue an access token.');
     }
 
-    const url = new URL(this.endpoint('/v1/account/status'));
-    url.searchParams.set('work_address_id', workAddressID);
+    const identity = new SessionIdentityClient(
+      this.env.ADDRESS_API_URL,
+      'Bearer ' + token,
+    );
+    const status = await identity.status();
 
-    const response = await fetch(url, {
-      headers: { authorization: 'Bearer ' + accessToken, accept: 'application/json' },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!response.ok || response.status >= 300) {
-      throw new APIError(403, 'pairing_work_not_owned',
-        'The signed-in Agent Address account cannot manage this Work.');
+    if (!status.organization || status.organization.id !== organizationID) {
+      throw new APIError(403, 'pairing_session_not_owned',
+        'Account has no permission to manage this Session.');
     }
 
-    let payload: { ok?: boolean; data?: AddressStatus };
-    try {
-      payload = await response.json() as typeof payload;
-    } catch (error) {
-      WakePairingOAuth.logger.exception('invalid_work_status_json', error);
-      throw new APIError(502, 'pairing_oauth_invalid', 'Agent Address status is invalid.');
-    }
+    const session = await identity.session(sessionID);
 
-    if (!payload.ok || !payload.data) {
-      throw new APIError(403, 'pairing_work_not_owned',
-        'The signed-in Agent Address account cannot manage this Work.');
-    }
-
-    const identity = new IdentityContext(payload.data);
-
-    if (identity.work.id !== workAddressID || identity.organization.id !== orgID) {
-      throw new APIError(403, 'pairing_work_not_owned',
-        'The signed-in Agent Address account cannot manage this Work.');
+    if (session.id !== sessionID ||
+        session.canonical.split('/')[0] !== status.organization.slug) {
+      throw new APIError(403, 'pairing_session_not_owned',
+        'Account has no permission to manage this Session.');
     }
   }
 }

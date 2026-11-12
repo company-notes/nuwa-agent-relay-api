@@ -7,16 +7,16 @@ describe('External identity aliases', () => {
   it('requires operator verification before routing a normalized email address', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    await client.provisionBothHosts();
+    await client.provisionAgentMailboxes();
 
-    const emailAlias = await client.call('token-b', 'POST', '/v1/aliases?work_address_id=work-b', {
+    const emailAlias = await client.call('token-b', 'POST', '/v2/aliases?session_id=session-b', {
       provider: 'email',
       externalId: 'Reviewer@Example.com',
     });
     expect(emailAlias.status, 'Registration should succeed in a pending state').toBe(201);
     expect(emailAlias.body.data.verified).toBe(false);
 
-    const pending = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+    const pending = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
       to: 'reviewer@example.com',
       body: 'Review the patch',
     });
@@ -24,34 +24,34 @@ describe('External identity aliases', () => {
 
     const deniedVerification = await client.call(
       'token-b', 'POST',
-      `/v1/aliases/${emailAlias.body.data.id}/verification?work_address_id=work-b`,
+      `/v2/aliases/${emailAlias.body.data.id}/verification?session_id=session-b`,
     );
     expect(deniedVerification.status, 'Alias owner alone cannot prove external ID ownership').toBe(403);
 
     const verified = await client.call(
       'token-b', 'POST',
-      `/v1/aliases/${emailAlias.body.data.id}/verification?work_address_id=work-b`,
+      `/v2/aliases/${emailAlias.body.data.id}/verification?session_id=session-b`,
       undefined,
       'test-alias-verification-key',
     );
     expect(verified.status).toBe(200);
 
-    const routed = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+    const routed = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
       to: 'REVIEWER@example.com',
       body: 'Please review this change.',
     });
     expect(routed.status, 'Verified email aliases should route case-insensitively').toBe(201);
 
-    const inbox = await client.call('token-b', 'GET', '/v1/inbox?work_address_id=work-b');
+    const inbox = await client.call('token-b', 'GET', '/v2/inbox?session_id=session-b');
     expect(inbox.body.data[0].body).toBe('Please review this change.');
   });
 
   it('revoking a verified GrokBot UUID prevents subsequent delivery', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    await client.provisionBothHosts();
+    await client.provisionAgentMailboxes();
 
-    const grokAlias = await client.call('token-b', 'POST', '/v1/aliases?work_address_id=work-b', {
+    const grokAlias = await client.call('token-b', 'POST', '/v2/aliases?session_id=session-b', {
       provider: 'grokbot',
       externalId: '550e8400-e29b-41d4-a716-446655440000',
     });
@@ -59,13 +59,13 @@ describe('External identity aliases', () => {
 
     const grokVerified = await client.call(
       'token-b', 'POST',
-      `/v1/aliases/${grokAlias.body.data.id}/verification?work_address_id=work-b`,
+      `/v2/aliases/${grokAlias.body.data.id}/verification?session_id=session-b`,
       undefined,
       'test-alias-verification-key',
     );
     expect(grokVerified.status).toBe(200);
 
-    const routed = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+    const routed = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
       to: { provider: 'grokbot', externalId: '550e8400-e29b-41d4-a716-446655440000' },
       body: 'Before revocation.',
     });
@@ -73,23 +73,23 @@ describe('External identity aliases', () => {
 
     const revoked = await client.call(
       'token-b', 'DELETE',
-      `/v1/aliases/${grokAlias.body.data.id}?work_address_id=work-b`,
+      `/v2/aliases/${grokAlias.body.data.id}?session_id=session-b`,
     );
     expect(revoked.status).toBe(200);
 
-    const noLongerRoutable = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+    const noLongerRoutable = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
       to: { provider: 'grokbot', externalId: '550e8400-e29b-41d4-a716-446655440000' },
       body: 'This should fail.',
     });
     expect(noLongerRoutable.status).toBe(404);
   });
 
-  it('refuses to deliver through an alias whose canonical target no longer matches its owner', async () => {
+  it('rejects an alias retargeted to another Agent without re-verification', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    await client.provisionBothHosts();
+    await client.provisionAgentMailboxes();
 
-    const registered = await client.call('token-b', 'POST', '/v1/aliases?work_address_id=work-b', {
+    const registered = await client.call('token-b', 'POST', '/v2/aliases?session_id=session-b', {
       provider: 'grokbot',
       externalId: 'moved-agent-id',
     });
@@ -98,24 +98,24 @@ describe('External identity aliases', () => {
     const verified = await client.call(
       'token-b',
       'POST',
-      `/v1/aliases/${registered.body.data.id}/verification?work_address_id=work-b`,
+      `/v2/aliases/${registered.body.data.id}/verification?session_id=session-b`,
       undefined,
       'test-alias-verification-key',
     );
     expect(verified.status).toBe(200);
 
-    // Simulate stale registry state after an external mapping changes.
-    await env.DB.prepare('UPDATE agent_aliases SET canonical_address = ? WHERE id = ?')
-      .bind('relay-test-org/alpha/author', registered.body.data.id)
+    // An alias is bound to immutable Agent and Session IDs, never a mutable address string.
+    await env.DB.prepare('UPDATE agent_aliases SET session_id = ? WHERE id = ?')
+      .bind('session-a', registered.body.data.id)
       .run();
 
-    const response = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
+    const response = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
       to: { provider: 'grokbot', externalId: 'moved-agent-id' },
       body: 'Must not reach the wrong agent.',
     });
 
-    expect(response.status, 'Aliases must never silently retarget another work identity').toBe(409);
-    expect(response.body.error.code).toBe('stale_alias');
+    expect(response.status, 'Aliases must never silently retarget another Agent').toBe(409);
+    expect(response.body.error.code).toBe('alias_identity_mismatch');
     expect(client.deliveries).toHaveLength(0);
   });
 
@@ -123,13 +123,13 @@ describe('External identity aliases', () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
 
-    const created = await client.call('token-a', 'POST', '/v1/aliases?work_address_id=work-a', {
+    const created = await client.call('token-a', 'POST', '/v2/aliases?session_id=session-a', {
       provider: 'email',
       externalId: 'same@example.com',
     });
     expect(created.status).toBe(201);
 
-    const duplicate = await client.call('token-b', 'POST', '/v1/aliases?work_address_id=work-b', {
+    const duplicate = await client.call('token-b', 'POST', '/v2/aliases?session_id=session-b', {
       provider: 'email',
       externalId: 'Same@Example.com',
     });
@@ -137,10 +137,10 @@ describe('External identity aliases', () => {
     expect(duplicate.body.error.code).toBe('alias_exists');
 
     const rows = await env.DB.prepare(
-      'SELECT work_address_id FROM agent_aliases WHERE provider = ? AND external_id = ? AND revoked_at IS NULL',
-    ).bind('email', 'same@example.com').all<{ work_address_id: string }>();
+      'SELECT session_id FROM agent_aliases WHERE provider = ? AND external_id = ? AND revoked_at IS NULL',
+    ).bind('email', 'same@example.com').all<{ session_id: string }>();
 
     expect(rows.results, 'The existing alias owner must remain unchanged').toHaveLength(1);
-    expect(rows.results[0].work_address_id).toBe('work-a');
+    expect(rows.results[0].session_id).toBe('session-a');
   });
 });
