@@ -6,18 +6,22 @@ import {
 
 type AliasRow = {
   id: string;
-  agent_id: string;
-  session_id: string;
+  agentID: string;
+  sessionID: string;
   provider: string;
-  external_id: string;
-  verified_at: string | null;
-  created_at: string;
+  externalID: string;
+  verifiedAt: string | null;
+  createdAt: string;
 };
 
 export type ExternalAlias = { provider: string; externalId: string };
 export type Recipient = string | ExternalAlias;
 
 export class AliasService {
+  private static readonly ALIAS_COLUMNS =
+    'id, agent_id AS agentID, session_id AS sessionID, provider, ' +
+    'external_id AS externalID, verified_at AS verifiedAt, created_at AS createdAt';
+
   constructor(
     private readonly env: Env,
     private readonly identity: SessionIdentity,
@@ -69,12 +73,12 @@ export class AliasService {
   private static view(row: AliasRow): JSONRecord {
     return {
       id: row.id,
-      agentID: row.agent_id,
-      sessionID: row.session_id,
+      agentID: row.agentID,
+      sessionID: row.sessionID,
       provider: row.provider,
-      externalId: row.external_id,
-      verified: row.verified_at !== null,
-      createdAt: row.created_at,
+      externalId: row.externalID,
+      verified: row.verifiedAt !== null,
+      createdAt: row.createdAt,
     };
   }
 
@@ -82,13 +86,13 @@ export class AliasService {
     const provider = AliasService.normalizeProvider(providerInput);
     const externalID = AliasService.normalizeExternalID(provider, externalInput);
     const existing = await this.env.DB.prepare(
-      `SELECT id, agent_id, session_id, provider, external_id, verified_at, created_at
+      `SELECT ${AliasService.ALIAS_COLUMNS}
          FROM agent_aliases
         WHERE org_id = ? AND provider = ? AND external_id = ? AND revoked_at IS NULL`,
     ).bind(this.identity.organizationID, provider, externalID).first<AliasRow>();
 
     if (existing) {
-      if (existing.session_id !== this.identity.sessionID) {
+      if (existing.sessionID !== this.identity.sessionID) {
         throw new APIError(409, 'alias_exists', 'Alias belongs to another Session.');
       }
 
@@ -111,7 +115,7 @@ export class AliasService {
 
   async list(): Promise<JSONRecord[]> {
     const rows = await this.env.DB.prepare(
-      `SELECT id, agent_id, session_id, provider, external_id, verified_at, created_at
+      `SELECT ${AliasService.ALIAS_COLUMNS}
          FROM agent_aliases
         WHERE org_id = ? AND session_id = ? AND revoked_at IS NULL
         ORDER BY created_at`,
