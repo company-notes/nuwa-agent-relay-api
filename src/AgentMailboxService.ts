@@ -50,9 +50,10 @@ export class AgentMailboxService {
     await this.mail.ensureManagedSMTPRoute(mailbox);
 
     await this.env.DB.prepare(
-      `INSERT OR IGNORE INTO agent_mailboxes
+      `INSERT INTO agent_mailboxes
          (org_id, agent_id, mailbox_id, mailbox_email, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(org_id, agent_id) DO NOTHING`,
     ).bind(organizationID, agentID, mailbox.mailboxId, mailbox.mailboxEmail,
       new Date().toISOString()).run();
 
