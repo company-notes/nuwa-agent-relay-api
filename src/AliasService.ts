@@ -1,74 +1,57 @@
-import type { Address, AddressClient } from './AddressClient';
 import type { Env } from './Env';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
-import { IdentityContext } from './IdentityContext';
+import {
+  SessionIdentityClient, type ResolvedSession, type SessionIdentity,
+} from './SessionIdentityClient';
 
 type AliasRow = {
   id: string;
-  org_id: string;
-  work_address_id: string;
-  canonical_address: string;
+  agent_id: string;
+  session_id: string;
   provider: string;
   external_id: string;
   verified_at: string | null;
   created_at: string;
 };
 
-export type AliasTarget = { provider: string; externalId: string };
-export type Recipient = string | AliasTarget;
+export type ExternalAlias = { provider: string; externalId: string };
+export type Recipient = string | ExternalAlias;
 
 export class AliasService {
-  private static normalizeProvider(provider: string): string {
-    const result = provider.trim().toLowerCase();
+  constructor(
+    private readonly env: Env,
+    private readonly identity: SessionIdentity,
+    private readonly address: SessionIdentityClient,
+  ) {}
 
-    if (!/^[a-z][a-z0-9-]{1,31}$/.test(result)) {
+  private static normalizeProvider(value: string): string {
+    const name = value.trim().toLowerCase();
+
+    if (!/^[a-z][a-z0-9-]{1,31}$/.test(name)) {
       throw new APIError(400, 'invalid_provider', 'Provider must be a lowercase platform name.');
     }
 
-    return result;
+    return name;
   }
 
-  private static normalizeExternalId(provider: string, externalId: string): string {
-    const id = externalId.trim();
+  private static normalizeExternalID(provider: string, value: string): string {
+    const normalized = provider === 'email' ? value.trim().toLowerCase() : value.trim();
 
-    if (id.length === 0 || id.length > 255) {
-      throw new APIError(400, 'invalid_external_id', 'External identifier must contain 1–255 characters.');
+    if (!normalized || normalized.length > 255 ||
+        (provider === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized))) {
+      throw new APIError(400, 'invalid_external_id', 'External identity is invalid.');
     }
 
-    if (provider === 'email') {
-      const email = id.toLowerCase();
-
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw new APIError(400, 'invalid_email', 'Email alias must be a valid email address.');
-      }
-
-      return email;
-    }
-
-    return id;
-  }
-
-  private static publicAlias(row: AliasRow): JSONRecord {
-    return {
-      id: row.id,
-      provider: row.provider,
-      externalId: row.external_id,
-      workAddressId: row.work_address_id,
-      canonicalAddress: row.canonical_address,
-      verified: row.verified_at !== null,
-      createdAt: row.created_at,
-    };
+    return normalized;
   }
 
   static readRecipient(value: unknown): Recipient {
     if (typeof value === 'string' && value.trim()) {
-      const target = value.trim();
+      const address = value.trim();
 
-      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) {
-        return { provider: 'email', externalId: target };
-      }
-
-      return target;
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)
+        ? { provider: 'email', externalId: address }
+        : address;
     }
 
     if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -80,31 +63,36 @@ export class AliasService {
       };
     }
 
-    throw new APIError(400, 'invalid_recipient', 'to must be a canonical address, email, or provider/externalId object.');
+    throw new APIError(400, 'invalid_recipient', 'Recipient must be an Agent address or external alias.');
   }
 
-  constructor(
-    private readonly env: Env,
-    private readonly identity: IdentityContext,
-  ) {}
+  private static view(row: AliasRow): JSONRecord {
+    return {
+      id: row.id,
+      agentID: row.agent_id,
+      sessionID: row.session_id,
+      provider: row.provider,
+      externalId: row.external_id,
+      verified: row.verified_at !== null,
+      createdAt: row.created_at,
+    };
+  }
 
-  async create(providerInput: string, externalIdInput: string): Promise<JSONRecord> {
+  async create(providerInput: string, externalInput: string): Promise<JSONRecord> {
     const provider = AliasService.normalizeProvider(providerInput);
-    const externalId = AliasService.normalizeExternalId(provider, externalIdInput);
-
+    const externalID = AliasService.normalizeExternalID(provider, externalInput);
     const existing = await this.env.DB.prepare(
-      `SELECT id, org_id, work_address_id, canonical_address, provider,
-              external_id, verified_at, created_at
+      `SELECT id, agent_id, session_id, provider, external_id, verified_at, created_at
          FROM agent_aliases
         WHERE org_id = ? AND provider = ? AND external_id = ? AND revoked_at IS NULL`,
-    ).bind(this.identity.organization.id, provider, externalId).first<AliasRow>();
+    ).bind(this.identity.organizationID, provider, externalID).first<AliasRow>();
 
     if (existing) {
-      if (existing.work_address_id !== this.identity.work.id) {
-        throw new APIError(409, 'alias_exists', 'This external identity is already assigned to another agent.');
+      if (existing.session_id !== this.identity.sessionID) {
+        throw new APIError(409, 'alias_exists', 'Alias belongs to another Session.');
       }
 
-      return AliasService.publicAlias(existing);
+      return AliasService.view(existing);
     }
 
     const id = crypto.randomUUID();
@@ -112,111 +100,84 @@ export class AliasService {
 
     await this.env.DB.prepare(
       `INSERT INTO agent_aliases
-        (id, org_id, work_address_id, canonical_address, provider, external_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      id,
-      this.identity.organization.id,
-      this.identity.work.id,
-      this.identity.work.canonical,
-      provider,
-      externalId,
-      createdAt,
-    ).run();
+         (id, org_id, agent_id, session_id, provider, external_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, this.identity.organizationID, this.identity.agentID, this.identity.sessionID,
+      provider, externalID, createdAt).run();
 
-    return {
-      id,
-      provider,
-      externalId,
-      workAddressId: this.identity.work.id,
-      canonicalAddress: this.identity.work.canonical,
-      verified: false,
-      createdAt,
-    };
+    return { id, agentID: this.identity.agentID, sessionID: this.identity.sessionID,
+      provider, externalId: externalID, verified: false, createdAt };
   }
 
   async list(): Promise<JSONRecord[]> {
     const rows = await this.env.DB.prepare(
-      `SELECT id, org_id, work_address_id, canonical_address, provider,
-              external_id, verified_at, created_at
+      `SELECT id, agent_id, session_id, provider, external_id, verified_at, created_at
          FROM agent_aliases
-        WHERE org_id = ? AND work_address_id = ? AND revoked_at IS NULL
+        WHERE org_id = ? AND session_id = ? AND revoked_at IS NULL
         ORDER BY created_at`,
-    ).bind(this.identity.organization.id, this.identity.work.id).all<AliasRow>();
+    ).bind(this.identity.organizationID, this.identity.sessionID).all<AliasRow>();
 
-    return rows.results.map(AliasService.publicAlias);
+    return rows.results.map(AliasService.view);
   }
 
-  async verify(aliasId: string, verificationKey: string | null): Promise<JSONRecord> {
-    const configured = this.env.ALIAS_VERIFICATION_KEY;
-
-    if (!configured || !verificationKey || verificationKey !== configured) {
-      throw new APIError(403, 'verification_required', 'Alias verification requires the relay operator key.');
+  async verify(id: string, verificationKey: string | null): Promise<JSONRecord> {
+    if (!this.env.ALIAS_VERIFICATION_KEY || verificationKey !== this.env.ALIAS_VERIFICATION_KEY) {
+      throw new APIError(403, 'verification_required', 'Operator verification is required.');
     }
 
     const result = await this.env.DB.prepare(
-      `UPDATE agent_aliases
-          SET verified_at = COALESCE(verified_at, ?)
-        WHERE id = ? AND org_id = ? AND work_address_id = ? AND revoked_at IS NULL`,
-    ).bind(
-      new Date().toISOString(),
-      aliasId,
-      this.identity.organization.id,
-      this.identity.work.id,
-    ).run();
+      `UPDATE agent_aliases SET verified_at = COALESCE(verified_at, ?)
+        WHERE id = ? AND org_id = ? AND session_id = ? AND revoked_at IS NULL`,
+    ).bind(new Date().toISOString(), id, this.identity.organizationID,
+      this.identity.sessionID).run();
 
-    if (!result.meta.changes) {
-      throw new APIError(404, 'alias_not_found', 'Alias does not belong to the current work identity.');
+    if (result.meta.changes !== 1) {
+      throw new APIError(404, 'alias_not_found', 'Alias is unavailable to this Session.');
     }
 
-    return { id: aliasId, verified: true };
+    return { id, verified: true };
   }
 
-  async revoke(aliasId: string): Promise<JSONRecord> {
+  async revoke(id: string): Promise<JSONRecord> {
     const result = await this.env.DB.prepare(
       `UPDATE agent_aliases SET revoked_at = ?
-        WHERE id = ? AND org_id = ? AND work_address_id = ? AND revoked_at IS NULL`,
-    ).bind(
-      new Date().toISOString(),
-      aliasId,
-      this.identity.organization.id,
-      this.identity.work.id,
-    ).run();
+        WHERE id = ? AND org_id = ? AND session_id = ? AND revoked_at IS NULL`,
+    ).bind(new Date().toISOString(), id, this.identity.organizationID,
+      this.identity.sessionID).run();
 
-    if (!result.meta.changes) {
-      throw new APIError(404, 'alias_not_found', 'Alias does not belong to the current work identity.');
+    if (result.meta.changes !== 1) {
+      throw new APIError(404, 'alias_not_found', 'Alias is unavailable to this Session.');
     }
 
-    return { id: aliasId, revoked: true };
+    return { id, revoked: true };
   }
 
-  async resolve(target: Recipient, addressClient: AddressClient): Promise<Address> {
-    if (typeof target === 'string') {
-      return this.identity.requireSameOrganization(await addressClient.resolve(target));
+  async resolve(target: Recipient): Promise<ResolvedSession> {
+    const session = typeof target === 'string'
+      ? await this.address.resolve(target)
+      : await this.resolveExternal(target);
+
+    if (session.canonical.split('/')[0] !== this.identity.organizationSlug) {
+      throw new APIError(403, 'cross_organization_unsupported', 'Recipient is outside the Organization.');
     }
 
-    const provider = AliasService.normalizeProvider(target.provider);
-    const externalId = AliasService.normalizeExternalId(provider, target.externalId);
+    return session;
+  }
 
+  private async resolveExternal(target: ExternalAlias): Promise<ResolvedSession> {
+    const provider = AliasService.normalizeProvider(target.provider);
+    const externalID = AliasService.normalizeExternalID(provider, target.externalId);
     const alias = await this.env.DB.prepare(
-      `SELECT work_address_id, canonical_address
-         FROM agent_aliases
+      `SELECT session_id AS sessionID FROM agent_aliases
         WHERE org_id = ? AND provider = ? AND external_id = ?
           AND verified_at IS NOT NULL AND revoked_at IS NULL`,
-    ).bind(this.identity.organization.id, provider, externalId)
-      .first<{ work_address_id: string; canonical_address: string }>();
+    ).bind(this.identity.organizationID, provider, externalID)
+      .first<{ sessionID: string }>();
 
     if (!alias) {
-      throw new APIError(404, 'alias_not_verified', 'No verified agent identity is registered for this alias.');
+      throw new APIError(404, 'alias_not_verified', 'Recipient has no verified external alias.');
     }
 
-    const address = await addressClient.resolve(alias.canonical_address);
-    const resolved = this.identity.requireSameOrganization(address);
-
-    if (resolved.id !== alias.work_address_id) {
-      throw new APIError(409, 'stale_alias', 'Alias no longer identifies the registered active work address.');
-    }
-
-    return resolved;
+    return this.address.session(alias.sessionID);
   }
 }
