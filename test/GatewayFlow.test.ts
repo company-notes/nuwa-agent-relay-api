@@ -34,7 +34,7 @@ class GatewayScenario {
   }
 
   async send(sender: 'a' | 'c', body: string) {
-    const sent = await this.client.call('token-' + sender, 'POST',
+    const sent = await this.client.call(sender === 'a' ? 'token-a' : 'token-c', 'POST',
       '/v2/messages?session_id=session-' + sender, {
         to: 'relay-test-org/beta/reviewer',
         body,
