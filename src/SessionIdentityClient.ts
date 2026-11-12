@@ -1,0 +1,136 @@
+import type { Env } from './Env';
+import { APIError } from './HTTP';
+
+export type SessionIdentity = {
+  organizationID: string;
+  organizationSlug: string;
+  agentID: string;
+  sessionID: string;
+  canonicalAddress: string;
+};
+
+export type ResolvedSession = {
+  id: string;
+  agentId: string;
+  canonical: string;
+};
+
+type AccountStatus = {
+  organization: { id: string; slug: string } | null;
+};
+
+type Lease = { expiresAt: string };
+
+export class SessionIdentityClient {
+  constructor(
+    private readonly addressURL: Env['ADDRESS_API_URL'],
+    private readonly authorization: string,
+    private readonly requester: typeof fetch = fetch,
+  ) {
+    const origin = new URL(addressURL);
+
+    if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search ||
+        origin.hash || origin.username || origin.password) {
+      throw new APIError(503, 'address_configuration_invalid', 'Agent Address requires an HTTPS origin.');
+    }
+  }
+
+  private async request<T>(method: 'GET' | 'POST', path: string, body?: Record<string, string>): Promise<T> {
+    const response = await this.requester(new URL(path, this.addressURL), {
+      method,
+      headers: {
+        authorization: this.authorization,
+        accept: 'application/json',
+        ...(body ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (response.status >= 300 && response.status < 400) {
+      throw new APIError(502, 'address_unexpected_redirect', 'Agent Address unexpectedly redirected.');
+    }
+
+    if (!response.ok) {
+      const status = [401, 403, 404, 409].includes(response.status) ? response.status : 502;
+      throw new APIError(status, 'address_authorization_failed', 'Agent Address rejected the operation.');
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address returned invalid JSON.');
+    }
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+        !('ok' in payload) || payload.ok !== true || !('data' in payload)) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address returned an invalid response.');
+    }
+
+    return payload.data as T;
+  }
+
+  async resolve(address: string): Promise<ResolvedSession> {
+    const session = await this.request<ResolvedSession>(
+      'GET',
+      '/v2/account/resolve?address=' + encodeURIComponent(address),
+    );
+
+    if (!session || typeof session.id !== 'string' || typeof session.agentId !== 'string' ||
+        typeof session.canonical !== 'string' || session.canonical.split('/').length !== 3) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address returned an invalid Session.');
+    }
+
+    return session;
+  }
+
+  async authorize(sessionID: string, runtimeToken: string): Promise<SessionIdentity> {
+    if (!sessionID || !runtimeToken) {
+      throw new APIError(400, 'session_capability_required', 'Session ID and Runtime capability are required.');
+    }
+
+    const status = await this.request<AccountStatus>('GET', '/v2/account/status');
+    const organization = status?.organization;
+
+    if (!organization || typeof organization.id !== 'string' ||
+        typeof organization.slug !== 'string') {
+      throw new APIError(403, 'organization_required', 'No authorized Organization is available.');
+    }
+
+    const session = await this.request<ResolvedSession>(
+      'GET',
+      '/v2/account/sessions/' + encodeURIComponent(sessionID),
+    );
+
+    if (!session || session.id !== sessionID || typeof session.agentId !== 'string' ||
+        typeof session.canonical !== 'string' ||
+        session.canonical.split('/').length !== 3 ||
+        session.canonical.split('/')[0] !== organization.slug) {
+      throw new APIError(502, 'address_response_invalid', 'Session identity does not match its Organization.');
+    }
+
+    // Heartbeat atomically proves current Runtime ownership and renews its lease.
+    // OAuth membership and knowledge of a Session ID alone never grant execution rights.
+    const lease = await this.request<Lease>(
+      'POST',
+      '/v2/account/sessions/' + encodeURIComponent(sessionID) + '/heartbeat',
+      { runtimeToken },
+    );
+
+    if (!lease || typeof lease.expiresAt !== 'string' ||
+        !Number.isFinite(Date.parse(lease.expiresAt)) ||
+        Date.parse(lease.expiresAt) <= Date.now()) {
+      throw new APIError(502, 'address_response_invalid', 'Runtime lease was not renewed.');
+    }
+
+    return {
+      organizationID: organization.id,
+      organizationSlug: organization.slug,
+      agentID: session.agentId,
+      sessionID: session.id,
+      canonicalAddress: session.canonical,
+    };
+  }
+}
