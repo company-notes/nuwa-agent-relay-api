@@ -31,8 +31,8 @@ class AddressScenario {
       });
     }
 
-    if (url.pathname === '/v2/account/sessions/' + this.sessionID) {
-      if (init?.method === 'POST') {
+    if (url.pathname === '/v2/account/sessions/' + this.sessionID + '/heartbeat' &&
+        init?.method === 'POST') {
         if (requestBody?.runtimeToken !== this.authorizedToken) {
           return Response.json({ ok: false, error: { code: 'runtime_not_owner' } }, { status: 409 });
         }
@@ -41,8 +41,9 @@ class AddressScenario {
           ok: true,
           data: { expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() },
         });
-      }
+    }
 
+    if (url.pathname === '/v2/account/sessions/' + this.sessionID) {
       return Response.json({
         ok: true,
         data: {
