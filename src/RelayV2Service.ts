@@ -212,7 +212,7 @@ export class RelayV2Service {
         WHERE t.id = ? AND t.org_id = ?`,
     ).bind(threadID, this.identity.organizationID).first<ThreadRow>();
 
-    const recipientSessionID = row?.accepted_session_id ?? row?.recipient_session_id;
+    const recipientSessionID = row?.acceptedSessionID ?? row?.recipientSessionID;
 
     if (!row || (row.senderSessionID !== this.identity.sessionID &&
         recipientSessionID !== this.identity.sessionID)) {
