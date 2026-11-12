@@ -162,3 +162,20 @@ No MailTrigger, production Worker, D1, OAuth KV or external Bot is modified.
 - Bot-run proof, cross-platform client adapters, attachments authorization.
 - Context compaction, memory, project classification, Semantic Router.
 - V1 Host/Work compatibility.
+
+## Deploying to an existing V2 D1
+
+The deployed `migrations/0001_init.sql` is immutable. Apply
+`migrations/0002_gateway.sql` additively to the existing Relay V2 D1.
+Existing Message, Thread, Handoff, mailbox, Wake and MailTrigger records
+are preserved. Before migration, `GuardV2D1.mjs` accepts the complete V2
+schema; after migration `--require-migrated` requires all three Gateway
+tables. Partial Gateway tables, legacy Host/Work and unknown tables are denied.
+Historical messages with no verified canonical sender address must never be
+expanded into a full Gateway Dispatch event.
+
+The production Gateway API is opt-in: no Session acquires a Gateway route
+automatically, and existing minimal V2 Wake event listeners remain supported.
+Do not treat an HTTP 2xx, a confirmed native Thread binding, or Relay receipt
+as proof that the target Agent completed work. The separate OpenMausBot
+native execution observer remains an explicit external acceptance gate.
