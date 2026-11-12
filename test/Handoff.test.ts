@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Agent handoff flow', () => {
-  it('requires the same work identity for threads and permits host-targeted handoff acceptance', async () => {
+  it('keeps Session replies isolated and permits Agent-targeted handoff acceptance', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     await client.provisionAgentMailboxes();
@@ -17,7 +17,7 @@ describe('Agent handoff flow', () => {
     expect(handoff.status).toBe(201);
     const handoffId = handoff.body.data.id as string;
 
-    const waiting = await client.call('token-b', 'GET', '/v2/host-inbox?session_id=session-b');
+    const waiting = await client.call('token-b', 'GET', '/v2/agent-inbox?session_id=session-b');
     expect(waiting.status).toBe(200);
     expect(waiting.body.data[0].body).toBe('Please sign the attached artifacts.');
 
@@ -54,10 +54,10 @@ describe('Agent handoff flow', () => {
     expect(unauthorized.status).toBe(401);
 
     const mismatchedIdentity = await client.call('token-a', 'GET', '/v2/inbox?session_id=session-b');
-    expect(mismatchedIdentity.status).toBe(403);
+    expect(mismatchedIdentity.status).toBe(409);
   });
 
-  it('can retry accepting a host handoff after a MailTrigger delivery failure', async () => {
+  it('can retry accepting an Agent handoff after a MailTrigger delivery failure', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     await client.provisionAgentMailboxes();
@@ -77,7 +77,7 @@ describe('Agent handoff flow', () => {
 
     expect(failed.status, 'MailTrigger failure must be surfaced').toBe(502);
 
-    const pending = await client.call('token-b', 'GET', '/v2/host-inbox?session_id=session-b');
+    const pending = await client.call('token-b', 'GET', '/v2/agent-inbox?session_id=session-b');
     expect(pending.body.data, 'A failed acknowledgement must not permanently consume the handoff').toHaveLength(1);
 
     const retry = await client.call(
@@ -85,6 +85,6 @@ describe('Agent handoff flow', () => {
       `/v2/handoffs/${handoff.body.data.id}/accept?session_id=session-b`,
     );
 
-    expect(retry.status, 'The same host must be able to retry acceptance').toBe(201);
+    expect(retry.status, 'The same Session must be able to retry acceptance').toBe(201);
   });
 });
