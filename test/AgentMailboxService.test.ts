@@ -5,8 +5,8 @@ import { AgentMailboxService } from '../src/AgentMailboxService';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Agent mailboxes use the existing MailTrigger transport', () => {
+  const client = new RelayTestClient();
   it('provisions once per Agent and reuses the same mailbox for all of its Sessions', async () => {
-    const client = new RelayTestClient();
     client.installExternalTestTransport();
 
     const mailboxes = new AgentMailboxService(env);
@@ -29,7 +29,6 @@ describe('Agent mailboxes use the existing MailTrigger transport', () => {
   });
 
   it('isolates different Agents without any MailTrigger API changes', async () => {
-    const client = new RelayTestClient();
     client.installExternalTestTransport();
 
     const mailboxes = new AgentMailboxService(env);
