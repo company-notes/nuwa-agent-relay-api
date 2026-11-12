@@ -160,11 +160,12 @@ export async function runSmoke(config = configuration()) {
     throw new Error('Recipient Session read acknowledgement is incomplete.');
   }
 
-  await call(config.relay, b, '/v2/threads/' + message.threadId + '/messages', {
+  const reply = await call(config.relay, b, '/v2/threads/' + message.threadId + '/messages', {
     method: 'POST',
     body: { body: 'Staging Session B-to-A reply ' + probe },
   });
 
+  await requireArrival(config, b, reply.id);
   const history = await call(config.relay, a, '/v2/threads/' + message.threadId);
 
   if (!history.some((item) => item.body === 'Staging Session B-to-A reply ' + probe)) {
@@ -185,14 +186,16 @@ export async function runSmoke(config = configuration()) {
     throw new Error('Agent inbox did not contain the verified Handoff.');
   }
 
-  await call(config.relay, b, '/v2/handoffs/' + handoff.id + '/accept', {
+  const acceptance = await call(config.relay, b, '/v2/handoffs/' + handoff.id + '/accept', {
     method: 'POST',
   });
-  await call(config.relay, b, '/v2/handoffs/' + handoff.id + '/reply', {
+  await requireArrival(config, b, acceptance.id);
+  const handoffReply = await call(config.relay, b, '/v2/handoffs/' + handoff.id + '/reply', {
     method: 'POST',
     body: { body: 'Staging Handoff accepted by B ' + probe },
   });
 
+  await requireArrival(config, b, handoffReply.id);
   const acceptedHistory = await call(config.relay, a, '/v2/threads/' + handoff.threadId);
 
   if (!acceptedHistory.some((item) => item.body === 'Staging Handoff accepted by B ' + probe)) {
