@@ -123,7 +123,8 @@ export class GatewayFirstContacts {
     if (completed.meta.changes !== 1) {
       const current = await this.get(senderSessionID);
 
-      if (current?.status !== GatewayFirstContactStatus.Completed || current.nativeThreadID !== nativeThreadID) {
+      if (current?.status !== GatewayFirstContactStatus.Completed ||
+          current.nativeThreadID !== nativeThreadID) {
         throw new APIError(409, 'gateway_first_contact_conflict',
           'The native Thread confirmation changed during submission.');
       }
