@@ -48,7 +48,7 @@ describe('Self-service signed Wake registration', () => {
       '/v2/wake-subscription?session_id=session-b');
     expect(activated.body.data).toMatchObject({
       enabled: true,
-      callbackAgent: 'agent-hook.example.com',
+      callbackHost: 'agent-hook.example.com',
       authMode: 'hmac',
       pending: null,
     });
@@ -129,7 +129,7 @@ describe('Self-service signed Wake registration', () => {
     const now = await client.call('token-b', 'GET',
       '/v2/wake-subscription?session_id=session-b');
     expect(JSON.stringify(now.body)).not.toContain('/hooks/');
-    expect(now.body.data.callbackAgent).toBe('agent-demo.ngrok-free.app');
+    expect(now.body.data.callbackHost).toBe('agent-demo.ngrok-free.app');
 
     const sent = await client.call('token-a', 'POST',
       '/v2/messages?session_id=session-a', {
