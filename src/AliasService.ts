@@ -168,16 +168,23 @@ export class AliasService {
     const provider = AliasService.normalizeProvider(target.provider);
     const externalID = AliasService.normalizeExternalID(provider, target.externalId);
     const alias = await this.env.DB.prepare(
-      `SELECT session_id AS sessionID FROM agent_aliases
+      `SELECT agent_id AS agentID, session_id AS sessionID FROM agent_aliases
         WHERE org_id = ? AND provider = ? AND external_id = ?
           AND verified_at IS NOT NULL AND revoked_at IS NULL`,
     ).bind(this.identity.organizationID, provider, externalID)
-      .first<{ sessionID: string }>();
+      .first<{ agentID: string; sessionID: string }>();
 
     if (!alias) {
       throw new APIError(404, 'alias_not_verified', 'Recipient has no verified external alias.');
     }
 
-    return this.address.session(alias.sessionID);
+    const session = await this.address.session(alias.sessionID);
+
+    if (session.agentId !== alias.agentID) {
+      throw new APIError(409, 'alias_identity_mismatch',
+        'Verified alias no longer identifies its registered Agent.');
+    }
+
+    return session;
   }
 }
