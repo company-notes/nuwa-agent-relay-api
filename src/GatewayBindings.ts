@@ -294,7 +294,7 @@ export class GatewayBindings {
       }
 
       await GatewayFirstContacts.reserve(env, message.organizationID, message.senderSessionID,
-        message.recipientSessionID, message.id);
+        message.recipientWakeSessionID, message.id);
 
       return { ...dispatch, gatewayAction: 'create_native_thread' };
     }
