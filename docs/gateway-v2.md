@@ -18,11 +18,17 @@ Session ID** to one native Thread ID. Binding records are scoped to the receivin
 Organization and Session and may be reset without touching anyone else's route.
 The platform Bot ID and native Thread ID are never accepted from a message body.
 
-**The first native conversation must already exist.** Until the receiver has
-recorded the real native Thread ID, explicit dispatch fails closed and Wake retries.
-Do not replace a missing binding with `standing` or a newly created Bot chat.
-The current prototype does not allocate native threads, or issue a receipt for a
-platform-side tool invocation.
+For explicit mode, `firstContactMode` is either `manual` (default) or
+`automatic` (opt in). In manual mode a native conversation must already exist
+and a missing mapping fails closed. In automatic mode Relay reserves exactly one
+first-contact Message per sender and emits `gatewayAction: "create_native_thread"`;
+a recipient-authorized **private** confirmation must then register the actual
+native Thread ID before later messages can flow. A second Webhook never opens
+another native Thread during that reservation.
+
+See [First-contact Gateway protocol](gateway-first-contact-v2.md) for lifecycle,
+race handling, operator recovery, example Prompt and security boundaries.
+The Relay does not run the platform itself or certify native tool execution.
 
 ## V2 management REST
 
@@ -33,12 +39,15 @@ never grants a route write.
 
 | Method and resource | Meaning |
 | --- | --- |
-| `PUT /v2/gateway-routes/current` | Configure current recipient Session: `{ "recipientBotID": "...", "threadMode": "explicit" \| "platform" }` |
+| `PUT /v2/gateway-routes/current` | Configure recipient Session: `{ "recipientBotID": "...", "threadMode": "explicit" | "platform", "firstContactMode": "manual" | "automatic" }` (automatic only with explicit) |
 | `GET /v2/gateway-routes/current` | Retrieve current Session's route (no Webhook secret) |
 | `DELETE /v2/gateway-routes/current` | Unconfigure route and clear its sender conversation mappings |
 | `PUT /v2/gateway-conversations/{senderSessionID}` | Explicit mode only: `{ "nativeThreadID": "..." }`; assert sender belongs to the same Organization |
 | `GET /v2/gateway-conversations` | List the current recipient Session's conversation mappings |
 | `DELETE /v2/gateway-conversations/{senderSessionID}` | Reset only that sender's native conversation mapping |
+| `GET /v2/gateway-first-contacts` | View pending first-contact reservations |
+| `PUT /v2/gateway-first-contacts/{senderSessionID}` | Recipient-authorized confirmation with `{ "messageID": "...", "nativeThreadID": "..." }` |
+| `DELETE /v2/gateway-first-contacts/{senderSessionID}` | Operator cancel unresolved first contact after inspecting native tool receipt |
 
 A configured route **does not** grant the sender access to the recipient Session.
 It only supplies the last hop after Relay's existing send, receipt, and Wake
@@ -84,21 +93,23 @@ the last-hop tool may need its own idempotency handling.
 
 ## OpenMausBot: proven Agent Gateway profile
 
-1. On the receiving Session, configure `explicit` with the real internal
-   Cosmo Bot ID.
-2. First use OpenMausBot's native Bot coordination to create a conversation.
-   Confirm the resulting **actual Cosmo Bot-to-Bot Thread ID** in the UI/tool
-   result; do not use a Relay Thread ID or a session ID.
-3. Register the `senderSessionID → nativeThreadID` mapping using the
-   recipient Session's authorized V2 endpoint.
-4. Register and verify that Session's Wake subscription to the Gateway
-   Automation's authenticated Webhook. Native OpenMausBot Webhooks can start
-   a Gateway Agent run; the Gateway Agent uses
-   `coordinate_bots(bot_ids=[recipientBotID], thread=recipientPlatformThreadID,
-   reply="none", message=...)` exactly once.
-5. To restart one correspondence, create and verify a new native conversation,
-   then replace the one sender binding. Do not delete the original Relay Thread
-   or anyone else's native conversation.
+1. The receiving Session configures `explicit`, the real internal Cosmo Bot ID,
+   and `firstContactMode: "automatic"` for initial staging.
+2. Register and verify the Session's signed Wake callback to its OpenMausBot
+   Gateway Automation Webhook.
+3. A first-contact Event carries `gatewayAction: "create_native_thread"`;
+   the Gateway calls `coordinate_bots(thread="new", reply="none")` **once**.
+   Keep the returned actual native Thread ID.
+4. A separate trusted receiver/authorized operator confirms
+   `messageID + nativeThreadID` with `PUT /v2/gateway-first-contacts/{senderSessionID}`
+   using the receiving Session's **private** OAuth and Runtime capability,
+   never those inside the Gateway Prompt. Use the staging helper documented
+   in [First-contact Gateway protocol](gateway-first-contact-v2.md) until a
+   real OpenMausBot run-result observer is implemented.
+5. Later verified Events carry `recipientPlatformThreadID`; Gateway uses
+   `coordinate_bots(thread=that exact ID, reply="none")` once.
+6. Resetting one sender deletes only their binding; subsequent first contact
+   reserves a new native Thread. Other senders remain unaffected.
 
 A safe **Gateway Agent instruction** for the verified V2 event is:
 
@@ -144,7 +155,9 @@ No MailTrigger, production Worker, D1, OAuth KV or external Bot is modified.
 ### Explicitly out of scope
 
 - Automatic creation of recipient Agent Address Sessions per sender.
-- Automatic creation/discovery of native OpenMausBot work threads.
+- Provider-specific automatic **receipt collection and private confirmation**;
+  Relay can now reserve first contact, but OpenMausBot still needs a trusted
+  adapter to report its actual created work Thread automatically.
 - Multi-organization Gateway management / shared physical Wake Target registry.
 - Bot-run proof, cross-platform client adapters, attachments authorization.
 - Context compaction, memory, project classification, Semantic Router.
