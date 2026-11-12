@@ -1,6 +1,6 @@
 import { AliasService } from './AliasService';
 import type { Env } from './Env';
-import { GatewayBindings, GatewayThreadMode } from './GatewayBindings';
+import { GatewayBindings, GatewayFirstContactMode, GatewayThreadMode } from './GatewayBindings';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { MailReceipt } from './MailReceipt';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
@@ -174,6 +174,7 @@ export class RelayAPI {
         return HTTP.response(await bindings.setRoute(
           HTTP.requiredString(data, 'recipientBotID', 192),
           HTTP.requiredString(data, 'threadMode', 32) as GatewayThreadMode,
+          (HTTP.optionalString(data, 'firstContactMode', 32) ?? 'manual') as GatewayFirstContactMode,
         ));
       }
 
@@ -184,6 +185,28 @@ export class RelayAPI {
 
     if (path === '/v2/gateway-conversations' && request.method === 'GET') {
       return HTTP.response(await bindings.getConversations());
+    }
+
+    if (path === '/v2/gateway-first-contacts' && request.method === 'GET') {
+      return HTTP.response(await bindings.getFirstContacts());
+    }
+
+    const firstContactSender = RelayAPI.match(
+      path, /^\/v2\/gateway-first-contacts\/([^/]+)$/,
+    );
+
+    if (firstContactSender && request.method === 'PUT') {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(await bindings.confirmFirstContact(
+        firstContactSender,
+        HTTP.requiredString(data, 'messageID', 64),
+        HTTP.requiredString(data, 'nativeThreadID', 192),
+      ));
+    }
+
+    if (firstContactSender && request.method === 'DELETE') {
+      return HTTP.response(await bindings.cancelFirstContact(firstContactSender));
     }
 
     const senderSessionID = RelayAPI.match(
@@ -341,9 +364,11 @@ export default {
       const response = await new RelayAPI(env).handle(request);
       response.headers.set('access-control-allow-origin', '*');
 
-      if (request.method === 'POST' &&
-        new URL(request.url).pathname === '/v1/mailtrigger/receipt' &&
-        response.ok && context) {
+      const path = new URL(request.url).pathname;
+
+      if (response.ok && context &&
+          ((request.method === 'POST' && path === '/v1/mailtrigger/receipt') ||
+            (request.method === 'PUT' && path.startsWith('/v2/gateway-first-contacts/')))) {
         context.waitUntil(WakeService.dispatchDue(env));
       }
 
