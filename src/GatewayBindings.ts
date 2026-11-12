@@ -1,17 +1,15 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
-import { GatewayFirstContacts, GatewayFirstContactStatus } from './GatewayFirstContacts';
+import { GatewayFirstContacts } from './GatewayFirstContacts';
+import { GatewayFirstContactMode, GatewayFirstContactStatus, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 
-export enum GatewayThreadMode {
-  Explicit = 'explicit',
-  Platform = 'platform',
-}
-
-export enum GatewayFirstContactMode {
-  Manual = 'manual',
-  Automatic = 'automatic',
-}
+type GatewayRouteRow = {
+  recipientBotID: string;
+  recipientCanonicalAddress: string;
+  threadMode: string;
+  firstContactMode: string;
+};
 
 type GatewayRoute = {
   recipientBotID: string;
@@ -40,13 +38,24 @@ export class GatewayBindings {
     return value;
   }
 
+  private static readRoute(row: GatewayRouteRow): GatewayRoute {
+    return {
+      recipientBotID: row.recipientBotID,
+      recipientCanonicalAddress: row.recipientCanonicalAddress,
+      threadMode: GatewayModeCodec.readThreadMode(row.threadMode),
+      firstContactMode: GatewayModeCodec.readFirstContactMode(row.firstContactMode),
+    };
+  }
+
   private async route(): Promise<GatewayRoute | null> {
-    return this.env.DB.prepare(
+    const row = await this.env.DB.prepare(
       `SELECT recipient_bot_id AS recipientBotID, thread_mode AS threadMode,
               first_contact_mode AS firstContactMode,
               recipient_canonical_address AS recipientCanonicalAddress
          FROM gateway_routes WHERE org_id = ? AND recipient_session_id = ?`,
-    ).bind(this.identity.organizationID, this.identity.sessionID).first<GatewayRoute>();
+    ).bind(this.identity.organizationID, this.identity.sessionID).first<GatewayRouteRow>();
+
+    return row ? GatewayBindings.readRoute(row) : null;
   }
 
   private firstContacts(): GatewayFirstContacts {
@@ -55,15 +64,15 @@ export class GatewayBindings {
 
   async getRoute(): Promise<{
     recipientBotID: string;
-    threadMode: GatewayThreadMode;
-    firstContactMode: GatewayFirstContactMode;
+    threadMode: string;
+    firstContactMode: string;
   } | null> {
     const row = await this.route();
 
     return row ? {
       recipientBotID: row.recipientBotID,
-      threadMode: row.threadMode,
-      firstContactMode: row.firstContactMode,
+      threadMode: GatewayModeCodec.writeThreadMode(row.threadMode),
+      firstContactMode: GatewayModeCodec.writeFirstContactMode(row.firstContactMode),
     } : null;
   }
 
@@ -119,10 +128,16 @@ export class GatewayBindings {
          thread_mode = excluded.thread_mode,
          first_contact_mode = excluded.first_contact_mode`,
     ).bind(this.identity.organizationID, this.identity.agentID, this.identity.sessionID,
-      this.identity.canonicalAddress, recipientBotID, threadMode, firstContactMode,
+      this.identity.canonicalAddress, recipientBotID,
+      GatewayModeCodec.writeThreadMode(threadMode),
+      GatewayModeCodec.writeFirstContactMode(firstContactMode),
       new Date().toISOString()).run();
 
-    return { recipientBotID, threadMode, firstContactMode };
+    return {
+      recipientBotID,
+      threadMode: GatewayModeCodec.writeThreadMode(threadMode),
+      firstContactMode: GatewayModeCodec.writeFirstContactMode(firstContactMode),
+    };
   }
 
   async deleteRoute() {
@@ -266,11 +281,13 @@ export class GatewayBindings {
          FROM gateway_routes
         WHERE org_id = ? AND recipient_session_id = ? AND recipient_agent_id = ?`,
     ).bind(message.organizationID, message.recipientSessionID,
-      message.recipientAgentID).first<GatewayRoute>();
+      message.recipientAgentID).first<GatewayRouteRow>();
 
     if (!route) {
       return minimal;
     }
+
+    const storedRoute = GatewayBindings.readRoute(route);
 
     if (!message.senderCanonicalAddress) {
       throw new APIError(409, 'gateway_sender_identity_unavailable',
@@ -288,11 +305,11 @@ export class GatewayBindings {
       body: message.body,
     };
 
-    if (route.threadMode === GatewayThreadMode.Platform) {
+    if (storedRoute.threadMode === GatewayThreadMode.Platform) {
       return dispatch;
     }
 
-    if (route.threadMode !== GatewayThreadMode.Explicit) {
+    if (storedRoute.threadMode !== GatewayThreadMode.Explicit) {
       throw new APIError(500, 'gateway_route_invalid', 'Stored Gateway thread mode is invalid.');
     }
 
@@ -304,7 +321,7 @@ export class GatewayBindings {
       .first<NativeConversation>();
 
     if (!conversation) {
-      if (route.firstContactMode !== GatewayFirstContactMode.Automatic) {
+      if (storedRoute.firstContactMode !== GatewayFirstContactMode.Automatic) {
         throw new APIError(409, 'gateway_conversation_unbound',
           'No recipient-authorized native Thread binding exists for this sender.');
       }

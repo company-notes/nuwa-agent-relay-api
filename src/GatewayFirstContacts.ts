@@ -1,10 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
-
-export enum GatewayFirstContactStatus {
-  Pending = 'pending',
-  Completed = 'completed',
-}
+import { GatewayFirstContactStatus, GatewayModeCodec } from './GatewayModeCodec';
 
 type FirstContactRow = {
   messageID: string;
@@ -33,8 +29,13 @@ export class GatewayFirstContacts {
   }
 
   async get(senderSessionID: string): Promise<FirstContactRow | null> {
-    return this.statement().bind(this.organizationID, senderSessionID,
-      this.recipientSessionID).first<FirstContactRow>();
+    const row = await this.statement().bind(this.organizationID, senderSessionID,
+      this.recipientSessionID).first<Omit<FirstContactRow, 'status'> & { status: string }>();
+
+    return row ? {
+      ...row,
+      status: GatewayModeCodec.readFirstContactStatus(row.status),
+    } : null;
   }
 
   async pending(): Promise<{ senderSessionID: string; messageID: string; createdAt: string }[]> {

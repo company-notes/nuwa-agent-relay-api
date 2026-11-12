@@ -1,6 +1,7 @@
 import { AliasService } from './AliasService';
 import type { Env } from './Env';
-import { GatewayBindings, GatewayFirstContactMode, GatewayThreadMode } from './GatewayBindings';
+import { GatewayBindings } from './GatewayBindings';
+import { GatewayModeCodec } from './GatewayModeCodec';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { MailReceipt } from './MailReceipt';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
@@ -173,8 +174,10 @@ export class RelayAPI {
 
         return HTTP.response(await bindings.setRoute(
           HTTP.requiredString(data, 'recipientBotID', 192),
-          HTTP.requiredString(data, 'threadMode', 32) as GatewayThreadMode,
-          (HTTP.optionalString(data, 'firstContactMode', 32) ?? 'manual') as GatewayFirstContactMode,
+          GatewayModeCodec.readThreadMode(HTTP.requiredString(data, 'threadMode', 32)),
+          GatewayModeCodec.readFirstContactMode(
+            HTTP.optionalString(data, 'firstContactMode', 32) ?? 'manual',
+          ),
         ));
       }
 
