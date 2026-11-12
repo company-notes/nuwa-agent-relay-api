@@ -23,7 +23,7 @@ describe('automatic managed SMTP provisioning', () => {
         ruleType: 1,
         user: 31,
       });
-      const address = 'nar-host' + (route.mailbox === 1 ? 'a' : 'b') + '@relay-test.example';
+      const address = 'nar-agent000' + (route.mailbox === 1 ? 'a' : 'b') + '@relay-test.example';
       const expression = new RegExp(mailbox?.value as string);
 
       expect(mailbox?.value).toBe('^' + address.replace('.', '\\.') + '$');
