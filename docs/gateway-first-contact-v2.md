@@ -138,12 +138,12 @@ secret manager (never paste their values into chat or issue tracker):
 - `NUWA_GATEWAY_OAUTH_TOKEN`: OAuth credential authorized for the receiving Session
 - `NUWA_GATEWAY_RUNTIME_TOKEN`: its active, private Runtime capability
 - `NUWA_GATEWAY_RECIPIENT_SESSION_ID`: immutable recipient Session ID
+- `NUWA_GATEWAY_RELAY_ORIGIN`: exact trusted HTTPS Relay V2 staging origin
 
 Run:
 
 ```sh
 node scripts/GatewayFirstContactConfirm.mjs \
-  --relay-url https://your-relay-v2-staging.example.org \
   --sender-session-id <SENDER_SESSION_ID> \
   --message-id <INITIATING_MESSAGE_UUID> \
   --native-thread-id <ACTUAL_OPENMAUSBOT_WORK_THREAD_ID> \
