@@ -190,7 +190,7 @@ describe('automatic managed SMTP provisioning', () => {
     const client = new RelayTestClient();
     client.providerCreatesOriginRoutes = true;
     client.installExternalTestTransport();
-    await env.DB.prepare('DELETE FROM agent_mailboxes WHERE agent_id = ?').bind('agent-a').run();
+    await env.DB.prepare('DELETE FROM agent_mailboxes WHERE agent_id = ?').bind('agent-000a').run();
     client.failNextRouteDeletion = true;
 
     const failure = await client.call('token-a', 'POST',
@@ -202,7 +202,7 @@ describe('automatic managed SMTP provisioning', () => {
 
     const paired = await env.DB.prepare(
       'SELECT mailbox_id FROM agent_mailboxes WHERE agent_id = ?',
-    ).bind('agent-a').first();
+    ).bind('agent-000a').first();
     expect(paired).toBeNull();
 
     const retry = await client.call('token-a', 'POST',
@@ -291,7 +291,7 @@ describe('automatic managed SMTP provisioning', () => {
     client.installExternalTestTransport();
 
     // The isolated D1 database can retain an earlier test case's Agent.
-    await env.DB.prepare('DELETE FROM agent_mailboxes WHERE agent_id = ?').bind('agent-a').run();
+    await env.DB.prepare('DELETE FROM agent_mailboxes WHERE agent_id = ?').bind('agent-000a').run();
 
     client.failNextRouteCreation = true;
 
@@ -302,7 +302,7 @@ describe('automatic managed SMTP provisioning', () => {
 
     const pending = await env.DB.prepare(
       'SELECT COUNT(*) AS count FROM agent_mailboxes WHERE agent_id = ?',
-    ).bind('agent-a').first<{ count: number }>();
+    ).bind('agent-000a').first<{ count: number }>();
 
     expect(pending?.count).toBe(0);
 
