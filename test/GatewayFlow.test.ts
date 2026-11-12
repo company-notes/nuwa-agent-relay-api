@@ -24,11 +24,25 @@ class GatewayScenario {
     return this.client.call('token-b', method, path + '?session_id=session-b', data);
   }
 
-  async route(mode: 'explicit' | 'platform' = 'explicit') {
+  async route(
+    mode: 'explicit' | 'platform' = 'explicit',
+    firstContactMode: 'manual' | 'automatic' = 'manual',
+  ) {
     return this.callB('PUT', '/v2/gateway-routes/current', {
       recipientBotID: 'cosmo-bot-immutable',
       threadMode: mode,
+      firstContactMode,
     });
+  }
+
+  async complete(senderSessionID: string, messageID: string, nativeThreadID: string) {
+    return this.callB('PUT', '/v2/gateway-first-contacts/' + senderSessionID, {
+      messageID, nativeThreadID,
+    });
+  }
+
+  async pendingFirstContacts() {
+    return this.callB('GET', '/v2/gateway-first-contacts');
   }
 
   async bind(senderSessionID: string, nativeThreadID: string) {
@@ -177,4 +191,142 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     expect(dispatch.recipientBotID).toBe('cosmo-bot-immutable');
     expect(dispatch).not.toHaveProperty('recipientPlatformThreadID');
   });
+
+  it('automatically creates the first native conversation only once, then continues it', async () => {
+    const scenario = new GatewayScenario();
+    await scenario.setup();
+    expect((await scenario.route('explicit', 'automatic')).status).toBe(200);
+
+    const first = await scenario.send('a', 'First contact: remember the phrase 星河.');
+    const second = await scenario.send('a', 'Second contact: continue our first conversation.');
+    await scenario.deliver();
+
+    expect(scenario.client.wakeCallbacks, 'Only one initial native conversation may be opened').toHaveLength(1);
+    expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
+      messageID: first,
+      gatewayAction: 'create_native_thread',
+      senderSessionID: 'session-a',
+      recipientBotID: 'cosmo-bot-immutable',
+    });
+    expect(scenario.client.wakeCallbacks[0].body).not.toHaveProperty('recipientPlatformThreadID');
+    expect((await scenario.pendingFirstContacts()).body.data).toEqual([
+      expect.objectContaining({ senderSessionID: 'session-a', messageID: first }),
+    ]);
+
+    const waiting = await scenario.client.call('token-b', 'GET',
+      '/v2/wake-events?session_id=session-b');
+    expect(waiting.body.data.find((item: { messageId: string }) => item.messageId === second))
+      .toMatchObject({ status: 'pending', lastError: 'gateway_first_contact_pending' });
+
+    const incorrect = await scenario.complete('session-a', second, 'unexpected-thread');
+    expect(incorrect.status).toBe(409);
+
+    const confirmed = await scenario.complete('session-a', first, 'cosmo-native-thread-1');
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.data).toMatchObject({
+      nativeThreadID: 'cosmo-native-thread-1', alreadyConfirmed: false,
+    });
+
+    const again = await scenario.complete('session-a', first, 'cosmo-native-thread-1');
+    expect(again.status).toBe(200);
+    expect(again.body.data.alreadyConfirmed).toBe(true);
+
+    await scenario.deliver();
+
+    const secondDispatch = scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === second);
+    expect(secondDispatch?.body.recipientPlatformThreadID).toBe('cosmo-native-thread-1');
+    expect(secondDispatch?.body).not.toHaveProperty('gatewayAction');
+    expect(scenario.client.wakeCallbacks).toHaveLength(2);
+    expect((await scenario.pendingFirstContacts()).body.data).toEqual([]);
+  });
+
+  it('separates two simultaneous first-contact senders and protects the first native thread', async () => {
+    const scenario = new GatewayScenario();
+    await scenario.setup();
+    await scenario.route('explicit', 'automatic');
+
+    const a = await scenario.send('a', '小晴向 Cosmo 打招呼');
+    const c = await scenario.send('c', '徐哥向 Cosmo 打招呼');
+    await scenario.deliver();
+
+    expect(scenario.client.wakeCallbacks).toHaveLength(2);
+    expect(scenario.client.wakeCallbacks.map((entry) => entry.body.gatewayAction))
+      .toEqual(['create_native_thread', 'create_native_thread']);
+    expect((await scenario.pendingFirstContacts()).body.data).toHaveLength(2);
+
+    expect((await scenario.complete('session-a', a, 'thread-xiaoqing')).status).toBe(200);
+    expect((await scenario.complete('session-c', c, 'thread-xuge')).status).toBe(200);
+    expect((await scenario.complete('session-a', a, 'thread-xuge')).status).toBe(409);
+
+    await scenario.send('a', '小晴繼續說話');
+    await scenario.send('c', '徐哥繼續說話');
+    await scenario.deliver();
+    const continuing = scenario.client.wakeCallbacks.slice(2).map((entry) =>
+      ({ sender: entry.body.senderSessionID, thread: entry.body.recipientPlatformThreadID }));
+    expect(continuing).toEqual([
+      { sender: 'session-a', thread: 'thread-xiaoqing' },
+      { sender: 'session-c', thread: 'thread-xuge' },
+    ]);
+  });
+
+  it('requires recipient Runtime authorization to confirm or reset a pending first contact', async () => {
+    const scenario = new GatewayScenario();
+    await scenario.setup();
+    await scenario.route('explicit', 'automatic');
+
+    const first = await scenario.send('a', 'First contact should never grant sender control.');
+    await scenario.deliver();
+
+    const stolenSession = await scenario.client.call('token-a', 'PUT',
+      '/v2/gateway-first-contacts/session-a?session_id=session-b', {
+        messageID: first, nativeThreadID: 'attacker-thread',
+      });
+    expect(stolenSession.status).toBe(409);
+
+    const blindBinding = await scenario.bind('session-a', 'blind-untrusted-thread');
+    expect(blindBinding.status).toBe(409);
+
+    const incorrect = await scenario.complete('session-a', first, 'native-thread-verified');
+    expect(incorrect.status).toBe(200);
+    expect((await scenario.complete('session-a', first, 'another-thread')).status).toBe(409);
+
+    expect((await scenario.unbind('session-a')).status).toBe(200);
+    const next = await scenario.send('a', 'After reset, a new conversation must be created.');
+    await scenario.deliver();
+
+    const newEvent = scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === next);
+    expect(newEvent?.body.gatewayAction).toBe('create_native_thread');
+  });
+
+  it('never retries a reserved first-contact event into another new native thread', async () => {
+    const scenario = new GatewayScenario();
+    await scenario.setup();
+    await scenario.route('explicit', 'automatic');
+
+    const first = await scenario.send('a', 'Create exactly one platform conversation.');
+    await scenario.deliver();
+    expect(scenario.client.wakeCallbacks).toHaveLength(1);
+
+    // Simulate an ambiguous provider acknowledgment after the native work was sent.
+    await env.DB.prepare(
+      `UPDATE wake_events SET status = 'pending', next_attempt_at = ?
+        WHERE message_id = ?`,
+    ).bind(new Date(Date.now() - 1000).toISOString(), first).run();
+
+    await scenario.deliver();
+
+    expect(scenario.client.wakeCallbacks, 'Retry must not create another native conversation')
+      .toHaveLength(1);
+    const before = await scenario.client.call('token-b', 'GET',
+      '/v2/wake-events?session_id=session-b');
+    expect(before.body.data.find((item: { messageId: string }) => item.messageId === first))
+      .toMatchObject({ status: 'pending', lastError: 'gateway_first_contact_pending' });
+
+    await scenario.complete('session-a', first, 'resolved-native-thread');
+    await scenario.deliver();
+
+    expect(scenario.client.wakeCallbacks,
+      'Confirmation must not replay the already-forwarded bootstrap message').toHaveLength(1);
+  });
+
 });
