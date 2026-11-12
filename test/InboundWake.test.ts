@@ -318,7 +318,7 @@ describe('Real D1 MailTrigger receipt and Agent wake integrations', () => {
       row.messageId === sent.body.data.id)).toHaveLength(1);
     await WakeService.dispatchDue(env);
     const deliveredForMessage = client.wakeCallbacks.filter((item) =>
-      item.body.messageId === sent.body.data.id);
+      item.body.messageID === sent.body.data.id);
     expect(deliveredForMessage).toHaveLength(1);
   });
 
