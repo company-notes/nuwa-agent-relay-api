@@ -94,10 +94,10 @@ export class MailReceipt {
               recipient.mailbox_email AS recipientEmail
          FROM messages m
          JOIN threads t ON t.id = m.thread_id
-         JOIN paired_hosts sender ON sender.org_id = t.org_id
-                                 AND sender.host_address_id = m.sender_host_id
-         JOIN paired_hosts recipient ON recipient.org_id = t.org_id
-                                    AND recipient.host_address_id = m.recipient_host_id
+         JOIN agent_mailboxes sender ON sender.org_id = t.org_id
+                                 AND sender.agent_id = m.sender_agent_id
+         JOIN agent_mailboxes recipient ON recipient.org_id = t.org_id
+                                    AND recipient.agent_id = m.recipient_agent_id
         WHERE m.id = ? AND m.delivery_status IN ('pending', 'sent', 'failed')`,
     ).bind(messageId).first<{
       id: string;
@@ -120,7 +120,7 @@ export class MailReceipt {
 
   /**
    * Confirm a MailTrigger-side arrival without treating a send-API 201 as
-   * evidence. Updating the receipt and queuing a subscribed Work's wake are
+   * evidence. Updating the receipt and queuing a subscribed Session's wake are
    * one D1 transaction; a late subscription cannot replay old messages.
    */
   static async confirmArrival(
@@ -136,12 +136,12 @@ export class MailReceipt {
             AND received_at IS NULL`,
       ).bind(now, source, messageId),
       env.DB.prepare(
-        `INSERT OR IGNORE INTO wake_events (message_id, work_address_id, next_attempt_at)
-         SELECT m.id, s.work_address_id, ?
+        `INSERT OR IGNORE INTO wake_events (message_id, session_id, next_attempt_at)
+         SELECT m.id, s.session_id, ?
            FROM messages m
            JOIN threads t ON t.id = m.thread_id
            JOIN wake_subscriptions s
-             ON s.work_address_id = COALESCE(m.recipient_work_id, t.accepted_work_id)
+             ON s.session_id = COALESCE(m.recipient_session_id, t.accepted_session_id, t.notification_session_id)
           WHERE m.id = ? AND m.received_at IS NOT NULL
             AND s.created_at <= m.received_at`,
       ).bind(now, messageId),
@@ -167,10 +167,10 @@ export class MailReceipt {
       `SELECT m.id AS messageId, recipient.mailbox_id AS mailboxId
          FROM messages m
          JOIN threads t ON t.id = m.thread_id
-         JOIN paired_hosts recipient
-           ON recipient.org_id = t.org_id AND recipient.host_address_id = m.recipient_host_id
+         JOIN agent_mailboxes recipient
+           ON recipient.org_id = t.org_id AND recipient.agent_id = m.recipient_agent_id
          JOIN wake_subscriptions subscription
-           ON subscription.work_address_id = COALESCE(m.recipient_work_id, t.accepted_work_id)
+           ON subscription.session_id = COALESCE(m.recipient_session_id, t.accepted_session_id, t.notification_session_id)
         WHERE m.delivery_status = 'sent' AND m.received_at IS NULL
           AND subscription.created_at <= m.created_at
           AND m.created_at >= ?
@@ -211,7 +211,7 @@ export class MailReceipt {
   }
 
   async status(
-    messageId: string, organizationId: string, workId: string,
+    messageId: string, organizationId: string, sessionID: string,
     refreshArchive = false,
   ): Promise<Response> {
     const row = await this.env.DB.prepare(
@@ -220,11 +220,11 @@ export class MailReceipt {
               m.archive_checked_at AS archiveCheckedAt,
               recipient.mailbox_id AS archiveMailboxId
          FROM messages m JOIN threads t ON t.id = m.thread_id
-         LEFT JOIN paired_hosts recipient
-           ON recipient.org_id = t.org_id AND recipient.host_address_id = m.recipient_host_id
+         LEFT JOIN agent_mailboxes recipient
+           ON recipient.org_id = t.org_id AND recipient.agent_id = m.recipient_agent_id
         WHERE m.id = ? AND t.org_id = ?
-          AND (t.sender_work_id = ? OR t.recipient_work_id = ? OR t.accepted_work_id = ?)`,
-    ).bind(messageId, organizationId, workId, workId, workId).first<{
+          AND (t.sender_session_id = ? OR t.recipient_session_id = ? OR t.accepted_session_id = ?)`,
+    ).bind(messageId, organizationId, sessionID, sessionID, sessionID).first<{
       id: string;
       deliveryStatus: string;
       receivedAt: string | null;
@@ -234,7 +234,7 @@ export class MailReceipt {
     }>();
 
     if (!row) {
-      throw new APIError(404, 'message_not_found', 'Message does not belong to this work identity.');
+      throw new APIError(404, 'message_not_found', 'Message does not belong to this Session.');
     }
 
     if (refreshArchive && row.deliveryStatus === 'sent' && !row.receivedAt &&
@@ -255,9 +255,9 @@ export class MailReceipt {
     }
 
     const read = await this.env.DB.prepare(
-      `SELECT work_address_id AS workAddressId, read_at AS readAt
+      `SELECT session_id AS sessionID, read_at AS readAt
          FROM message_read_receipts WHERE message_id = ? ORDER BY read_at`,
-    ).bind(messageId).all<{ workAddressId: string; readAt: string }>();
+    ).bind(messageId).all<{ sessionID: string; readAt: string }>();
 
     return HTTP.response({
       messageId: row.id,
