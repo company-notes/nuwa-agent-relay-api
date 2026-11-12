@@ -39,6 +39,7 @@ export class RelayTestClient {
   readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string; redirect: RequestRedirect | undefined }> = [];
 
   failNextMail = false;
+  loseNextMailAcknowledgement = false;
   failNextWake = false;
   redirectNextWake = false;
   failAddressStatus = false;
@@ -383,6 +384,13 @@ export class RelayTestClient {
 
       const delivery = JSON.parse(String(init.body)) as { to: string[]; subject: string; body: string };
       this.deliveries.push(delivery);
+
+      if (this.loseNextMailAcknowledgement) {
+        // The provider accepted the message, but Relay never received its success response.
+        this.loseNextMailAcknowledgement = false;
+
+        return new Response(null, { status: 503 });
+      }
 
       return new Response(null, { status: 201 });
     }
