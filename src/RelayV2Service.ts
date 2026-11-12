@@ -27,6 +27,7 @@ type MessageRow = {
   kind: MessageKind;
   sender_agent_id: string;
   sender_session_id: string;
+  sender_canonical_address: string;
   recipient_agent_id: string;
   recipient_session_id: string | null;
   subject: string;
@@ -91,11 +92,11 @@ export class RelayV2Service {
     await this.env.DB.prepare(
       `INSERT INTO messages
          (id, thread_id, kind, sender_agent_id, sender_session_id,
-          recipient_agent_id, recipient_session_id, subject, body, artifacts_json,
-          delivery_status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+          sender_canonical_address, recipient_agent_id, recipient_session_id, subject, body,
+          artifacts_json, delivery_status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).bind(id, thread.id, kind, this.identity.agentID, this.identity.sessionID,
-      recipientAgentID, recipientSessionID, subject, body,
+      this.identity.canonicalAddress, recipientAgentID, recipientSessionID, subject, body,
       JSON.stringify(artifactLinks), createdAt).run();
 
     const metadata = {
@@ -276,6 +277,7 @@ export class RelayV2Service {
       kind: message.kind,
       senderAgentID: message.sender_agent_id,
       senderSessionID: message.sender_session_id,
+      senderCanonicalAddress: message.sender_canonical_address,
       recipientAgentID: message.recipient_agent_id,
       recipientSessionID: message.recipient_session_id,
       subject: message.subject,
@@ -287,7 +289,7 @@ export class RelayV2Service {
 
   private static readonly MESSAGE_COLUMNS =
     'm.id, m.thread_id, m.kind, m.sender_agent_id, m.sender_session_id, ' +
-    'm.recipient_agent_id, m.recipient_session_id, m.subject, m.body, ' +
+    'm.sender_canonical_address, m.recipient_agent_id, m.recipient_session_id, m.subject, m.body, ' +
     'm.artifacts_json, m.delivery_status, m.created_at';
 
   async message(messageID: string, contextLimit = 0): Promise<JSONRecord> {
