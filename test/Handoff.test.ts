@@ -101,6 +101,7 @@ describe('Agent handoff flow', () => {
     ).bind(handoff.body.data.threadId).first<{ count: number }>();
     expect(count?.count, 'Only one acceptance message may exist').toBe(1);
   });
+
   it('retains one accepted Session when MailTrigger delivers but its acknowledgement is lost', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
