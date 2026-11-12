@@ -1,6 +1,7 @@
 import { AgentMailboxService } from './AgentMailboxService';
 import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
+import { HandoffAcceptance } from './HandoffAcceptance';
 import { APIError, type JSONRecord } from './HTTP';
 import { MailTriggerClient } from './MailTriggerClient';
 import { Logger } from './Logger';
@@ -99,6 +100,22 @@ export class RelayV2Service {
       this.identity.canonicalAddress, recipientAgentID, recipientSessionID, subject, body,
       JSON.stringify(artifactLinks), createdAt).run();
 
+    return this.submitStoredMessage(id, thread, recipientAgentID, recipientSessionID,
+      kind, subject, body, artifactLinks, sender.mailboxId, recipient.mailbox_email);
+  }
+
+  private async submitStoredMessage(
+    id: string,
+    thread: ThreadRow,
+    recipientAgentID: string,
+    recipientSessionID: string | null,
+    kind: MessageKind,
+    subject: string,
+    body: string,
+    artifactLinks: string[],
+    senderMailboxID: string,
+    recipientMailboxEmail: string,
+  ): Promise<{ id: string; threadId: string; messageId: string }> {
     const metadata = {
       protocol: 'nuwa-agent-relay',
       version: 2,
@@ -118,7 +135,7 @@ export class RelayV2Service {
 
     try {
       deliveryID = await this.mail.send(
-        sender.mailboxId, recipient.mailbox_email, subject, body, metadata,
+        senderMailboxID, recipientMailboxEmail, subject, body, metadata,
       );
     } catch (error) {
       const receipt = await this.env.DB.prepare(
@@ -233,29 +250,51 @@ export class RelayV2Service {
       throw new APIError(404, 'handoff_not_found', 'Agent handoff is unavailable.');
     }
 
-    const changed = await this.env.DB.prepare(
-      'UPDATE threads SET accepted_session_id = ? WHERE id = ? AND accepted_session_id IS NULL',
-    ).bind(this.identity.sessionID, handoff.id).run();
+    // The acceptance and its single notification must commit together.
+    // Mailbox provisioning happens first so an unavailable provider cannot
+    // create an undeliverable acceptance merely by failing setup.
+    const sender = handoff.accepted_session_id ? null : await this.provisionMailbox();
+    const recipient = handoff.accepted_session_id ? null
+      : await this.mailboxes.require(this.identity.organizationID, handoff.sender_agent_id);
+    const accepted = await new HandoffAcceptance(this.env).reserve({
+      threadID: handoff.id,
+      organizationID: this.identity.organizationID,
+      acceptingAgentID: this.identity.agentID,
+      acceptingSessionID: this.identity.sessionID,
+      acceptingCanonicalAddress: this.identity.canonicalAddress,
+      senderAgentID: handoff.sender_agent_id,
+      senderSessionID: handoff.sender_session_id,
+    });
 
-    if (changed.meta.changes !== 1) {
-      throw new APIError(409, 'handoff_already_accepted', 'Another Session accepted the handoff.');
+    if (!accepted.created) {
+      return {
+        id: accepted.messageID,
+        threadId: handoff.id,
+        messageId: accepted.messageID,
+        acceptedBy: this.identity.canonicalAddress,
+        notificationStatus: accepted.notificationStatus,
+        alreadyAccepted: true,
+      };
     }
 
-    try {
-      const delivered = await this.deliver(
-        handoff, handoff.sender_agent_id, handoff.sender_session_id,
-        'acceptance', 'Agent Relay handoff accepted',
-        'Accepted by ' + this.identity.canonicalAddress + '.', [],
-      );
-
-      return { ...delivered, acceptedBy: this.identity.canonicalAddress };
-    } catch (error) {
-      await this.env.DB.prepare(
-        'UPDATE threads SET accepted_session_id = NULL WHERE id = ? AND accepted_session_id = ?',
-      ).bind(handoff.id, this.identity.sessionID).run();
-
-      throw error;
+    if (!sender || !recipient) {
+      throw new APIError(500, 'handoff_mailbox_missing',
+        'Handoff notification must have provisioned sender and recipient mailboxes.');
     }
+
+    const delivered = await this.submitStoredMessage(
+      accepted.messageID, handoff, handoff.sender_agent_id, handoff.sender_session_id,
+      'acceptance', HandoffAcceptance.SUBJECT,
+      HandoffAcceptance.body(this.identity.canonicalAddress), [],
+      sender.mailboxId, recipient.mailbox_email,
+    );
+
+    return {
+      ...delivered,
+      acceptedBy: this.identity.canonicalAddress,
+      notificationStatus: 'sent',
+      alreadyAccepted: false,
+    };
   }
 
   async replyHandoff(messageID: string, body: string, artifactLinks: string[]) {
