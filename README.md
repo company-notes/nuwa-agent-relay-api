@@ -56,6 +56,8 @@ SMTP submission, MailTrigger webhook-confirmed arrival, Wake callback delivery, 
 
 Run `npm run check`, `npm test`, `npm run test:smoke` and `npm run audit:check`. The Worker/D1 tests execute locally; they do **not** prove actual delivery through deployed MailTrigger or Bot integration.
 
-Follow [V2 cutover instructions](docs/DeploymentV2.md). A fresh, isolated V2 D1 is **mandatory**. `npm run db:migrate:remote` and `npm run deploy` fail closed if pointed to old, mixed or partial D1. Do not deploy from a Draft PR or convert the production D1 implicitly.
+The official `main` branch automatically runs the existing `.github/workflows/verify.yml` on push: tests, Cloudflare configuration verification, D1 schema guard, migrations, Worker deployment and real public HTTP smoke. It reuses the existing GitHub Secrets/Variables and resolves the canonical `nuwa-agent-relay-api` D1 by exact Cloudflare name to avoid stale IDs. See [Operations](docs/Operations.md).
 
-For a separately authorized live staging end-to-end test using already-provisioned Agent mailboxes, see [V2 Smoke Test](docs/SmokeTest.md). No old Host/Work smoke commands or unsafe automatic cleanup are provided.
+Production uses a **clean Organization/Agent/Session D1** under the original `nuwa-agent-relay-api` resource name. A Host/Work or mixed D1 must never be migrated in place; the guard rejects legacy, partial and unknown schemas. The external MailTrigger receipt URL remains unchanged.
+
+For an explicitly authorized real-email A→B→A transport check, see [Transport Smoke Test](docs/SmokeTest.md). The automatic production smoke does not send email, create MailTrigger resources, or pretend to verify actual GrokBot/OpenMausBot execution.
