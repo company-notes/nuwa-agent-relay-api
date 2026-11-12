@@ -216,7 +216,11 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     const waiting = await scenario.client.call('token-b', 'GET',
       '/v2/wake-events?session_id=session-b');
     expect(waiting.body.data.find((item: { messageId: string }) => item.messageId === second))
-      .toMatchObject({ status: 'pending', lastError: 'gateway_first_contact_pending' });
+      .toMatchObject({
+        status: 'pending',
+        attempts: 0,
+        lastError: 'gateway_first_contact_pending',
+      });
 
     const incorrect = await scenario.complete('session-a', second, 'unexpected-thread');
     expect(incorrect.status).toBe(409);
@@ -285,10 +289,15 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
 
     const blindBinding = await scenario.bind('session-a', 'blind-untrusted-thread');
     expect(blindBinding.status).toBe(409);
+    expect((await scenario.route('explicit', 'manual')).status).toBe(409);
 
-    const incorrect = await scenario.complete('session-a', first, 'native-thread-verified');
-    expect(incorrect.status).toBe(200);
+    const confirmed = await scenario.complete('session-a', first, 'native-thread-verified');
+    expect(confirmed.status).toBe(200);
     expect((await scenario.complete('session-a', first, 'another-thread')).status).toBe(409);
+
+    const changed = await scenario.bind('session-a', 'recipient-manually-rebound-thread');
+    expect(changed.status).toBe(200);
+    expect((await scenario.complete('session-a', first, 'native-thread-verified')).status).toBe(409);
 
     expect((await scenario.unbind('session-a')).status).toBe(200);
     const next = await scenario.send('a', 'After reset, a new conversation must be created.');
