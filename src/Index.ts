@@ -1,5 +1,6 @@
 import { AliasService } from './AliasService';
 import type { Env } from './Env';
+import { GatewayBindings, GatewayThreadMode } from './GatewayBindings';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { MailReceipt } from './MailReceipt';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
@@ -159,6 +160,51 @@ export class RelayAPI {
     return null;
   }
 
+  private async gateway(
+    request: Request, path: string, bindings: GatewayBindings,
+  ): Promise<Response | null> {
+    if (path === '/v2/gateway-routes/current') {
+      if (request.method === 'GET') {
+        return HTTP.response(await bindings.getRoute());
+      }
+
+      if (request.method === 'PUT') {
+        const data = await HTTP.json(request);
+
+        return HTTP.response(await bindings.setRoute(
+          HTTP.requiredString(data, 'recipientBotID', 192),
+          HTTP.requiredString(data, 'threadMode', 32) as GatewayThreadMode,
+        ));
+      }
+
+      if (request.method === 'DELETE') {
+        return HTTP.response(await bindings.deleteRoute());
+      }
+    }
+
+    if (path === '/v2/gateway-conversations' && request.method === 'GET') {
+      return HTTP.response(await bindings.getConversations());
+    }
+
+    const senderSessionID = RelayAPI.match(
+      path, /^\/v2\/gateway-conversations\/([^/]+)$/,
+    );
+
+    if (senderSessionID && request.method === 'PUT') {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(await bindings.setConversation(
+        senderSessionID, HTTP.requiredString(data, 'nativeThreadID', 192),
+      ));
+    }
+
+    if (senderSessionID && request.method === 'DELETE') {
+      return HTTP.response(await bindings.deleteConversation(senderSessionID));
+    }
+
+    return null;
+  }
+
   private async wake(
     request: Request, path: string, identity: SessionIdentity,
   ): Promise<Response | null> {
@@ -233,6 +279,7 @@ export class RelayAPI {
     const identity = await address.authorize(sessionID, runtimeToken);
     const relay = new RelayV2Service(this.env, identity, address);
     const aliases = new AliasService(this.env, identity, address);
+    const gatewayBindings = new GatewayBindings(this.env, identity, address);
 
     if (path === '/v2/agents/mailbox' && request.method === 'POST') {
       return HTTP.response(await relay.provisionMailbox(), 201);
@@ -252,6 +299,7 @@ export class RelayAPI {
       () => this.messages(request, path, relay),
       () => this.handoffs(request, path, relay),
       () => this.threads(request, path, relay),
+      () => this.gateway(request, path, gatewayBindings),
       () => this.wake(request, path, identity),
     ];
 
@@ -281,7 +329,7 @@ export default {
         status: 204,
         headers: {
           'access-control-allow-origin': '*',
-          'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
+          'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
           'access-control-allow-headers':
             'authorization,content-type,x-nuwa-runtime-token,x-relay-verification-key',
           'access-control-max-age': '86400',
