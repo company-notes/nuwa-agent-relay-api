@@ -18,6 +18,12 @@ describe('Agent handoff flow', () => {
     expect(handoff.status).toBe(201);
     const handoffId = handoff.body.data.id as string;
 
+    const retiredAcceptance = await client.call(
+      'token-b', 'POST', `/v2/handoffs/${handoffId}/accept?session_id=session-b`,
+    );
+    expect(retiredAcceptance.status, 'Retired action URLs must not remain as compatibility aliases')
+      .toBe(404);
+
     const waiting = await client.call('token-b', 'GET', '/v2/agent-inbox?session_id=session-b');
     expect(waiting.status).toBe(200);
     expect(waiting.body.data[0].body).toBe('Please sign the attached artifacts.');
