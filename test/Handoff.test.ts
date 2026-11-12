@@ -87,4 +87,43 @@ describe('Agent handoff flow', () => {
 
     expect(retry.status, 'The same Session must be able to retry acceptance').toBe(201);
   });
+  it('keeps Agent-level handoff exclusive across sibling Sessions', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionAgentMailboxes();
+
+    const handoff = await client.call('token-a', 'POST', '/v2/handoffs?session_id=session-a', {
+      to: 'relay-test-org/beta',
+      subject: 'Review deployment',
+      body: 'One Session accepts.',
+    });
+    expect(handoff.status).toBe(201);
+
+    const pending = await client.call('token-c', 'GET', '/v2/agent-inbox?session_id=session-c');
+    expect(pending.body.data.some((item: { id: string }) => item.id === handoff.body.data.id))
+      .toBe(true);
+
+    const accepted = await client.call('token-c', 'POST',
+      '/v2/handoffs/' + handoff.body.data.id + '/accept?session_id=session-c');
+    expect(accepted.status).toBe(201);
+    expect(accepted.body.data.acceptedBy).toBe('relay-test-org/beta/observer');
+
+    const duplicate = await client.call('token-b', 'POST',
+      '/v2/handoffs/' + handoff.body.data.id + '/accept?session_id=session-b');
+    expect(duplicate.status).toBe(409);
+
+    const foreignHistory = await client.call('token-b', 'GET',
+      '/v2/threads/' + handoff.body.data.threadId + '?session_id=session-b');
+    expect(foreignHistory.status).toBe(404);
+
+    const reply = await client.call('token-c', 'POST',
+      '/v2/handoffs/' + handoff.body.data.id + '/reply?session_id=session-c',
+      { body: 'Reviewed by the accepted Session.' });
+    expect(reply.status).toBe(201);
+
+    const history = await client.call('token-a', 'GET',
+      '/v2/threads/' + handoff.body.data.threadId + '?session_id=session-a');
+    expect(history.body.data.map((message: { body: string }) => message.body))
+      .toContain('Reviewed by the accepted Session.');
+  });
 });
