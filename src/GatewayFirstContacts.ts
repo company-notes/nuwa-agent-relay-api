@@ -122,19 +122,31 @@ export class GatewayFirstContacts {
       }
     }
 
-    // Release only this sender/recipient pair's already-received pending Wakes.
+    // A successful native-tool confirmation attests that the initial message
+    // was submitted already. Never replay that bootstrap message on Wake retry.
+    // Release only this sender/recipient pair's other received pending Wakes.
     // No new message is created and no MailTrigger email is resent.
-    await this.env.DB.prepare(
-      `UPDATE wake_events SET next_attempt_at = ?
-        WHERE status = 'pending' AND session_id = ?
-          AND message_id IN (
-            SELECT m.id FROM messages m
-            JOIN threads t ON t.id = m.thread_id
-            WHERE t.org_id = ? AND m.sender_session_id = ?
-              AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
-          )`,
-    ).bind(new Date().toISOString(), this.recipientSessionID, this.organizationID,
-      senderSessionID, this.recipientSessionID).run();
+    const now = new Date().toISOString();
+
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE wake_events SET status = 'delivered', notified_at = ?,
+                last_error = NULL, lease_owner = NULL, lease_until = NULL
+          WHERE message_id = ? AND session_id = ?
+            AND status IN ('pending', 'failed')`,
+      ).bind(now, messageID, this.recipientSessionID),
+      this.env.DB.prepare(
+        `UPDATE wake_events SET next_attempt_at = ?
+          WHERE status = 'pending' AND session_id = ? AND message_id <> ?
+            AND message_id IN (
+              SELECT m.id FROM messages m
+              JOIN threads t ON t.id = m.thread_id
+              WHERE t.org_id = ? AND m.sender_session_id = ?
+                AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
+            )`,
+      ).bind(now, this.recipientSessionID, messageID, this.organizationID,
+        senderSessionID, this.recipientSessionID),
+    ]);
 
     return { senderSessionID, recipientSessionID: this.recipientSessionID,
       nativeThreadID, alreadyConfirmed: false };
