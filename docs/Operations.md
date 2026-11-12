@@ -8,7 +8,7 @@ Relay API 是 Nuwa Agent Relay 的訊息中樞。**Agent Address** 管理 Organi
 
 - 正式 Worker：`nuwa-agent-relay-api`
 - 正式 URL：<https://agent-relay.company-notes.com>
-- 內部 `DB`：全新 schema、但沿用原資源名稱 `nuwa-agent-relay-api`
+- 內部 `DB`：全新 schema、沿用原資源名稱 `nuwa-agent-relay-api`，正式 D1 ID：`7e6038e0-7d90-4bde-9b61-1a8d6297c839`
 - 身分管理：<https://address.company-notes.com>
 - **永久不改**的 MailTrigger 收件回執 URL：`POST https://agent-relay.company-notes.com/v1/mailtrigger/receipt`
 - 郵件供應商 API：`https://route.mxnodes.com`，使用原本的 `MAILTRIGGER_API_TOKEN` 與認證方式 `Token`
