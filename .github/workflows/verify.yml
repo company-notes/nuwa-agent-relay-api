@@ -29,8 +29,10 @@ jobs:
         run: npm test
       - name: Test live smoke harness offline
         run: npm run test:smoke
-      - name: Validate deployment configuration script
-        run: node --check scripts/prepare-deploy.mjs
+      - name: Validate deployment and Gateway staging scripts
+        run: |
+          node --check scripts/prepare-deploy.mjs
+          node --check scripts/GatewayFirstContactConfirm.mjs
 
   deploy:
     if: >-
