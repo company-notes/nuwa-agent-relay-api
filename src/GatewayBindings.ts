@@ -1,6 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
-import { GatewayFirstContacts } from './GatewayFirstContacts';
+import { GatewayFirstContacts, GatewayFirstContactStatus } from './GatewayFirstContacts';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 
 export enum GatewayThreadMode {
@@ -167,7 +167,7 @@ export class GatewayBindings {
 
     await this.validateSender(senderSessionID);
 
-    if ((await this.firstContacts().get(senderSessionID))?.status === 'pending') {
+    if ((await this.firstContacts().get(senderSessionID))?.status === GatewayFirstContactStatus.Pending) {
       throw new APIError(409, 'gateway_first_contact_pending',
         'Complete or cancel the first-contact reservation before manually binding a Thread.');
     }
