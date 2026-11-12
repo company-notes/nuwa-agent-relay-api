@@ -106,8 +106,9 @@ export class WakeService {
 
       const body = {
         event: 'nuwa.message.available',
-        messageId: event.messageId,
-        sessionID: event.sessionID,
+        eventVersion: 2,
+        messageID: event.messageId,
+        recipientSessionID: event.sessionID,
       };
 
       let success = false;
