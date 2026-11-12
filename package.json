@@ -7,6 +7,7 @@
     "test:smoke": "node --test scripts/V2Smoke.checks.mjs scripts/GuardV2D1.checks.mjs scripts/GatewayMigration.checks.mjs",
     "dev": "wrangler dev",
     "check": "tsc --noEmit",
+    "style:check": "node scripts/check-code-principles.mjs",
     "test": "vitest run",
     "test:core": "vitest run test/CoreFlow.test.ts",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
