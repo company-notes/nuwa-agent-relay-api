@@ -86,17 +86,25 @@ export class GatewayBindings {
 
     const existing = await this.route();
 
-    if (existing && (existing.recipientBotID !== recipientBotID || existing.threadMode !== threadMode)) {
-      const active = await this.env.DB.prepare(
-        `SELECT COUNT(*) AS count FROM gateway_conversations
-          WHERE org_id = ? AND recipient_session_id = ?`,
-      ).bind(this.identity.organizationID, this.identity.sessionID).first<{ count: number }>();
-
+    if (existing && (existing.recipientBotID !== recipientBotID ||
+        existing.threadMode !== threadMode || existing.firstContactMode !== firstContactMode)) {
       const pending = await this.firstContacts().pending();
 
-      if ((active && active.count > 0) || pending.length > 0) {
+      if (pending.length > 0) {
         throw new APIError(409, 'gateway_route_in_use',
-          'Remove conversation bindings and pending first contacts before changing the Bot or mode.');
+          'Complete or cancel pending first contacts before changing the Gateway route.');
+      }
+
+      if (existing.recipientBotID !== recipientBotID || existing.threadMode !== threadMode) {
+        const active = await this.env.DB.prepare(
+          `SELECT COUNT(*) AS count FROM gateway_conversations
+            WHERE org_id = ? AND recipient_session_id = ?`,
+        ).bind(this.identity.organizationID, this.identity.sessionID).first<{ count: number }>();
+
+        if (active && active.count > 0) {
+          throw new APIError(409, 'gateway_route_in_use',
+            'Remove existing conversation bindings before changing the Bot or thread mode.');
+        }
       }
     }
 
@@ -172,6 +180,9 @@ export class GatewayBindings {
          native_thread_id = excluded.native_thread_id`,
     ).bind(this.identity.organizationID, senderSessionID, this.identity.sessionID,
       nativeThreadID, new Date().toISOString()).run();
+
+    // A manual rebind supersedes the old bootstrap completion receipt.
+    await this.firstContacts().clear(senderSessionID);
 
     return { senderSessionID, recipientSessionID: this.identity.sessionID, nativeThreadID };
   }
