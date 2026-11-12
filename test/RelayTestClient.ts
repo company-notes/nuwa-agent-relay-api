@@ -53,17 +53,17 @@ export class RelayTestClient {
 
   private readonly sessionA: Session = {
     id: 'session-a',
-    agentId: 'agent-a',
+    agentId: 'agent-000a',
     canonical: RelayTestClient.slug + '/alpha/author',
   };
   private readonly sessionB: Session = {
     id: 'session-b',
-    agentId: 'agent-b',
+    agentId: 'agent-000b',
     canonical: RelayTestClient.slug + '/beta/reviewer',
   };
   private readonly sessionC: Session = {
     id: 'session-c',
-    agentId: 'agent-b',
+    agentId: 'agent-000b',
     canonical: RelayTestClient.slug + '/beta/observer',
   };
 
