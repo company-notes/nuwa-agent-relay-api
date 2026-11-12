@@ -68,7 +68,7 @@ export class RelayTestClient {
   };
 
   private requestAgentAddress(url: URL, token: string | null, init?: RequestInit): Response {
-    if (!['Bearer token-a', 'Bearer token-b', 'Bearer token-c'].includes(token ?? '')) {
+    if (!['Bearer token-a', 'Bearer token-b', 'Bearer token-c', 'Bearer token-foreign'].includes(token ?? '')) {
       return Response.json({ ok: false, error: { code: 'unauthorized' } }, { status: 401 });
     }
 
@@ -81,7 +81,9 @@ export class RelayTestClient {
         ok: true,
         data: {
           account: { email: 'test@example.com' },
-          organization: { id: 'org-id', slug: RelayTestClient.slug },
+          organization: token === 'Bearer token-foreign'
+            ? { id: 'org-other', slug: 'other-organization' }
+            : { id: 'org-id', slug: RelayTestClient.slug },
         },
       });
     }
@@ -436,8 +438,8 @@ export class RelayTestClient {
         expect(init.redirect).toBe('manual');
 
         return Response.json({
-          access_token: request.get('code') === 'owned-a' || request.get('code') === 'different-owner'
-            ? 'token-a' : request.get('code') === 'owned-c' ? 'token-c' : 'token-b',
+          access_token: request.get('code') === 'different-owner'
+            ? 'token-foreign' : request.get('code') === 'owned-a' ? 'token-a' : request.get('code') === 'owned-c' ? 'token-c' : 'token-b',
           token_type: 'Bearer',
         });
       }
