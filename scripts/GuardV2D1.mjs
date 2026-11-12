@@ -15,6 +15,12 @@ const REQUIRED = [
   'wake_pairing_oauth_attempts',
 ];
 
+const GATEWAY_TABLES = [
+  'gateway_routes',
+  'gateway_conversations',
+  'gateway_first_contacts',
+];
+
 const KNOWN_INFRASTRUCTURE = new Set(['d1_migrations', 'sqlite_sequence', '_cf_KV', '_cf_METADATA']);
 
 export function classifyDatabase(names, requireMigrated = false) {
@@ -30,7 +36,7 @@ export function classifyDatabase(names, requireMigrated = false) {
     throw new Error('Refusing legacy Host/Work D1 database. Use a new isolated V2 D1.');
   }
 
-  const unknown = [...tables].filter((name) => !REQUIRED.includes(name));
+  const unknown = [...tables].filter((name) => !REQUIRED.includes(name) && !GATEWAY_TABLES.includes(name));
 
   if (unknown.length) {
     throw new Error('Refusing unrecognized D1 tables: ' + unknown.join(', '));
@@ -42,6 +48,16 @@ export function classifyDatabase(names, requireMigrated = false) {
 
   if (REQUIRED.some((name) => !tables.has(name))) {
     throw new Error('Refusing empty or partially migrated V2 D1. Apply the V2 migration first.');
+  }
+
+  const gatewayTables = GATEWAY_TABLES.filter((name) => tables.has(name));
+
+  if (gatewayTables.length > 0 && gatewayTables.length !== GATEWAY_TABLES.length) {
+    throw new Error('Refusing partially migrated Gateway V2 D1.');
+  }
+
+  if (requireMigrated && gatewayTables.length !== GATEWAY_TABLES.length) {
+    throw new Error('Gateway V2 migration is not applied.');
   }
 
   return 'v2';
