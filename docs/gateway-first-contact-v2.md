@@ -53,7 +53,7 @@ Sender Session A             Nuwa Relay / D1             Gateway Agent          
        |                           | first verified Wake         |                    |
        |                           | atomically reserve A → B    |                    |
        |                           +------ signed Event -------->|                    |
-       |                           | gatewayAction=create        | coordinate_bots     |
+       |                           | recipientPlatformThreadID=null        | coordinate_bots     |
        |                           |                             | thread="new" ------>|
        |                           |                             | native threadID <---|
        |                           |<--- PRIVATE confirmation ----| trusted adapter      |
@@ -69,10 +69,10 @@ normal verified metadata, including `senderSessionID`, `messageID`,
 `recipientBotID`, `relayThreadID` and `body`, plus:
 
 ```json
-{"gatewayAction": "create_native_thread"}
+{"recipientPlatformThreadID": null}
 ```
 
-There is **no** `recipientPlatformThreadID` until confirmation. The authorized
+The reserved explicit first contact has **null** `recipientPlatformThreadID`; platform-managed senders omit that field entirely, while an established native conversation has an actual nonempty ID. The authorized
 Gateway Agent then makes **one** platform-native tool call:
 
 ```text
@@ -205,7 +205,7 @@ Resume, Wake signing keys or other authorization secrets.
 
 > A verified `eventVersion: 2` event must have a fixed registered recipient
 > Bot, nonempty `senderSessionID`, `messageID` and body. If
-> `gatewayAction == "create_native_thread"`, call `coordinate_bots` **once**
+> `recipientPlatformThreadID` is null, call `coordinate_bots` **once**
 > with `thread: "new"`, `reply: "none"`, and the verified recipient Bot.
 > Report the returned *actual* native `threadId` with `messageID` and
 > `senderSessionID` to the operator/trusted run-result adapter. Do not invent
