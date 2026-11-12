@@ -104,9 +104,9 @@ export class RelayAPI {
       return HTTP.response(await relay.message(messageID, contextLimit));
     }
 
-    const readID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)\/read$/);
+    const readID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)\/read-receipt$/);
 
-    if (readID && request.method === 'POST') {
+    if (readID && request.method === 'PUT') {
       return HTTP.response(await relay.acknowledgeRead(readID), 201);
     }
 
@@ -116,13 +116,13 @@ export class RelayAPI {
   private async handoffs(
     request: Request, path: string, relay: RelayV2Service,
   ): Promise<Response | null> {
-    const acceptanceID = RelayAPI.match(path, /^\/v2\/handoffs\/([^/]+)\/accept$/);
+    const acceptanceID = RelayAPI.match(path, /^\/v2\/handoffs\/([^/]+)\/acceptance$/);
 
-    if (acceptanceID && request.method === 'POST') {
+    if (acceptanceID && request.method === 'PUT') {
       return HTTP.response(await relay.acceptHandoff(acceptanceID), 201);
     }
 
-    const replyID = RelayAPI.match(path, /^\/v2\/handoffs\/([^/]+)\/reply$/);
+    const replyID = RelayAPI.match(path, /^\/v2\/handoffs\/([^/]+)\/replies$/);
 
     if (replyID && request.method === 'POST') {
       const body = await HTTP.json(request);
@@ -164,7 +164,7 @@ export class RelayAPI {
   private async gateway(
     request: Request, path: string, bindings: GatewayBindings,
   ): Promise<Response | null> {
-    if (path === '/v2/gateway-routes/current') {
+    if (path === '/v2/gateway-route') {
       if (request.method === 'GET') {
         return HTTP.response(await bindings.getRoute());
       }
@@ -307,7 +307,7 @@ export class RelayAPI {
     const aliases = new AliasService(this.env, identity, address);
     const gatewayBindings = new GatewayBindings(this.env, identity, address);
 
-    if (path === '/v2/agents/mailbox' && request.method === 'POST') {
+    if (path === '/v2/agent-mailboxes' && request.method === 'POST') {
       return HTTP.response(await relay.provisionMailbox(), 201);
     }
 

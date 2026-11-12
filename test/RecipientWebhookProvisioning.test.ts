@@ -34,7 +34,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     const ready = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     expect(ready.status).toBe(201);
 
     const mailbox = ready.body.data;
@@ -100,7 +100,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
     client.installExternalTestTransport();
 
     const ready = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     expect(ready.status).toBe(201);
 
     const provider = enabledProvider();
@@ -125,7 +125,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
     client.installExternalTestTransport();
 
     const ready = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     const mailbox = {
       mailboxId: ready.body.data.mailboxId,
       mailboxEmail: ready.body.data.mailboxEmail,
@@ -149,7 +149,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
     client.installExternalTestTransport();
 
     const ready = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     const provider = enabledProvider();
     await provider.ensureManagedSMTPRoute({
       mailboxId: ready.body.data.mailboxId,
@@ -171,7 +171,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
   it('removes only the exact provider inbound origin route after the NAR receipt route is active', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const ready = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const ready = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
     expect(ready.status).toBe(201);
     const mailbox = {
       mailboxId: ready.body.data.mailboxId,
@@ -198,12 +198,12 @@ describe('Recipient MailTrigger Webhook Route', () => {
   it('keeps the provider inbound origin route when the receipt callback is not configured', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const ready = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const ready = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
     expect(ready.status).toBe(201);
     const mailboxId = Number(ready.body.data.mailboxId);
     addProviderOriginRoute(client, 155, mailboxId);
 
-    const repeated = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const repeated = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
 
     expect(repeated.status).toBe(201);
     expect(client.routes.find((route) => route.id === 155)).toBeDefined();
@@ -213,7 +213,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
   it('does not delete inbound origin fallback if actual MailTrigger webhook fields are duplicated', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const ready = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const ready = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
     expect(ready.status).toBe(201);
     const mailbox = {
       mailboxId: ready.body.data.mailboxId,
@@ -240,7 +240,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
   it('refuses duplicate exact-name inbound origin routes without removing either one', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const ready = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const ready = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
     const mailbox = {
       mailboxId: ready.body.data.mailboxId,
       mailboxEmail: ready.body.data.mailboxEmail,
@@ -263,7 +263,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
   it('refuses to delete inbound origin route referencing the NAR receipt rule', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const ready = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const ready = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
     const mailbox = {
       mailboxId: ready.body.data.mailboxId,
       mailboxEmail: ready.body.data.mailboxEmail,

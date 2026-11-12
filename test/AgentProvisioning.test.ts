@@ -55,7 +55,7 @@ describe('automatic managed SMTP provisioning', () => {
     expect(client.routes.filter((route) => String(route.name).startsWith('NAR route '))).toHaveLength(2);
 
     const again = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     expect(again.status).toBe(201);
     expect(client.routes).toHaveLength(4);
   });
@@ -63,8 +63,8 @@ describe('automatic managed SMTP provisioning', () => {
   it('deletes only the exact inbound Relay to Origin Route after the receipt Route is active', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    const a = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
-    const b = await client.call('token-b', 'POST', '/v2/agents/mailbox?session_id=session-b');
+    const a = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
+    const b = await client.call('token-b', 'POST', '/v2/agent-mailboxes?session_id=session-b');
     expect(a.status).toBe(201);
     expect(b.status).toBe(201);
 
@@ -101,7 +101,7 @@ describe('automatic managed SMTP provisioning', () => {
     client.installExternalTestTransport();
 
     const first = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     expect(first.status).toBe(201);
 
     client.routes.push({
@@ -116,7 +116,7 @@ describe('automatic managed SMTP provisioning', () => {
     });
 
     const repaired = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
 
     expect(repaired.status).toBe(201);
     expect(client.routes.some((route) => route.id === 901)).toBe(false);
@@ -138,7 +138,7 @@ describe('automatic managed SMTP provisioning', () => {
     });
 
     const response = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
 
     expect(response.status).toBe(502);
     expect(response.body.error.code).toBe('mailtrigger_resource_invalid');
@@ -180,7 +180,7 @@ describe('automatic managed SMTP provisioning', () => {
     });
 
     const created = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
 
     expect(created.status).toBe(201);
     expect(client.routes.map((route) => route.id)).toEqual(expect.arrayContaining([100, 101, 102]));
@@ -194,7 +194,7 @@ describe('automatic managed SMTP provisioning', () => {
     client.failNextRouteDeletion = true;
 
     const failure = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
 
     expect(failure.status).toBe(502);
     expect(failure.body.error.code).toBe('mailtrigger_cleanup_failed');
@@ -206,7 +206,7 @@ describe('automatic managed SMTP provisioning', () => {
     expect(paired).toBeNull();
 
     const retry = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     expect(retry.status).toBe(201);
     expect(client.routes.some((route) => route.name === 'SMTP to Origin Router')).toBe(false);
   });
@@ -215,7 +215,7 @@ describe('automatic managed SMTP provisioning', () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     const initial = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     expect(initial.status).toBe(201);
 
     const managed = client.routes.find((route) => route.name === 'NAR route 1')!;
@@ -231,7 +231,7 @@ describe('automatic managed SMTP provisioning', () => {
     });
 
     const protectedResult = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     expect(protectedResult.status).toBe(409);
     expect(protectedResult.body.error.code).toBe('mailtrigger_origin_route_conflict');
     expect(client.routes.find((route) => route.id === 900)).toBeDefined();
@@ -248,7 +248,7 @@ describe('automatic managed SMTP provisioning', () => {
     });
 
     const ambiguous = await client.call('token-a', 'POST',
-      '/v2/agents/mailbox?session_id=session-a');
+      '/v2/agent-mailboxes?session_id=session-a');
     expect(ambiguous.status).toBe(502);
     expect(ambiguous.body.error.code).toBe('mailtrigger_origin_route_ambiguous');
     expect(client.routes.filter((route) => ['SMTP to Origin', 'SMTP to Origin Router'].includes(String(route.name)))).toHaveLength(2);
@@ -259,7 +259,7 @@ describe('automatic managed SMTP provisioning', () => {
     client.installExternalTestTransport();
     await client.provisionAgentMailboxes();
 
-    const original = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const original = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
     expect(original.status).toBe(201);
     expect(original.body.data.created).toBe(false);
     expect(client.rules).toHaveLength(2);
@@ -267,7 +267,7 @@ describe('automatic managed SMTP provisioning', () => {
     expect(client.routes).toHaveLength(2);
 
     client.routes.splice(0, 1);
-    const restored = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const restored = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
 
     expect(restored.status).toBe(201);
     expect(client.rules).toHaveLength(2);
@@ -280,7 +280,7 @@ describe('automatic managed SMTP provisioning', () => {
 
     damaged!.isActive = false;
 
-    const repaired = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const repaired = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
 
     expect(repaired.status).toBe(201);
     expect(damaged!.isActive).toBe(true);
@@ -295,7 +295,7 @@ describe('automatic managed SMTP provisioning', () => {
 
     client.failNextRouteCreation = true;
 
-    const rejected = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const rejected = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
 
     expect(rejected.status).toBe(502);
     expect(rejected.body.error.code).toBe('mailtrigger_route_failed');
@@ -306,7 +306,7 @@ describe('automatic managed SMTP provisioning', () => {
 
     expect(pending?.count).toBe(0);
 
-    const ready = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const ready = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
 
     expect(ready.status).toBe(201);
     expect(ready.body.data.mailboxId).toBeDefined();
@@ -321,7 +321,7 @@ describe('automatic managed SMTP provisioning', () => {
     client.templates[0].displayName = 'SMTP to Origin';
     client.templates[0].actionName = 'SMTPOrigin';
 
-    const invalid = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const invalid = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
 
     expect(invalid.status).toBe(503);
     expect(invalid.body.error.code).toBe('mailtrigger_smtp_template_invalid');
@@ -332,12 +332,12 @@ describe('automatic managed SMTP provisioning', () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
 
-    const initial = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const initial = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
     expect(initial.status).toBe(201);
 
     client.failNextRouteLookup = true;
 
-    const failed = await client.call('token-a', 'POST', '/v2/agents/mailbox?session_id=session-a');
+    const failed = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
 
     expect(failed.status).toBe(502);
     expect(failed.body.error.code).toBe('mailtrigger_route_lookup_failed');

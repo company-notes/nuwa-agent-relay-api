@@ -12,7 +12,7 @@ describe('Nuwa Agent Relay core messaging flow', () => {
     const provisionedAgain = await client.call(
       'token-b',
       'POST',
-      '/v2/agents/mailbox?session_id=session-b',
+      '/v2/agent-mailboxes?session_id=session-b',
     );
     expect(provisionedAgain.status).toBe(201);
     expect(provisionedAgain.body.data.created, 'Provisioning a host twice must reuse its mailbox').toBe(false);

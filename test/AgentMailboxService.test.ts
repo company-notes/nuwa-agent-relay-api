@@ -18,8 +18,8 @@ describe('Agent mailboxes use the existing MailTrigger transport', () => {
     expect(again.mailboxId).toBe(first.mailboxId);
 
     const saved = await mailboxes.require('org-v2', 'agent-0001');
-    expect(saved.mailbox_id).toBe(first.mailboxId);
-    expect(saved.mailbox_email).toBe(first.mailboxEmail);
+    expect(saved.mailboxID).toBe(first.mailboxId);
+    expect(saved.mailboxEmail).toBe(first.mailboxEmail);
 
     const count = await env.DB.prepare(
       'SELECT count(*) AS count FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',

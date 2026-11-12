@@ -26,7 +26,7 @@ Relay checks the active Runtime lease with Agent Address before allowing a Sessi
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/v2/agents/mailbox` | Ensure calling Agent's managed transport mailbox |
+| POST | `/v2/agent-mailboxes` | Ensure calling Agent's managed transport mailbox |
 | GET/POST | `/v2/aliases` | List or register Session-owned external aliases |
 | DELETE | `/v2/aliases/:id` | Revoke an alias |
 | POST | `/v2/aliases/:id/verification` | Operator verification |
@@ -34,11 +34,11 @@ Relay checks the active Runtime lease with Agent Address before allowing a Sessi
 | GET | `/v2/inbox` | Messages for the current Session |
 | GET | `/v2/agent-inbox` | Unaccepted Handoffs addressed to current Agent |
 | GET | `/v2/messages/:id` | Read a Message; optional `context_limit=1..12` |
-| POST | `/v2/messages/:id/read` | Explicit receiving Session read acknowledgment |
+| PUT | `/v2/messages/:id/read-receipt` | Explicit receiving Session read acknowledgment |
 | GET | `/v2/messages/:id/receipt` | MailTrigger arrival and read status; `refresh=archive` for operator-directed diagnostic only |
 | POST | `/v2/handoffs` | Create Agent- or Session-targeted Handoff |
-| POST | `/v2/handoffs/:id/accept` | Atomically accept Agent Handoff |
-| POST | `/v2/handoffs/:id/reply` | Reply within an accepted Handoff Thread |
+| PUT | `/v2/handoffs/:id/acceptance` | Atomically accept Agent Handoff |
+| POST | `/v2/handoffs/:id/replies` | Reply within an accepted Handoff Thread |
 | GET | `/v2/threads/:id` | Read authorized Thread history |
 | POST | `/v2/threads/:id/messages` | Continue an existing Thread |
 | POST | `/v2/wake-pairings` | Start private browser-based Wake pairing |

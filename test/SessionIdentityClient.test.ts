@@ -31,8 +31,8 @@ class AddressScenario {
       });
     }
 
-    if (url.pathname === '/v2/account/sessions/' + this.sessionID + '/heartbeat' &&
-        init?.method === 'POST') {
+    if (url.pathname === '/v2/account/sessions/' + this.sessionID + '/runtime-lease' &&
+        init?.method === 'PATCH') {
       if (requestBody?.runtimeToken !== this.authorizedToken) {
         return Response.json({ ok: false, error: { code: 'runtime_not_owner' } }, { status: 409 });
       }
@@ -54,7 +54,7 @@ class AddressScenario {
       });
     }
 
-    if (url.pathname === '/v2/account/resolve') {
+    if (url.pathname === '/v2/account/addresses') {
       return Response.json({
         ok: true,
         data: { id: 'session-b', agentId: 'agent-b', canonical: 'nuwa/author/main' },
@@ -86,7 +86,7 @@ describe('Relay V2 Session authorization', () => {
     expect(scenario.requests.map(({ path }) => path)).toEqual([
       '/v2/account/status',
       '/v2/account/sessions/session-a',
-      '/v2/account/sessions/session-a/heartbeat',
+      '/v2/account/sessions/session-a/runtime-lease',
     ]);
     expect(scenario.requests[2].runtimeToken).toBe('runtime-a');
     expect(scenario.requests[2].path).not.toContain('runtime-a');
@@ -136,6 +136,6 @@ describe('Relay V2 Session authorization', () => {
       agentId: 'agent-b',
       canonical: 'nuwa/author/main',
     });
-    expect(scenario.requests[0].path).toBe('/v2/account/resolve?address=nuwa%2Fauthor');
+    expect(scenario.requests[0].path).toBe('/v2/account/addresses?address=nuwa%2Fauthor');
   });
 });

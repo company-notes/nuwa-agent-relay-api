@@ -13,7 +13,7 @@ class GatewayScenario {
 
     // Each scenario starts with its own recipient configuration, including D1 bindings.
     const cleared = await this.client.call('token-b', 'DELETE',
-      '/v2/gateway-routes/current?session_id=session-b');
+      '/v2/gateway-route?session_id=session-b');
     expect(cleared.status).toBe(200);
 
     await this.client.provisionAgentMailboxes();
@@ -28,7 +28,7 @@ class GatewayScenario {
     mode: 'explicit' | 'platform' = 'explicit',
     firstContactMode: 'manual' | 'automatic' = 'manual',
   ) {
-    return this.callB('PUT', '/v2/gateway-routes/current', {
+    return this.callB('PUT', '/v2/gateway-route', {
       recipientBotID: 'cosmo-bot-immutable',
       threadMode: mode,
       firstContactMode,
@@ -62,7 +62,7 @@ class GatewayScenario {
     expect(sent.status, 'Sending a normal message should not depend on a Gateway route').toBe(201);
 
     const mailbox = await this.client.call('token-b', 'POST',
-      '/v2/agents/mailbox?session_id=session-b');
+      '/v2/agent-mailboxes?session_id=session-b');
     this.client.archiveDeliveredEmail(
       mailbox.body.data.mailboxId,
       '[NAR:' + sent.body.data.id + '] Agent Relay message',
@@ -173,7 +173,7 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     await scenario.setup();
 
     const unauthorized = await scenario.client.call('token-a', 'PUT',
-      '/v2/gateway-routes/current?session_id=session-b', {
+      '/v2/gateway-route?session_id=session-b', {
         recipientBotID: 'attacker-bot',
         threadMode: 'platform',
       });

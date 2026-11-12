@@ -12,30 +12,30 @@ type MessageKind = ThreadKind | 'reply' | 'acceptance';
 
 type ThreadRow = {
   id: string;
-  org_id: string;
+  organizationID: string;
   kind: ThreadKind;
-  sender_agent_id: string;
-  sender_session_id: string;
-  recipient_agent_id: string;
-  recipient_session_id: string | null;
-  accepted_session_id: string | null;
-  notification_session_id: string | null;
+  senderAgentID: string;
+  senderSessionID: string;
+  recipientAgentID: string;
+  recipientSessionID: string | null;
+  acceptedSessionID: string | null;
+  notificationSessionID: string | null;
 };
 
 type MessageRow = {
   id: string;
-  thread_id: string;
+  threadID: string;
   kind: MessageKind;
-  sender_agent_id: string;
-  sender_session_id: string;
-  sender_canonical_address: string;
-  recipient_agent_id: string;
-  recipient_session_id: string | null;
+  senderAgentID: string;
+  senderSessionID: string;
+  senderCanonicalAddress: string;
+  recipientAgentID: string;
+  recipientSessionID: string | null;
   subject: string;
   body: string;
-  artifacts_json: string;
-  delivery_status: string;
-  created_at: string;
+  artifactsJSON: string;
+  deliveryStatus: string;
+  createdAt: string;
 };
 
 export type RelayMessageInput = {
@@ -47,6 +47,13 @@ export type RelayMessageInput = {
 
 export class RelayV2Service {
   private static readonly logger = Logger.forModule('relay.v2');
+
+  private static readonly THREAD_COLUMNS =
+    't.id, t.org_id AS organizationID, t.kind, ' +
+    't.sender_agent_id AS senderAgentID, t.sender_session_id AS senderSessionID, ' +
+    't.recipient_agent_id AS recipientAgentID, t.recipient_session_id AS recipientSessionID, ' +
+    't.accepted_session_id AS acceptedSessionID, ' +
+    't.notification_session_id AS notificationSessionID';
   private readonly mail: MailTriggerClient;
   private readonly mailboxes: AgentMailboxService;
   private readonly aliases: AliasService;
@@ -101,7 +108,7 @@ export class RelayV2Service {
       JSON.stringify(artifactLinks), createdAt).run();
 
     return this.submitStoredMessage(id, thread, recipientAgentID, recipientSessionID,
-      kind, subject, body, artifactLinks, sender.mailboxId, recipient.mailbox_email);
+      kind, subject, body, artifactLinks, sender.mailboxId, recipient.mailboxEmail);
   }
 
   private async submitStoredMessage(
@@ -172,14 +179,14 @@ export class RelayV2Service {
 
     const thread: ThreadRow = {
       id: crypto.randomUUID(),
-      org_id: this.identity.organizationID,
+      organizationID: this.identity.organizationID,
       kind,
-      sender_agent_id: this.identity.agentID,
-      sender_session_id: this.identity.sessionID,
-      recipient_agent_id: recipient.agentId,
-      recipient_session_id: recipientSessionID,
-      accepted_session_id: null,
-      notification_session_id: agentHandoff ? recipient.id : null,
+      senderAgentID: this.identity.agentID,
+      senderSessionID: this.identity.sessionID,
+      recipientAgentID: recipient.agentId,
+      recipientSessionID,
+      acceptedSessionID: null,
+      notificationSessionID: agentHandoff ? recipient.id : null,
     };
 
     await this.env.DB.prepare(
@@ -188,9 +195,9 @@ export class RelayV2Service {
           recipient_agent_id, recipient_session_id, accepted_session_id,
           notification_session_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-    ).bind(thread.id, thread.org_id, kind, thread.sender_agent_id,
-      thread.sender_session_id, thread.recipient_agent_id,
-      thread.recipient_session_id, thread.notification_session_id,
+    ).bind(thread.id, thread.organizationID, kind, thread.senderAgentID,
+      thread.senderSessionID, thread.recipientAgentID,
+      thread.recipientSessionID, thread.notificationSessionID,
       new Date().toISOString()).run();
 
     return this.deliver(
@@ -201,16 +208,14 @@ export class RelayV2Service {
 
   private async thread(threadID: string): Promise<ThreadRow> {
     const row = await this.env.DB.prepare(
-      `SELECT id, org_id, kind, sender_agent_id, sender_session_id,
-              recipient_agent_id, recipient_session_id, accepted_session_id,
-              notification_session_id
-         FROM threads
-        WHERE id = ? AND org_id = ?`,
+      `SELECT ${RelayV2Service.THREAD_COLUMNS}
+         FROM threads t
+        WHERE t.id = ? AND t.org_id = ?`,
     ).bind(threadID, this.identity.organizationID).first<ThreadRow>();
 
-    const recipientSessionID = row?.accepted_session_id ?? row?.recipient_session_id;
+    const recipientSessionID = row?.acceptedSessionID ?? row?.recipientSessionID;
 
-    if (!row || (row.sender_session_id !== this.identity.sessionID &&
+    if (!row || (row.senderSessionID !== this.identity.sessionID &&
         recipientSessionID !== this.identity.sessionID)) {
       throw new APIError(404, 'thread_not_found', 'Thread is unavailable to this Session.');
     }
@@ -220,11 +225,11 @@ export class RelayV2Service {
 
   async reply(threadID: string, body: string, subject: string | null, artifactLinks: string[]) {
     const thread = await this.thread(threadID);
-    const fromSender = thread.sender_session_id === this.identity.sessionID;
+    const fromSender = thread.senderSessionID === this.identity.sessionID;
     const toSessionID = fromSender
-      ? thread.accepted_session_id ?? thread.recipient_session_id
-      : thread.sender_session_id;
-    const toAgentID = fromSender ? thread.recipient_agent_id : thread.sender_agent_id;
+      ? thread.acceptedSessionID ?? thread.recipientSessionID
+      : thread.senderSessionID;
+    const toAgentID = fromSender ? thread.recipientAgentID : thread.senderAgentID;
 
     if (!toSessionID) {
       throw new APIError(409, 'handoff_not_accepted', 'An Agent handoff must be accepted before replies.');
@@ -236,26 +241,24 @@ export class RelayV2Service {
 
   async acceptHandoff(messageID: string) {
     const handoff = await this.env.DB.prepare(
-      `SELECT t.id, t.org_id, t.kind, t.sender_agent_id, t.sender_session_id,
-              t.recipient_agent_id, t.recipient_session_id, t.accepted_session_id,
-              t.notification_session_id
+      `SELECT ${RelayV2Service.THREAD_COLUMNS}
          FROM threads t
          JOIN messages m ON m.thread_id = t.id
         WHERE m.id = ? AND m.kind = 'handoff' AND m.delivery_status = 'sent'
           AND t.org_id = ?`,
     ).bind(messageID, this.identity.organizationID).first<ThreadRow>();
 
-    if (!handoff || handoff.recipient_agent_id !== this.identity.agentID ||
-        handoff.recipient_session_id !== null) {
+    if (!handoff || handoff.recipientAgentID !== this.identity.agentID ||
+        handoff.recipientSessionID !== null) {
       throw new APIError(404, 'handoff_not_found', 'Agent handoff is unavailable.');
     }
 
     // The acceptance and its single notification must commit together.
     // Mailbox provisioning happens first so an unavailable provider cannot
     // create an undeliverable acceptance merely by failing setup.
-    const sender = handoff.accepted_session_id ? null : await this.provisionMailbox();
-    const recipient = handoff.accepted_session_id ? null
-      : await this.mailboxes.require(this.identity.organizationID, handoff.sender_agent_id);
+    const sender = handoff.acceptedSessionID ? null : await this.provisionMailbox();
+    const recipient = handoff.acceptedSessionID ? null
+      : await this.mailboxes.require(this.identity.organizationID, handoff.senderAgentID);
     const accepted = await new HandoffAcceptance(this.env).reserve({
       threadID: handoff.id,
       organizationID: this.identity.organizationID,
@@ -281,10 +284,10 @@ export class RelayV2Service {
     }
 
     const delivered = await this.submitStoredMessage(
-      accepted.messageID, handoff, handoff.sender_agent_id, handoff.sender_session_id,
+      accepted.messageID, handoff, handoff.senderAgentID, handoff.senderSessionID,
       'acceptance', HandoffAcceptance.SUBJECT,
       HandoffAcceptance.body(this.identity.canonicalAddress), [],
-      sender.mailboxId, recipient.mailbox_email,
+      sender.mailboxId, recipient.mailboxEmail,
     );
 
     return {
@@ -297,37 +300,40 @@ export class RelayV2Service {
 
   async replyHandoff(messageID: string, body: string, artifactLinks: string[]) {
     const message = await this.env.DB.prepare(
-      "SELECT thread_id FROM messages WHERE id = ? AND kind = 'handoff' AND delivery_status = 'sent'",
-    ).bind(messageID).first<{ thread_id: string }>();
+      "SELECT thread_id AS threadID FROM messages WHERE id = ? AND kind = 'handoff' AND delivery_status = 'sent'",
+    ).bind(messageID).first<{ threadID: string }>();
 
     if (!message) {
       throw new APIError(404, 'handoff_not_found', 'Handoff does not exist.');
     }
 
-    return this.reply(message.thread_id, body, null, artifactLinks);
+    return this.reply(message.threadID, body, null, artifactLinks);
   }
 
   private static view(message: MessageRow): JSONRecord {
     return {
       id: message.id,
-      threadId: message.thread_id,
+      threadId: message.threadID,
       kind: message.kind,
-      senderAgentID: message.sender_agent_id,
-      senderSessionID: message.sender_session_id,
-      senderCanonicalAddress: message.sender_canonical_address,
-      recipientAgentID: message.recipient_agent_id,
-      recipientSessionID: message.recipient_session_id,
+      senderAgentID: message.senderAgentID,
+      senderSessionID: message.senderSessionID,
+      senderCanonicalAddress: message.senderCanonicalAddress,
+      recipientAgentID: message.recipientAgentID,
+      recipientSessionID: message.recipientSessionID,
       subject: message.subject,
       body: message.body,
-      artifactLinks: JSON.parse(message.artifacts_json) as string[],
-      createdAt: message.created_at,
+      artifactLinks: JSON.parse(message.artifactsJSON) as string[],
+      createdAt: message.createdAt,
     };
   }
 
   private static readonly MESSAGE_COLUMNS =
-    'm.id, m.thread_id, m.kind, m.sender_agent_id, m.sender_session_id, ' +
-    'm.sender_canonical_address, m.recipient_agent_id, m.recipient_session_id, m.subject, m.body, ' +
-    'm.artifacts_json, m.delivery_status, m.created_at';
+    'm.id, m.thread_id AS threadID, m.kind, ' +
+    'm.sender_agent_id AS senderAgentID, m.sender_session_id AS senderSessionID, ' +
+    'm.sender_canonical_address AS senderCanonicalAddress, ' +
+    'm.recipient_agent_id AS recipientAgentID, m.recipient_session_id AS recipientSessionID, ' +
+    'm.subject, m.body, m.artifacts_json AS artifactsJSON, ' +
+    'm.delivery_status AS deliveryStatus, m.created_at AS createdAt';
 
   async message(messageID: string, contextLimit = 0): Promise<JSONRecord> {
     const row = await this.env.DB.prepare(
@@ -357,12 +363,14 @@ export class RelayV2Service {
     }
 
     const thread = await this.env.DB.prepare(
-      'SELECT sender_session_id, recipient_session_id, accepted_session_id FROM threads WHERE id = ?',
-    ).bind(row.thread_id).first<Pick<ThreadRow,
-      'sender_session_id' | 'recipient_session_id' | 'accepted_session_id'>>();
+      'SELECT sender_session_id AS senderSessionID, ' +
+        'recipient_session_id AS recipientSessionID, ' +
+        'accepted_session_id AS acceptedSessionID FROM threads WHERE id = ?',
+    ).bind(row.threadID).first<Pick<ThreadRow,
+      'senderSessionID' | 'recipientSessionID' | 'acceptedSessionID'>>();
 
-    if (!thread || (![thread.sender_session_id, thread.recipient_session_id,
-      thread.accepted_session_id].includes(this.identity.sessionID))) {
+    if (!thread || (![thread.senderSessionID, thread.recipientSessionID,
+      thread.acceptedSessionID].includes(this.identity.sessionID))) {
       return { ...item, recentThreadMessages: [] };
     }
 
@@ -372,7 +380,7 @@ export class RelayV2Service {
         WHERE m.thread_id = ? AND m.delivery_status = 'sent'
           AND (m.created_at < ? OR (m.created_at = ? AND m.id < ?))
         ORDER BY m.created_at DESC, m.id DESC LIMIT ?`,
-    ).bind(row.thread_id, row.created_at, row.created_at, row.id, contextLimit).all<MessageRow>();
+    ).bind(row.threadID, row.createdAt, row.createdAt, row.id, contextLimit).all<MessageRow>();
 
     return {
       ...item,

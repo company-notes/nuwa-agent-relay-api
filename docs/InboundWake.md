@@ -10,7 +10,7 @@ The transport boundary deliberately stays unchanged. MailTrigger knows about SMT
 4. Relay authenticates `X-Relay-Inbound-Key`, checks the `[NAR:UUID]` subject marker, and matches the sender and recipient Agent mailbox email addresses against D1. Only then is `received_at` recorded.
 5. The D1 update queues an event for the intended Session's already-verified Wake subscription. A Session-targeted Message wakes its recipient Session. An Agent-level Handoff can notify the recipient Agent's Default Session, but any Session belonging to that Agent may explicitly accept it.
 6. Wake retries send a minimal signed `nuwa.message.available` payload with `messageId` and `sessionID`. The target must verify the signature/credential, compare Session ID and use Relay OAuth plus the Runtime capability before fetching the Message.
-7. Reading is only recorded by the recipient's explicit `POST /v2/messages/:id/read`. Neither Wake HTTP 2xx nor an Inbox read implies actual Bot work completion.
+7. Reading is only recorded by the recipient's explicit `PUT /v2/messages/:id/read-receipt`. Neither Wake HTTP 2xx nor an Inbox read implies actual Bot work completion.
 
 MailTrigger sends `{ "from": "$SENDER", "receiver": "$RECEIVERS", "subject": "$SUBJECT" }` with the independently configured private inbound header. The webhook URL stays under `/v1/` because changing MailTrigger Route configuration is unnecessary for the Agent Address V2 domain migration.
 
