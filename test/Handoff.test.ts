@@ -34,10 +34,14 @@ describe('Agent handoff flow', () => {
     expect(accepted.status).toBe(201);
     expect(accepted.body.data.acceptedBy).toBe('relay-test-org/beta/reviewer');
 
+    const deliveriesAfterAcceptance = client.deliveries.length;
     const alreadyAccepted = await client.call(
       'token-b', 'POST', `/v2/handoffs/${handoffId}/accept?session_id=session-b`,
     );
-    expect(alreadyAccepted.status).toBe(409);
+    expect(alreadyAccepted.status, 'The same accepting Session is idempotent').toBe(201);
+    expect(alreadyAccepted.body.data.id).toBe(accepted.body.data.id);
+    expect(alreadyAccepted.body.data.alreadyAccepted).toBe(true);
+    expect(client.deliveries, 'A duplicate accept must not send again').toHaveLength(deliveriesAfterAcceptance);
 
     const reply = await client.call(
       'token-b', 'POST', `/v2/handoffs/${handoffId}/reply?session_id=session-b`,
@@ -58,7 +62,7 @@ describe('Agent handoff flow', () => {
     expect(mismatchedIdentity.status).toBe(409);
   });
 
-  it('can retry accepting an Agent handoff after a MailTrigger delivery failure', async () => {
+  it('keeps exclusive ownership and one notification after an uncertain MailTrigger failure', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     await client.provisionAgentMailboxes();
@@ -79,14 +83,23 @@ describe('Agent handoff flow', () => {
     expect(failed.status, 'MailTrigger failure must be surfaced').toBe(502);
 
     const pending = await client.call('token-b', 'GET', '/v2/agent-inbox?session_id=session-b');
-    expect(pending.body.data, 'A failed acknowledgement must not permanently consume the handoff').toHaveLength(1);
+    expect(pending.body.data, 'A committed acceptance is not offered to another Session').toHaveLength(0);
 
+    const transmissions = client.deliveries.length;
     const retry = await client.call(
       'token-b', 'POST',
       `/v2/handoffs/${handoff.body.data.id}/accept?session_id=session-b`,
     );
 
-    expect(retry.status, 'The same Session must be able to retry acceptance').toBe(201);
+    expect(retry.status, 'The accepting Session can read its committed outcome').toBe(201);
+    expect(retry.body.data.alreadyAccepted).toBe(true);
+    expect(retry.body.data.notificationStatus, 'Transport uncertainty must remain observable').toBe('failed');
+    expect(client.deliveries, 'A retry must not generate an uncertain duplicate email').toHaveLength(transmissions);
+
+    const count = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE thread_id = ? AND kind = 'acceptance'",
+    ).bind(handoff.body.data.threadId).first<{ count: number }>();
+    expect(count?.count, 'Only one acceptance message may exist').toBe(1);
   });
   it('retains one accepted Session when MailTrigger delivers but its acknowledgement is lost', async () => {
     const client = new RelayTestClient();
