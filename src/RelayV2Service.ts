@@ -47,6 +47,7 @@ export type RelayMessageInput = {
 
 export class RelayV2Service {
   private static readonly logger = Logger.forModule('relay.v2');
+
   private static readonly THREAD_COLUMNS =
     't.id, t.org_id AS organizationID, t.kind, ' +
     't.sender_agent_id AS senderAgentID, t.sender_session_id AS senderSessionID, ' +
