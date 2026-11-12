@@ -43,11 +43,11 @@ class GatewayMigrationScenario {
       'SELECT body, delivery_status AS deliveryStatus, sender_canonical_address AS senderAddress ' +
       'FROM messages WHERE id = ?',
     ).get('msg-live');
-    assert.deepEqual(message, {
-      body: 'old message is preserved',
-      deliveryStatus: 'sent',
-      senderAddress: '',
-    });
+    // node:sqlite returns a null-prototype row; validate values, not
+    // representation details of the SQLite driver.
+    assert.equal(message.body, 'old message is preserved');
+    assert.equal(message.deliveryStatus, 'sent');
+    assert.equal(message.senderAddress, '');
 
     const thread = this.db.prepare('SELECT sender_session_id AS sender FROM threads WHERE id = ?')
       .get('thread-live');
