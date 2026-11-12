@@ -29,4 +29,4 @@ It fails closed on mismatched identities, absent resources or missing receipt ev
 
 This is a transport-level E2E check. It still does not prove that a provider (e.g. GrokBot or OpenMausBot) actually starts a Bot execution when Wake arrives. That acceptance requires a separate provider-specific staged callback integration.
 
-To run **offline** tests only: `npm run test:smoke`. These do not send email. See [DeploymentV2.md](DeploymentV2.md) for staging and D1 cutover safety.
+To run **offline** tests only: `npm run test:smoke`. These do not send email. See [Operations.md](Operations.md) for the normal main-branch production deployment and canonical D1 guard.
