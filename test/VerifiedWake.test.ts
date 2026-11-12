@@ -68,7 +68,7 @@ describe('Self-service signed Wake registration', () => {
     await client.provisionAgentMailboxes();
 
     const bearer = 'grokbot-private-key-THIS-IS-SECRET';
-    const url = 'https://api2.cursor.sh/automations/webhook/agent-b';
+    const url = 'https://api2.cursor.sh/automations/webhook/agent-000b';
     const registration = await client.call('token-b', 'POST',
       '/v2/wake-subscription?session_id=session-b', {
         callbackUrl: url, authMode: 'bearer', bearerToken: bearer,
