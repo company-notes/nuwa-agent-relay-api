@@ -34,12 +34,12 @@ function extractCookie(response: Response, name: string): string {
   return name + '=' + match![1];
 }
 
-async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' | 'token-c' = 'token-b', work = 'session-b') {
+async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' | 'token-c' = 'token-b', sessionID = 'session-b') {
   const created = await client.call(token, 'POST',
-    '/v2/wake-pairings?session_id=' + work);
+    '/v2/wake-pairings?session_id=' + sessionID);
   expect(created.status).toBe(201);
   expect(created.body.data).toMatchObject({
-    status: 'awaiting_user', sessionID: work,
+    status: 'awaiting_user', sessionID,
   });
   expect(created.body.data.pairingUrl).toMatch(
     /^https:\/\/agent-relay\.company-notes\.com\/wake-pair\/[a-f0-9]{64}$/,
@@ -57,7 +57,7 @@ async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' |
   expect(state).toMatch(/^[0-9a-f-]{36}\.[a-f0-9]{48}$/);
 
   const oauthCookie = extractCookie(start,
-    '__Agent-nuwa_pair_oauth_' + state!.split('.')[1]);
+    '__Host-nuwa_pair_oauth_' + state!.split('.')[1]);
 
   return { created, state: state!, oauthCookie };
 }
@@ -77,7 +77,7 @@ describe('user-controlled Wake Pairing', () => {
     expect(secondState).toBeTruthy();
     expect(secondState).not.toBe(state);
     const secondCookie = extractCookie(secondStart,
-      '__Agent-nuwa_pair_oauth_' + secondState!.split('.')[1]);
+      '__Host-nuwa_pair_oauth_' + secondState!.split('.')[1]);
     expect(secondCookie.split('=')[0]).not.toBe(oauthCookie.split('=')[0]);
 
     const storedAttempts = await env.DB.prepare(
@@ -107,7 +107,7 @@ describe('user-controlled Wake Pairing', () => {
       new URLSearchParams({ state: secondState!, code: 'owned-work' }), secondCookie);
     expect(laterCallback.status).toBe(409);
     expect(callback.headers.get('location')).toBe(origin + '/wake-pair/complete');
-    const sessionCookie = extractCookie(callback, '__Agent-nuwa_pair_session');
+    const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
     expect(callback.headers.get('cache-control')).toBe('no-store');
 
     const form = await open(origin + '/wake-pair/complete', sessionCookie);
@@ -188,7 +188,7 @@ describe('user-controlled Wake Pairing', () => {
     const { created, state, oauthCookie } = await authorize(client, 'token-c', 'session-c');
 
     const forged = await open(origin + '/wake-pair/oauth/callback?' +
-      new URLSearchParams({ state, code: 'owned-c' }), '__Agent-nuwa_pair_oauth=fake');
+      new URLSearchParams({ state, code: 'owned-c' }), '__Host-nuwa_pair_oauth=fake');
     expect(forged.status).toBe(403);
 
     const otherAccount = await open(origin + '/wake-pair/oauth/callback?' +
@@ -198,7 +198,7 @@ describe('user-controlled Wake Pairing', () => {
     const legitimate = await open(origin + '/wake-pair/oauth/callback?' +
       new URLSearchParams({ state, code: 'owned-c' }), oauthCookie);
     expect(legitimate.status).toBe(303);
-    const sessionCookie = extractCookie(legitimate, '__Agent-nuwa_pair_session');
+    const sessionCookie = extractCookie(legitimate, '__Host-nuwa_pair_session');
     const formResponse = await open(origin + '/wake-pair/complete', sessionCookie);
     const csrfToken = extractCSRF(await formResponse.text());
 
@@ -308,7 +308,7 @@ describe('user-controlled Wake Pairing', () => {
       new URLSearchParams({ state, code: 'owned-a' }), oauthCookie);
     expect(callback.status).toBe(303);
 
-    const sessionCookie = extractCookie(callback, '__Agent-nuwa_pair_session');
+    const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
     const safeForm = await open(origin + '/wake-pair/complete', sessionCookie);
     const csrfToken = extractCSRF(await safeForm.text());
     const secretPath = 'dont-leak-private-path';
