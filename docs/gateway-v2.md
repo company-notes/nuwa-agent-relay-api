@@ -39,9 +39,9 @@ never grants a route write.
 
 | Method and resource | Meaning |
 | --- | --- |
-| `PUT /v2/gateway-routes/current` | Configure recipient Session: `{ "recipientBotID": "...", "threadMode": "explicit" | "platform", "firstContactMode": "manual" | "automatic" }` (automatic only with explicit) |
-| `GET /v2/gateway-routes/current` | Retrieve current Session's route (no Webhook secret) |
-| `DELETE /v2/gateway-routes/current` | Unconfigure route and clear its sender conversation mappings |
+| `PUT /v2/gateway-route` | Configure recipient Session: `{ "recipientBotID": "...", "threadMode": "explicit" | "platform", "firstContactMode": "manual" | "automatic" }` (automatic only with explicit) |
+| `GET /v2/gateway-route` | Retrieve current Session's route (no Webhook secret) |
+| `DELETE /v2/gateway-route` | Unconfigure route and clear its sender conversation mappings |
 | `PUT /v2/gateway-conversations/{senderSessionID}` | Explicit mode only: `{ "nativeThreadID": "..." }`; assert sender belongs to the same Organization |
 | `GET /v2/gateway-conversations` | List the current recipient Session's conversation mappings |
 | `DELETE /v2/gateway-conversations/{senderSessionID}` | Reset only that sender's native conversation mapping |

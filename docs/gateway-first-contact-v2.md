@@ -20,7 +20,7 @@ The receiving **Session's authorized Runtime** (OAuth bearer, Session ID,
 private `X-Nuwa-Runtime-Token`) configures:
 
 ```http
-PUT /v2/gateway-routes/current?session_id=<RECIPIENT_SESSION_ID>
+PUT /v2/gateway-route?session_id=<RECIPIENT_SESSION_ID>
 Content-Type: application/json
 Authorization: Bearer <PRIVATE_OAUTH>
 X-Nuwa-Runtime-Token: <PRIVATE_RUNTIME>
@@ -181,7 +181,7 @@ Organization. Only the recipient Runtime can change this mapping.
 | `DELETE /v2/gateway-first-contacts/{senderSessionID}` | **Operator-only**, cancel an unresolved reservation; inspect provider UI first |
 | `GET /v2/gateway-conversations` | View the committed recipient-side sender → native Thread map |
 | `DELETE /v2/gateway-conversations/{senderSessionID}` | Reset only this sender's binding and first-contact record; next send will initialize afresh |
-| `DELETE /v2/gateway-routes/current` | Remove the receiver's Gateway settings and its mappings |
+| `DELETE /v2/gateway-route` | Remove the receiver's Gateway settings and its mappings |
 
 After an ambiguous Webhook timeout, the first event may have been processed
 even when HTTP delivery failed. **Do not auto-retry opening a new native
