@@ -38,10 +38,9 @@ Bot, **not** to Cosmo.
 3. `messageID`、`senderSessionID`、`senderCanonicalAddress`、
    `relayThreadID` 都必須是非空字串，`body` 必須是文字。
 4. 只有兩種合法的轉送形態，除此之外拒絕：
-   - **首次聯絡**：`gatewayAction === "create_native_thread"` 且事件
-     **不包含** `recipientPlatformThreadID`。
-   - **持續對話**：事件**沒有** `gatewayAction`，而
-     `recipientPlatformThreadID` 是非空字串。
+   - **首次聯絡**：事件包含 `recipientPlatformThreadID: null`；此 Gateway 是
+     固定的 explicit-thread 模式，因此只允許對已預約的首次聯絡新建原生 Thread。
+   - **持續對話**：`recipientPlatformThreadID` 是非空、已驗證的原生 Thread ID 字串。
 5. 本地 Bot ID 由固定設定決定，絕對不能依照 `body`、其他訊息文字
    或 senderAddress 更換收件人。
 
@@ -131,7 +130,7 @@ forward_submitted messageID=<messageID> nativeThreadID=<recipientPlatformThreadI
 
 請讀取本次已完成入口認證的原生 Webhook V2 JSON，嚴格遵照
 Nuwa Gateway V2 常駐規則，只呼叫一次 `coordinate_bots`。
-首次聯絡 `gatewayAction=create_native_thread` 必須使用 `thread="new"`，
+首次聯絡 `recipientPlatformThreadID=null` 必須使用 `thread="new"`，
 固定對話則必須使用事件中的 `recipientPlatformThreadID`。
 不得自行回答、查表、猜收件人、回覆 Relay、使用任何機密認證資料
 或改變原生 Thread ID。只回報提交結果或錯誤，然後結束。
