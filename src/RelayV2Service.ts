@@ -262,8 +262,6 @@ export class RelayV2Service {
       acceptingAgentID: this.identity.agentID,
       acceptingSessionID: this.identity.sessionID,
       acceptingCanonicalAddress: this.identity.canonicalAddress,
-      senderAgentID: handoff.sender_agent_id,
-      senderSessionID: handoff.sender_session_id,
     });
 
     if (!accepted.created) {
