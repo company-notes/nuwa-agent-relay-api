@@ -126,7 +126,7 @@ export class WakeTarget {
     return Array.from(new Uint8Array(signed), (byte) => byte.toString(16).padStart(2, '0')).join('');
   }
 
-  static async send(config: WakeTargetConfig, data: Record<string, string>): Promise<boolean> {
+  static async send(config: WakeTargetConfig, data: Record<string, unknown>): Promise<boolean> {
     // Re-validate on *every* delivery, including persisted/legacy targets.
     const target = this.validateURL(config.callbackURL);
     const body = JSON.stringify(data);
