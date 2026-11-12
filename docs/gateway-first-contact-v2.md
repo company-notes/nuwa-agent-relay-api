@@ -125,6 +125,36 @@ read the actual `coordinate_bots` tool receipt and invoke this trusted
 helper **automatically is not yet implemented**. Until it is verified, do not
 claim the complete native-first-contact flow is hands-free or production ready.
 
+### Operator-only staging confirmation helper
+
+After the first real `coordinate_bots(thread="new")` tool receipt reports the
+native Thread ID, a trusted operator can confirm without revealing any OAuth
+or Runtime capabilities to the model. This is a **manual staging adapter** until
+the platform's authenticated run-result observer is implemented.
+
+Set these credentials only in the trusted operator's private environment or
+secret manager (never paste their values into chat or issue tracker):
+
+- `NUWA_GATEWAY_OAUTH_TOKEN`: OAuth credential authorized for the receiving Session
+- `NUWA_GATEWAY_RUNTIME_TOKEN`: its active, private Runtime capability
+- `NUWA_GATEWAY_RECIPIENT_SESSION_ID`: immutable recipient Session ID
+
+Run:
+
+```sh
+node scripts/GatewayFirstContactConfirm.mjs \
+  --relay-url https://your-relay-v2-staging.example.org \
+  --sender-session-id <SENDER_SESSION_ID> \
+  --message-id <INITIATING_MESSAGE_UUID> \
+  --native-thread-id <ACTUAL_OPENMAUSBOT_WORK_THREAD_ID> \
+  --authorize-staging-confirmation
+```
+
+The helper uses an authenticated HTTPS request, refuses redirect handling,
+does not print secrets, checks the Relay confirmation result and performs **no
+automatic retries**. The receiver still needs to have the *actual* matching
+tool receipt; the CLI does not verify platform thread ownership by itself.
+
 ## Subsequent and simultaneous messages
 
 A message arriving during first-contact initialization **must not start a
