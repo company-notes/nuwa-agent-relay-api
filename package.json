@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:smoke": "node --test scripts/V2Smoke.checks.mjs scripts/GuardV2D1.checks.mjs",
+    "test:smoke": "node --test scripts/V2Smoke.checks.mjs scripts/GuardV2D1.checks.mjs scripts/GatewayMigration.checks.mjs",
     "dev": "wrangler dev",
     "check": "tsc --noEmit",
     "test": "vitest run",

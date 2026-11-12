@@ -35,6 +35,7 @@ jobs:
           node --check scripts/ResolveRelayD1.mjs
           node --check scripts/GuardV2D1.mjs
           node --check scripts/SmokeProduction.mjs
+          node --check scripts/GatewayFirstContactConfirm.mjs
 
   deploy:
     if: >-
