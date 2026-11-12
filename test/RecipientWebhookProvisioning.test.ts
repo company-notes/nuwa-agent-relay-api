@@ -67,7 +67,7 @@ describe('Recipient MailTrigger Webhook Route', () => {
     expect(client.rules.find((rule) => rule.note === 'NAR recipient 1')).toMatchObject({
       target: 2,
       ruleType: 1,
-      value: '^nar-hosta@relay-test\\.example$',
+      value: '^nar-agent000a@relay-test\\.example$',
       user: 31,
     });
 
@@ -159,14 +159,14 @@ describe('Recipient MailTrigger Webhook Route', () => {
     expect(client.routes).toHaveLength(2);
     expect(client.actions).toHaveLength(2);
 
-    await provider.deleteManagedMailbox(String(ready.body.data.mailboxId), 'nar-hosta');
+    await provider.deleteManagedMailbox(String(ready.body.data.mailboxId), 'nar-agent000a');
 
     expect(client.routes).toHaveLength(0);
     expect(client.actions).toHaveLength(0);
     expect(client.rules).toHaveLength(0);
     expect(client.webhookParameters.size).toBe(0);
 
-    await provider.deleteManagedMailbox(String(ready.body.data.mailboxId), 'nar-hosta');
+    await provider.deleteManagedMailbox(String(ready.body.data.mailboxId), 'nar-agent000a');
   });
   it('removes only the exact provider inbound origin route after the NAR receipt route is active', async () => {
     const client = new RelayTestClient();
