@@ -204,11 +204,22 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     expect(scenario.client.wakeCallbacks, 'Only one initial native conversation may be opened').toHaveLength(1);
     expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
       messageID: first,
-      gatewayAction: 'create_native_thread',
+      recipientPlatformThreadID: null,
       senderSessionID: 'session-a',
       recipientBotID: 'cosmo-bot-immutable',
     });
-    expect(scenario.client.wakeCallbacks[0].body).not.toHaveProperty('recipientPlatformThreadID');
+    expect(scenario.client.wakeCallbacks[0].body).not.toHaveProperty('gatewayAction');
+
+    // The deployed Studio WakeReceiver permits these V2 fields only.
+    const allowedWakeFields = new Set([
+      'event', 'eventVersion', 'messageID', 'recipientSessionID',
+      'relayThreadID', 'senderSessionID', 'senderCanonicalAddress',
+      'recipientAgentID', 'recipientCanonicalAddress', 'recipientBotID',
+      'body', 'recipientPlatformThreadID',
+    ]);
+    expect(Object.keys(scenario.client.wakeCallbacks[0].body)
+      .every((field) => allowedWakeFields.has(field))).toBe(true);
+
     expect((await scenario.pendingFirstContacts()).body.data).toEqual([
       expect.objectContaining({ senderSessionID: 'session-a', messageID: first }),
     ]);
@@ -254,8 +265,8 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     await scenario.deliver();
 
     expect(scenario.client.wakeCallbacks).toHaveLength(2);
-    expect(scenario.client.wakeCallbacks.map((entry) => entry.body.gatewayAction))
-      .toEqual(['create_native_thread', 'create_native_thread']);
+    expect(scenario.client.wakeCallbacks.map((entry) => entry.body.recipientPlatformThreadID))
+      .toEqual([null, null]);
     expect((await scenario.pendingFirstContacts()).body.data).toHaveLength(2);
 
     expect((await scenario.complete('session-a', a, 'thread-xiaoqing')).status).toBe(200);
@@ -304,7 +315,7 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     await scenario.deliver();
 
     const newEvent = scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === next);
-    expect(newEvent?.body.gatewayAction).toBe('create_native_thread');
+    expect(newEvent?.body.recipientPlatformThreadID).toBeNull();
   });
 
   it('never retries a reserved first-contact event into another new native thread', async () => {
