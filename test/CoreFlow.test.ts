@@ -4,21 +4,21 @@ import { describe, expect, it } from 'vitest';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Nuwa Agent Relay core messaging flow', () => {
-  it('delivers, persists and replies to a canonical work-address thread', async () => {
+  it('delivers, persists and replies to a canonical session-address thread', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
-    await client.provisionBothHosts();
+    await client.provisionAgentMailboxes();
 
     const provisionedAgain = await client.call(
       'token-b',
       'POST',
-      '/v1/hosts/provision?work_address_id=work-b',
+      '/v2/agents/mailbox?session_id=session-b',
     );
     expect(provisionedAgain.status).toBe(201);
     expect(provisionedAgain.body.data.created, 'Provisioning a host twice must reuse its mailbox').toBe(false);
 
-    const outbound = await client.call('token-a', 'POST', '/v1/messages?work_address_id=work-a', {
-      to: '@beta/reviewer',
+    const outbound = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: 'relay-test-org/beta/reviewer',
       body: 'Please check the release build.',
       artifactLinks: ['https://files.example.com/build.zip'],
     });
@@ -26,7 +26,7 @@ describe('Nuwa Agent Relay core messaging flow', () => {
     expect(outbound.status).toBe(201);
     const threadId = outbound.body.data.threadId as string;
 
-    const inbox = await client.call('token-b', 'GET', '/v1/inbox?work_address_id=work-b');
+    const inbox = await client.call('token-b', 'GET', '/v2/inbox?session_id=session-b');
     expect(inbox.status).toBe(200);
     expect(inbox.body.data).toHaveLength(1);
     expect(inbox.body.data[0].body).toBe('Please check the release build.');
@@ -39,12 +39,12 @@ describe('Nuwa Agent Relay core messaging flow', () => {
 
     const reply = await client.call(
       'token-b', 'POST',
-      `/v1/threads/${threadId}/messages?work_address_id=work-b`,
+      `/v2/threads/${threadId}/messages?session_id=session-b`,
       { body: 'Verified. Build passes on Linux.' },
     );
     expect(reply.status).toBe(201);
 
-    const history = await client.call('token-a', 'GET', `/v1/threads/${threadId}?work_address_id=work-a`);
+    const history = await client.call('token-a', 'GET', `/v2/threads/${threadId}?session_id=session-a`);
     expect(history.status).toBe(200);
     expect(history.body.data).toHaveLength(2);
     expect(history.body.data.map((item: any) => item.body)).toContain('Verified. Build passes on Linux.');
