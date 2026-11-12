@@ -85,6 +85,16 @@ export class SessionIdentityClient {
     return session;
   }
 
+  async status(): Promise<{ organization: { id: string; slug: string } | null }> {
+    return this.request<AccountStatus>('GET', '/v2/account/status');
+  }
+
+  async session(sessionID: string): Promise<ResolvedSession> {
+    return SessionIdentityClient.requireSession(await this.request<ResolvedSession>(
+      'GET', '/v2/account/sessions/' + encodeURIComponent(sessionID),
+    ));
+  }
+
   async resolve(address: string): Promise<ResolvedSession> {
     const session = await this.request<ResolvedSession>(
       'GET',
@@ -99,7 +109,7 @@ export class SessionIdentityClient {
       throw new APIError(400, 'session_capability_required', 'Session ID and Runtime capability are required.');
     }
 
-    const status = await this.request<AccountStatus>('GET', '/v2/account/status');
+    const status = await this.status();
     const organization = status?.organization;
 
     if (!organization || typeof organization.id !== 'string' ||
@@ -107,12 +117,7 @@ export class SessionIdentityClient {
       throw new APIError(403, 'organization_required', 'No authorized Organization is available.');
     }
 
-    const session = await this.request<ResolvedSession>(
-      'GET',
-      '/v2/account/sessions/' + encodeURIComponent(sessionID),
-    );
-
-    const verifiedSession = SessionIdentityClient.requireSession(session);
+    const verifiedSession = await this.session(sessionID);
 
     if (verifiedSession.id !== sessionID ||
         verifiedSession.canonical.split('/')[0] !== organization.slug) {
