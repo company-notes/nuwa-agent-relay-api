@@ -63,6 +63,7 @@ class GatewayMigrationScenario {
     ).all().map((item) => item.name);
     assert.deepEqual(gateway, [
       'gateway_conversations', 'gateway_first_contacts', 'gateway_routes',
+      'gateway_teammates',
     ]);
 
     this.db.prepare(
@@ -92,6 +93,8 @@ test('upgrade deployed V2 with existing message and pending Wake without data lo
     scenario.apply('0001_init.sql');
     scenario.seedLiveConversation();
     scenario.apply('0002_gateway.sql');
+    scenario.apply('0003_handoff_acceptance.sql');
+    scenario.apply('0004_gateway_roster.sql');
     scenario.verify();
   } finally {
     scenario.close();
