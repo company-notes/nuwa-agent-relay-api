@@ -294,7 +294,7 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       const run = {
         startedAt: Date.now(),
         state: 'running',
-        caller: (new Error().stack ?? '').split('\\n').slice(2, 6).join(' | '),
+        caller: (new Error().stack ?? '').split('\n').slice(2, 6).join(' | '),
       } as (typeof dispatchTrace)[number];
       dispatchTrace.push(run);
 
