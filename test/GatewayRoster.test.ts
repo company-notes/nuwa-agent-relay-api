@@ -106,8 +106,8 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       recipientBotID: 'native-bear-001',
       body: '你好！密語是星河。',
     });
-    expect(scenario.client.nameDirectoryLookups).toBe(2,
-      'One directory read for registration and one for message send; none in Gateway Wake.');
+    expect(scenario.client.nameDirectoryLookups,
+      'One directory read for registration and one for message send; none in Gateway Wake.').toBe(2);
 
     const ambiguous = await scenario.client.call('token-g', 'POST',
       '/v2/gateway-teammates?session_id=session-g', {
