@@ -139,18 +139,18 @@ export class GatewayFirstContacts {
 
   private async releaseWakes(senderSessionID: string, messageID: string): Promise<void> {
     // Wake ownership is the callback Session, which can be a shared Gateway.
-    // Select messages by their immutable sender/recipient Session pair first,
-    // then update each Wake through its primary key. This avoids accidentally
-    // releasing another teammate's pending native first contact.
+    // Select verified Messages using their immutable Session pair and org;
+    // do not join the Wake queue during selection. A shared Gateway owns its
+    // Wake rows, but does not own the recipient's Message identity.
+    // The subsequent primary-key updates only affect pending Wake rows.
     const waiting = await this.env.DB.prepare(
-      `SELECT e.message_id AS messageID
-         FROM wake_events e
-         JOIN messages m ON m.id = e.message_id
+      `SELECT m.id AS messageID
+         FROM messages m
          JOIN threads t ON t.id = m.thread_id
         WHERE t.org_id = ? AND m.sender_session_id = ?
           AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
-          AND e.message_id <> ? AND e.status = 'pending'
-        ORDER BY m.created_at, e.message_id`,
+          AND m.id <> ?
+        ORDER BY m.created_at, m.id`,
     ).bind(this.organizationID, senderSessionID, this.recipientSessionID, messageID)
       .all<{ messageID: string }>();
 
