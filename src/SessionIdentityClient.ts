@@ -21,6 +21,13 @@ type AccountStatus = {
 
 type Lease = { expiresAt: string };
 
+export type DirectoryAgent = {
+  id: string;
+  handle: string;
+  displayName: string | null;
+  defaultSessionHandle: string | null;
+};
+
 export class SessionIdentityClient {
   constructor(
     private readonly addressURL: Env['ADDRESS_API_URL'],
@@ -87,6 +94,21 @@ export class SessionIdentityClient {
 
   async status(): Promise<{ organization: { id: string; slug: string } | null }> {
     return this.request<AccountStatus>('GET', '/v2/account/status');
+  }
+
+  async listAgents(): Promise<DirectoryAgent[]> {
+    const records = await this.request<unknown>('GET', '/v2/account/agents');
+
+    if (!Array.isArray(records) || records.some((row) =>
+      !row || typeof row !== 'object' || typeof row.id !== 'string' ||
+      typeof row.handle !== 'string' || !row.handle ||
+      row.displayName != null && typeof row.displayName !== 'string' ||
+      row.defaultSessionHandle != null && typeof row.defaultSessionHandle !== 'string')) {
+      throw new APIError(502, 'address_response_invalid',
+        'Agent Address returned an invalid authorized directory.');
+    }
+
+    return records as DirectoryAgent[];
   }
 
   async session(sessionID: string): Promise<ResolvedSession> {
