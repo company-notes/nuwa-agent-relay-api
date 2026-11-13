@@ -155,6 +155,25 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(waiting, 'A shared Gateway owns the notification, not the recipient Session')
       .toMatchObject({ sessionID: 'session-g', status: 'pending' });
 
+    const queuedMessage = await env.DB.prepare(
+      `SELECT m.sender_session_id AS senderSessionID,
+              m.recipient_session_id AS recipientSessionID,
+              m.received_at AS receivedAt, t.org_id AS organizationID
+         FROM messages m JOIN threads t ON t.id = m.thread_id
+        WHERE m.id = ?`,
+    ).bind(second).first<{
+      senderSessionID: string; recipientSessionID: string;
+      organizationID: string; receivedAt: string | null;
+    }>();
+    expect(queuedMessage, 'Release must use the recorded Message pair, not the Wake callback Session')
+      .toMatchObject({
+        senderSessionID: 'session-a',
+        recipientSessionID: 'session-b',
+        organizationID: 'org-id',
+      });
+    expect(queuedMessage?.receivedAt,
+      'Only a confirmed MailTrigger arrival can create the waiting Wake').not.toBeNull();
+
     const path = '/v2/gateway-teammates/session-b/first-contacts/session-a';
     const receipt = { messageID: first, nativeThreadID: 'cosmo-real-thread-1' };
 
@@ -247,6 +266,18 @@ describe('Office Gateway registration and shared Wake use cases', () => {
         messageID: bearFirst, nativeThreadID: 'bear-work-thread',
       });
     expect(bearConfirmed.status).toBe(200);
+
+    const queue = await env.DB.prepare(
+      `SELECT message_id AS messageID, next_attempt_at AS nextAttempt
+         FROM wake_events WHERE message_id IN (?, ?)`,
+    ).bind(bearWaiting, analystWaiting)
+      .all<{ messageID: string; nextAttempt: string }>();
+    const schedule = new Map(queue.results.map((item) => [item.messageID, item.nextAttempt]));
+    expect(Date.parse(schedule.get(bearWaiting)!),
+      'The confirmed recipient must be released immediately').toBeLessThanOrEqual(Date.now());
+    expect(Date.parse(schedule.get(analystWaiting)!),
+      'The other recipient on the same Gateway must remain reserved').toBeGreaterThan(Date.now());
+
     await WakeService.dispatchDue(env);
 
     expect(scenario.client.wakeCallbacks.map((item) => item.body.messageID))
