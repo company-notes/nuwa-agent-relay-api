@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
+import { MailReceipt } from '../src/MailReceipt';
+import { WakeService } from '../src/WakeService';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Relay resolves familiar colleague names in the one send request', () => {
@@ -40,6 +42,54 @@ describe('Relay resolves familiar colleague names in the one send request', () =
     expect(history.status).toBe(200);
     expect(history.body.data.map((m: { body: string }) => m.body))
       .toEqual(['你好，大熊！密語是星河。', '收到星河。']);
+  });
+
+  it('sends the already-selected Bot ID in signed Wake without asking Gateway to resolve names', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+
+    const removed = await client.call('token-b', 'DELETE',
+      '/v2/gateway-route?session_id=session-b');
+    expect(removed.status).toBe(200);
+
+    await client.provisionAgentMailboxes();
+    await client.registerVerifiedWake();
+
+    const route = await client.call('token-b', 'PUT',
+      '/v2/gateway-route?session_id=session-b', {
+        recipientBotID: 'immutable-bear-bot',
+        threadMode: 'platform',
+      });
+    expect(route.status).toBe(200);
+
+    const send = await client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: '大熊', body: '這是直接指定助理名稱的來電。',
+      });
+    expect(send.status).toBe(201);
+
+    const mailbox = await client.call('token-b', 'POST',
+      '/v2/agent-mailboxes?session_id=session-b');
+    client.archiveDeliveredEmail(
+      mailbox.body.data.mailboxId,
+      '[NAR:' + send.body.data.id + '] Agent Relay message',
+    );
+
+    await MailReceipt.reconcileArchives(env);
+    await WakeService.dispatchDue(env);
+
+    expect(client.wakeCallbacks).toHaveLength(1);
+    expect(client.wakeCallbacks[0].signature, 'Wake is still signed').not.toBeNull();
+    expect(client.wakeCallbacks[0].body).toMatchObject({
+      event: 'nuwa.message.available',
+      eventVersion: 2,
+      recipientSessionID: 'session-b',
+      recipientBotID: 'immutable-bear-bot',
+      senderSessionID: 'session-a',
+      relayThreadID: send.body.data.threadId,
+    });
+    expect(client.nameDirectoryLookups,
+      'The Gateway receives a preselected Bot, with no extra name lookup').toBe(1);
   });
 
   it('rejects duplicate, unknown or not-yet-ready names before any message is stored or sent', async () => {
