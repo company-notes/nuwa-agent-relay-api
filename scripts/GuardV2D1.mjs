@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { WranglerRunner } from './WranglerRunner.mjs';
 import { fileURLToPath } from 'node:url';
 
 const REQUIRED = [
@@ -94,8 +94,8 @@ export function readTableNames(output) {
 
 export function guardRemoteDatabase(requireMigrated = false) {
   const query = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name";
-  const output = execFileSync('npx', [
-    'wrangler', 'd1', 'execute', 'DB', '--remote',
+  const output = WranglerRunner.execute([
+    'd1', 'execute', 'DB', '--remote',
     '--config', '.wrangler.deploy.jsonc', '--command', query, '--json',
   ], {
     encoding: 'utf8',
