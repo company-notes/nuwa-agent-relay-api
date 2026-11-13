@@ -119,10 +119,10 @@ export class WakeService {
          JOIN messages m ON m.id = e.message_id
          JOIN threads t ON t.id = m.thread_id
          LEFT JOIN gateway_teammates g
-           ON g.org_id = t.org_id AND g.recipient_session_id = e.session_id
-          AND g.status = 'active'
+           ON g.org_id = t.org_id AND g.recipient_session_id = m.recipient_session_id
+          AND g.gateway_session_id = e.session_id AND g.status = 'active'
          JOIN wake_subscriptions s
-           ON s.org_id = t.org_id AND s.session_id = COALESCE(g.gateway_session_id, e.session_id)
+           ON s.org_id = t.org_id AND s.session_id = e.session_id
         WHERE e.status = 'pending' AND e.next_attempt_at <= ?
           AND m.received_at IS NOT NULL
           AND (e.lease_until IS NULL OR e.lease_until <= ?)
