@@ -116,6 +116,22 @@ describe('Relay resolves familiar colleague names in the one send request', () =
     expect(stored?.total).toBe(0);
   });
 
+  it('fails closed on contradictory directory records before delivering', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionAgentMailboxes();
+    client.corruptNameDirectory = true;
+
+    const sent = await client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: '大熊', body: 'Do not deliver with untrusted identity data.',
+      });
+
+    expect(sent.status).toBe(502);
+    expect(sent.body.error.code).toBe('address_response_invalid');
+    expect(client.deliveries).toHaveLength(0);
+  });
+
   it('preserves fast canonical-address sends without a directory lookup', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
