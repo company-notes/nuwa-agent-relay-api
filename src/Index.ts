@@ -213,6 +213,20 @@ export class RelayAPI {
       return HTTP.response(await bindings.cancelFirstContact(firstContactSender));
     }
 
+    const teammateFirstContact = path.match(
+      /^\/v2\/gateway-teammates\/([^/]+)\/first-contacts\/([^/]+)$/,
+    );
+
+    if (teammateFirstContact && request.method === 'PUT') {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(await bindings.confirmTeammateFirstContact(
+        teammateFirstContact[1], teammateFirstContact[2],
+        HTTP.requiredString(data, 'messageID', 64),
+        HTTP.requiredString(data, 'nativeThreadID', 192),
+      ));
+    }
+
     const senderSessionID = RelayAPI.match(
       path, /^\/v2\/gateway-conversations\/([^/]+)$/,
     );
@@ -431,7 +445,9 @@ export default {
 
       if (response.ok && context &&
           ((request.method === 'POST' && path === '/v1/mailtrigger/receipt') ||
-            (request.method === 'PUT' && path.startsWith('/v2/gateway-first-contacts/')))) {
+            (request.method === 'PUT' &&
+              (path.startsWith('/v2/gateway-first-contacts/') ||
+                /^\/v2\/gateway-teammates\/[^/]+\/first-contacts\/[^/]+$/.test(path))))) {
         context.waitUntil(WakeService.dispatchDue(env));
       }
 
