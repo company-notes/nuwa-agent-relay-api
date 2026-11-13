@@ -242,9 +242,16 @@ export class RelayAPI {
 
       if (request.method === 'POST') {
         const data = await HTTP.json(request);
+        const address = HTTP.optionalString(data, 'recipientAddress', 255);
+        const name = HTTP.optionalString(data, 'recipientName', 120);
+
+        if (Boolean(address) === Boolean(name)) {
+          throw new APIError(400, 'gateway_recipient_required',
+            'Specify exactly one recipientAddress or recipientName.');
+        }
 
         return HTTP.response(await roster.invite(
-          HTTP.requiredString(data, 'recipientAddress', 255),
+          address ? { address } : { name: name! },
           HTTP.requiredString(data, 'recipientBotID', 192),
           GatewayModeCodec.readThreadMode(HTTP.requiredString(data, 'threadMode', 32)),
           GatewayModeCodec.readFirstContactMode(
