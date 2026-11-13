@@ -222,6 +222,11 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(ambiguous.status).toBe(409);
     expect(ambiguous.body.error.code).toBe('recipient_name_ambiguous');
 
+    const outsider = await scenario.client.call('token-h', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-h&recipient_name=' +
+        encodeURIComponent('大熊'));
+    expect(outsider.status).toBe(404);
+
     const revoked = await scenario.client.call('token-g', 'DELETE',
       '/v2/gateway-teammates?session_id=session-g&recipient_name=' +
         encodeURIComponent('大熊'));
@@ -230,7 +235,7 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       removed: true, recipientSessionID: 'session-b',
     });
     expect(scenario.client.nameDirectoryLookups,
-      'Revocation must resolve the current name through Agent Address').toBe(2);
+      'Every destructive name resolution must read Agent Address freshly').toBe(3);
 
     const roster = await scenario.client.call('token-g', 'GET',
       '/v2/gateway-teammates?session_id=session-g');
@@ -240,11 +245,6 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       recipientSessionID: 'session-d', recipientBotID: 'analyst-to-keep',
       status: 'active',
     });
-
-    const noTarget = await scenario.client.call('token-h', 'DELETE',
-      '/v2/gateway-teammates?session_id=session-h&recipient_name=' +
-        encodeURIComponent('雙胞胎'));
-    expect(noTarget.status).toBe(409);
 
     const both = await scenario.client.call('token-g', 'DELETE',
       '/v2/gateway-teammates?session_id=session-g&recipient_name=' +
