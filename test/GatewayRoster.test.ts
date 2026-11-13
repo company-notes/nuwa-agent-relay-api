@@ -287,19 +287,20 @@ describe('Office Gateway registration and shared Wake use cases', () => {
   it('does not release another coworker waiting on the same shared Gateway', async () => {
     const dispatchTrace: Array<{
       startedAt: number; endedAt?: number; state: string; caller: string;
-      error?: string;
+      origin?: string; error?: string;
     }> = [];
     const originalDispatch = WakeService.dispatchDue;
-    vi.spyOn(WakeService, 'dispatchDue').mockImplementation(async (currentEnv) => {
+    vi.spyOn(WakeService, 'dispatchDue').mockImplementation(async (currentEnv, origin) => {
       const run = {
         startedAt: Date.now(),
         state: 'running',
+        origin: origin ?? 'direct',
         caller: (new Error().stack ?? '').split('\n').slice(2, 6).join(' | '),
       } as (typeof dispatchTrace)[number];
       dispatchTrace.push(run);
 
       try {
-        await originalDispatch.call(WakeService, currentEnv);
+        await originalDispatch.call(WakeService, currentEnv, origin);
         run.state = 'completed';
       } catch (error) {
         run.state = 'rejected';
@@ -536,32 +537,70 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       { messageID: analystWaiting, wakeSessionID: 'session-g',
         approvedGatewaySessionID: 'session-g', recipientSessionID: 'session-d' },
     ]));
-    expect(eligibleIDs, 'WAKE_RELEASE_V12_DUE_DIAGNOSTIC: Bear Wake missing after an ' +
-      'earlier lease-free receipt snapshot: ' +
-      JSON.stringify({ confirmedAt, receiptSnapshot, eligibleIDs,
-        preDispatch: preDispatch.results,
-        wakeOwnerMembership: wakeOwnerMembership.results,
-        dispatchTrace }))
-      .toContain(bearWaiting);
-    expect(eligibleIDs, 'Analyst first contact must stay off the due queue')
+    const beforeDispatch = preDispatch.results.find(
+      (entry) => entry.messageID === bearWaiting);
+    expect(beforeDispatch).toBeDefined();
+    const alreadyClaimed = beforeDispatch!.status === 'pending' &&
+      beforeDispatch!.leaseOwner !== null &&
+      beforeDispatch!.leaseUntil !== null &&
+      Date.parse(beforeDispatch!.leaseUntil) > Date.now();
+    const alreadyDelivered = beforeDispatch!.status === 'delivered';
+    const locallyEligible = eligibleIDs.includes(bearWaiting);
+
+    expect(locallyEligible || alreadyClaimed || alreadyDelivered,
+      'WAKE_DISPATCH_V13_NO_OWNER: Bear must be due, legitimately in flight, ' +
+      'or already delivered: ' + JSON.stringify({
+        confirmedAt, receiptSnapshot, beforeDispatch,
+        eligibleIDs, wakeOwnerMembership: wakeOwnerMembership.results,
+        dispatchTrace,
+      })).toBe(true);
+    expect(eligibleIDs, 'The unconfirmed analyst must not be selected')
       .not.toContain(analystWaiting);
 
-    await WakeService.dispatchDue(env);
+    // Another dispatcher may claim a released Wake between our snapshot and
+    // this query. A claimed Wake correctly disappears from the due SELECT.
+    // Do not race its outbound callback with a second forced dispatch.
+    if (locallyEligible) {
+      await WakeService.dispatchDue(env);
+    }
 
-    const afterDispatch = await env.DB.prepare(
-      `SELECT message_id AS messageID, status, attempts,
-              next_attempt_at AS nextAttempt, last_error AS lastError,
-              lease_owner AS leaseOwner, lease_until AS leaseUntil
-         FROM wake_events WHERE message_id IN (?, ?)`,
-    ).bind(bearWaiting, analystWaiting).all<{
-      messageID: string; status: string; attempts: number;
-      nextAttempt: string; lastError: string | null;
-      leaseOwner: string | null; leaseUntil: string | null;
-    }>();
-    const callbackIDs = scenario.client.wakeCallbacks.map((item) => item.body.messageID);
-    expect(callbackIDs, 'An eligible bear Wake must invoke the shared callback: ' +
-      JSON.stringify({ eligibleIDs, afterDispatch: afterDispatch.results, callbackIDs }))
+    try {
+      await vi.waitFor(async () => {
+        const persisted = await env.DB.prepare(
+          `SELECT status, lease_owner AS leaseOwner, lease_until AS leaseUntil,
+                  attempts, last_error AS lastError
+             FROM wake_events WHERE message_id = ?`,
+        ).bind(bearWaiting).first<{
+          status: string; leaseOwner: string | null;
+          leaseUntil: string | null; attempts: number; lastError: string | null;
+        }>();
+        expect(persisted).toMatchObject({
+          status: 'delivered', leaseOwner: null, leaseUntil: null,
+        });
+        expect(scenario.client.wakeCallbacks.filter(
+          (entry) => entry.body.messageID === bearWaiting)).toHaveLength(1);
+      }, { timeout: 10_000, interval: 50 });
+    } catch (error) {
+      const last = await env.DB.prepare(
+        `SELECT status, attempts, next_attempt_at AS nextAttempt,
+                last_error AS lastError, lease_owner AS leaseOwner,
+                lease_until AS leaseUntil FROM wake_events WHERE message_id = ?`,
+      ).bind(bearWaiting).first();
+      throw new Error('WAKE_DISPATCH_V13_STUCK_IN_FLIGHT ' + JSON.stringify({
+        confirmedAt, receiptSnapshot, beforeDispatch,
+        eligibleIDs, last, dispatchTrace,
+        callbackIDs: scenario.client.wakeCallbacks.map((item) => item.body.messageID),
+        cause: error instanceof Error ? error.message : String(error),
+      }));
+    }
+
+    expect(scenario.client.wakeCallbacks.map((item) => item.body.messageID))
       .toEqual([bearFirst, analystFirst, bearWaiting]);
+    expect(scenario.client.wakeCallbacks[2].body).toMatchObject({
+      messageID: bearWaiting, recipientSessionID: 'session-b',
+      recipientBotID: 'bear-bot', recipientPlatformThreadID: 'bear-work-thread',
+    });
+
     const analystQueued = await env.DB.prepare(
       'SELECT status FROM wake_events WHERE message_id = ?',
     ).bind(analystWaiting).first<{ status: string }>();
