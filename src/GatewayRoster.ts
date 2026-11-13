@@ -216,8 +216,22 @@ export class GatewayRoster {
         'Gateway teammate is not registered for this Session.');
     }
 
-    // Stop pending delivery immediately; a stale webhook must not use a
-    // registration that was just withdrawn. Do not touch other coworkers.
+    if (GatewayRoster.status(row) === GatewayTeammateStatus.Pending) {
+      const deleted = await this.env.DB.prepare(
+        `DELETE FROM gateway_teammates WHERE org_id = ? AND recipient_session_id = ?
+           AND gateway_session_id = ? AND status = 'pending'`,
+      ).bind(this.identity.organizationID, recipientSessionID, row.gatewaySessionID).run();
+
+      if (deleted.meta.changes !== 1) {
+        throw new APIError(409, 'gateway_invitation_conflict',
+          'The pending invitation changed before it could be withdrawn.');
+      }
+
+      return { removed: true, recipientSessionID };
+    }
+
+    // Only approved coworkers own the shared route and its pending Wake.
+    // A pending proposal must never erase the recipient's unrelated route.
     await this.env.DB.batch([
       this.env.DB.prepare(
         `DELETE FROM wake_events WHERE session_id = ? AND status = 'pending'`,
