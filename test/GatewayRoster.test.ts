@@ -341,9 +341,59 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       'The other coworker must retain its first-contact delay')
       .toBeGreaterThan(Date.now());
 
+    // Mirror the dispatch query's eligibility rules to distinguish an
+    // unselected Wake from a selected Wake whose dispatch fails or is leased.
+    const now = new Date().toISOString();
+    const dispatchCandidates = await env.DB.prepare(
+      `SELECT e.message_id AS messageID
+         FROM wake_events e
+         JOIN messages m ON m.id = e.message_id
+         JOIN threads t ON t.id = m.thread_id
+         LEFT JOIN gateway_teammates g
+           ON g.org_id = t.org_id AND g.recipient_session_id = e.session_id
+          AND g.status = 'active'
+         JOIN wake_subscriptions s
+           ON s.org_id = t.org_id
+          AND s.session_id = COALESCE(g.gateway_session_id, e.session_id)
+        WHERE e.status = 'pending' AND e.next_attempt_at <= ?
+          AND m.received_at IS NOT NULL
+          AND (e.lease_until IS NULL OR e.lease_until <= ?)
+        ORDER BY e.next_attempt_at LIMIT 25`,
+    ).bind(now, now).all<{ messageID: string }>();
+    const eligibleIDs = dispatchCandidates.results.map((item) => item.messageID);
+    const preDispatch = await env.DB.prepare(
+      `SELECT e.message_id AS messageID, e.session_id AS wakeSessionID,
+              e.status, e.attempts, e.next_attempt_at AS nextAttempt,
+              e.last_error AS lastError, e.lease_owner AS leaseOwner,
+              e.lease_until AS leaseUntil, m.received_at AS receivedAt
+         FROM wake_events e JOIN messages m ON m.id = e.message_id
+        WHERE e.message_id IN (?, ?)`,
+    ).bind(bearWaiting, analystWaiting).all<{
+      messageID: string; wakeSessionID: string; status: string; attempts: number;
+      nextAttempt: string; lastError: string | null;
+      leaseOwner: string | null; leaseUntil: string | null; receivedAt: string | null;
+    }>();
+    expect(eligibleIDs, 'Bear Wake missing from the real dispatch selection: ' +
+      JSON.stringify({ eligibleIDs, preDispatch: preDispatch.results }))
+      .toContain(bearWaiting);
+    expect(eligibleIDs, 'Analyst first contact must stay off the due queue')
+      .not.toContain(analystWaiting);
+
     await WakeService.dispatchDue(env);
 
-    expect(scenario.client.wakeCallbacks.map((item) => item.body.messageID))
+    const afterDispatch = await env.DB.prepare(
+      `SELECT message_id AS messageID, status, attempts,
+              next_attempt_at AS nextAttempt, last_error AS lastError,
+              lease_owner AS leaseOwner, lease_until AS leaseUntil
+         FROM wake_events WHERE message_id IN (?, ?)`,
+    ).bind(bearWaiting, analystWaiting).all<{
+      messageID: string; status: string; attempts: number;
+      nextAttempt: string; lastError: string | null;
+      leaseOwner: string | null; leaseUntil: string | null;
+    }>();
+    const callbackIDs = scenario.client.wakeCallbacks.map((item) => item.body.messageID);
+    expect(callbackIDs, 'An eligible bear Wake must invoke the shared callback: ' +
+      JSON.stringify({ eligibleIDs, afterDispatch: afterDispatch.results, callbackIDs }))
       .toEqual([bearFirst, analystFirst, bearWaiting]);
     const analystQueued = await env.DB.prepare(
       'SELECT status FROM wake_events WHERE message_id = ?',
