@@ -147,34 +147,33 @@ export class GatewayFirstContacts {
       WHERE t.org_id = ? AND m.sender_session_id = ?
         AND m.recipient_session_id = ? AND m.received_at IS NOT NULL`;
 
-    await this.env.DB.prepare(
-      `UPDATE wake_events SET status = 'delivered', notified_at = ?,
-              last_error = NULL, lease_owner = NULL, lease_until = NULL
-        WHERE message_id = ? AND status IN ('pending', 'failed')`,
-    ).bind(now, messageID).run();
-
-    await this.env.DB.prepare(
-      `UPDATE wake_events SET next_attempt_at = ?, last_error = NULL,
-              lease_owner = NULL, lease_until = NULL
-        WHERE status = 'pending' AND message_id <> ?
-          AND message_id IN (${pairMessages})`,
-    ).bind(now, messageID, this.organizationID,
-      senderSessionID, this.recipientSessionID).run();
-
-    // A successful receipt may not silently leave a matched pending Wake
-    // behind an old lease. The check uses the same immutable pair and is
-    // read-only; the regression test additionally checks cross-recipient
-    // isolation and actual native callback delivery.
-    const blocked = await this.env.DB.prepare(
-      `SELECT e.message_id FROM wake_events e
-        WHERE e.status = 'pending' AND e.message_id <> ?
-          AND e.message_id IN (${pairMessages})
-          AND (e.next_attempt_at > ? OR e.lease_owner IS NOT NULL
-            OR e.lease_until IS NOT NULL)
-        LIMIT 1`,
-    ).bind(messageID, this.organizationID, senderSessionID,
-      this.recipientSessionID, now).first<{ message_id: string }>();
-
+    // D1 batch applies the initial receipt, the pair-scoped release, and
+    // its verification in one transaction. Cron cannot acquire a fresh lease
+    // between release and the verification query.
+    const outcomes = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE wake_events SET status = 'delivered', notified_at = ?,
+                last_error = NULL, lease_owner = NULL, lease_until = NULL
+          WHERE message_id = ? AND status IN ('pending', 'failed')`,
+      ).bind(now, messageID),
+      this.env.DB.prepare(
+        `UPDATE wake_events SET next_attempt_at = ?, last_error = NULL,
+                lease_owner = NULL, lease_until = NULL
+          WHERE status = 'pending' AND message_id <> ?
+            AND message_id IN (${pairMessages})`,
+      ).bind(now, messageID, this.organizationID,
+        senderSessionID, this.recipientSessionID),
+      this.env.DB.prepare(
+        `SELECT e.message_id FROM wake_events e
+          WHERE e.status = 'pending' AND e.message_id <> ?
+            AND e.message_id IN (${pairMessages})
+            AND (e.next_attempt_at > ? OR e.lease_owner IS NOT NULL
+              OR e.lease_until IS NOT NULL)
+          LIMIT 1`,
+      ).bind(messageID, this.organizationID, senderSessionID,
+        this.recipientSessionID, now),
+    ]);
+    const blocked = outcomes[2].results.length > 0;
     if (blocked) {
       throw new APIError(503, 'gateway_wake_release_incomplete',
         'The native conversation was confirmed, but a waiting Wake is still leased.');
