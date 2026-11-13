@@ -143,6 +143,9 @@ export class GatewayFirstContacts {
     // do not join the Wake queue during selection. A shared Gateway owns its
     // Wake rows, but does not own the recipient's Message identity.
     // The subsequent primary-key updates only affect pending Wake rows.
+    // Invalidate any old dispatch lease when the trusted native Thread receipt
+    // makes the Message immediately eligible. The previous dispatcher's
+    // lease_owner fence prevents it from overwriting this release.
     const waiting = await this.env.DB.prepare(
       `SELECT m.id AS messageID
          FROM messages m
@@ -162,7 +165,9 @@ export class GatewayFirstContacts {
           WHERE message_id = ? AND status IN ('pending', 'failed')`,
       ).bind(now, messageID),
       ...waiting.results.map((entry) => this.env.DB.prepare(
-        `UPDATE wake_events SET next_attempt_at = ?
+        `UPDATE wake_events
+            SET next_attempt_at = ?, last_error = NULL,
+                lease_owner = NULL, lease_until = NULL
           WHERE message_id = ? AND status = 'pending'`,
       ).bind(now, entry.messageID)),
     ];
