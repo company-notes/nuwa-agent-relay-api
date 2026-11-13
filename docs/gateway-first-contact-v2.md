@@ -116,14 +116,44 @@ first message is not re-sent; only queued, independently received later
 messages are released. The Worker may dispatch them immediately through
 `waitUntil` when available; Cron remains the fallback.
 
-**Secrets are never model-visible.** The model may report the nonsecret
-Message ID and native Thread ID, but an independent trusted runtime/helper
-must make the authenticated completion request. The repository includes the
-operator-only `scripts/GatewayFirstContactConfirm.mjs` to perform a private
-staging confirmation manually. An OpenMausBot run-result observer that can
-read the actual `coordinate_bots` tool receipt and invoke this trusted
-helper **automatically is not yet implemented**. Until it is verified, do not
-claim the complete native-first-contact flow is hands-free or production ready.
+### Approved office Gateway receipt
+
+A recipient may opt into an office Gateway via a pending invitation and its
+own authenticated approval. After that approval, **the same verified office
+Gateway's Runtime** may report the actual native Thread receipt for that
+recipient **without obtaining or impersonating the recipient Runtime**:
+
+```http
+PUT /v2/gateway-teammates/<RECIPIENT_SESSION_ID>/first-contacts/<SENDER_SESSION_ID>?session_id=<GATEWAY_SESSION_ID>
+Authorization: Bearer <GATEWAY_PRIVATE_OAUTH>
+X-Nuwa-Runtime-Token: <GATEWAY_PRIVATE_RUNTIME>
+Content-Type: application/json
+```
+
+```json
+{"messageID": "actual-initial-relay-message-uuid", "nativeThreadID": "actual-native-thread-id"}
+```
+
+Relay permits this only if the recipient's **active** `gateway_teammates`
+approval points to the authenticated Gateway Session and its stored route
+still matches the approved Bot ID and automatic explicit-Thread mode.
+The first-contact reservation must match that **exact sender and Message**.
+The first confirmed native Thread cannot be replaced by a different value,
+and revocation immediately denies the Gateway this confirmation path.
+Authorization and current Runtime lease are checked on every request.
+
+This is a narrowly delegated **receipt confirmation**, not permission to
+modify someone else's identity, send on their behalf or obtain their OAuth
+tokens. The existing direct-recipient confirmation API remains available
+for individually configured receiving Sessions.
+
+**Secrets are never model-visible.** A trusted run-result adapter must read
+the actual provider tool receipt and call one of these private confirmation
+APIs. The repository's `scripts/GatewayFirstContactConfirm.mjs` supports
+manual direct-recipient and approved shared-Gateway staging confirmation.
+An automated OpenMausBot `coordinate_bots` run-result observer **is still
+not implemented**; the new API is the secure Relay-side integration point,
+not evidence that provider-side observation already works.
 
 ### Operator-only staging confirmation helper
 
@@ -138,6 +168,7 @@ secret manager (never paste their values into chat or issue tracker):
 - `NUWA_GATEWAY_OAUTH_TOKEN`: OAuth credential authorized for the receiving Session
 - `NUWA_GATEWAY_RUNTIME_TOKEN`: its active, private Runtime capability
 - `NUWA_GATEWAY_RECIPIENT_SESSION_ID`: immutable recipient Session ID
+- `NUWA_GATEWAY_SESSION_ID` *(optional)*: the approved shared office Gateway Session. If set, OAuth and Runtime above must belong to this Gateway rather than the recipient.
 - `NUWA_GATEWAY_RELAY_ORIGIN`: exact trusted HTTPS Relay V2 staging origin
 
 Run:
@@ -177,6 +208,7 @@ Organization. Only the recipient Runtime can change this mapping.
 | Resource | Behavior |
 | --- | --- |
 | `GET /v2/gateway-first-contacts` | Show only pending reservations scoped to the authenticated recipient Session |
+| `PUT /v2/gateway-teammates/{recipientSessionID}/first-contacts/{senderSessionID}` | An approved office Gateway Runtime confirms a real native Thread receipt for a registered coworker; active membership and matching sender/Message required |
 | `PUT /v2/gateway-first-contacts/{senderSessionID}` | Complete the matching first-contact Message with an actual native Thread ID |
 | `DELETE /v2/gateway-first-contacts/{senderSessionID}` | **Operator-only**, cancel an unresolved reservation; inspect provider UI first |
 | `GET /v2/gateway-conversations` | View the committed recipient-side sender → native Thread map |
