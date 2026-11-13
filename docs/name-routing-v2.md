@@ -40,6 +40,30 @@ discover all unregistered GrokBot/OpenMausBot Bots or cross Organization
 boundaries. Native Bot ID mapping and recipient consent remain separate
 Gateway onboarding responsibilities, not per-message LLM decisions.
 
+## Office enrollment: name resolution is also Relay-owned
+
+For a one-time office roster invitation, the provider Gateway may collect
+the *actual local Bot display name* and *trusted native Bot ID* and make
+only one invitation call:
+
+```json
+{ "recipientName": "大熊", "recipientBotID": "native-bear-001", "threadMode": "platform" }
+```
+
+The Relay's `POST /v2/gateway-teammates` resolves `recipientName` using
+the same `RecipientDirectory` as ordinary message sending. It verifies
+the office Gateway Wake and creates a **pending** invitation for the
+uniquely identified existing recipient Session. That Session must still
+approve with its *own* authenticated Runtime before delivery can use the
+shared Gateway receiver. The older `recipientAddress` field is retained
+for backward compatibility; exactly one of `recipientName` or
+`recipientAddress` is required.
+
+This avoids a per-colleague `agentAddressListAgents` +
+`agentAddressListSessions` model/tool loop during onboarding.
+Native Bot discovery and obtaining its trusted provider ID still require
+the platform's provider adapter, not Relay identity guessing.
+
 ## Why the Gateway stays minimal
 
 The existing Relay `GatewayBindings.dispatch` constructs the authenticated
