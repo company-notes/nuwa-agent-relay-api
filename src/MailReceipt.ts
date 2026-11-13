@@ -140,8 +140,15 @@ export class MailReceipt {
          SELECT m.id, s.session_id, ?
            FROM messages m
            JOIN threads t ON t.id = m.thread_id
-           JOIN wake_subscriptions s
-             ON s.session_id = COALESCE(m.recipient_session_id, t.accepted_session_id, t.notification_session_id)
+           LEFT JOIN gateway_teammates g
+           ON g.org_id = t.org_id
+          AND g.recipient_session_id = COALESCE(m.recipient_session_id,
+            t.accepted_session_id, t.notification_session_id)
+          AND g.status = 'active'
+         JOIN wake_subscriptions s
+           ON s.org_id = t.org_id
+          AND s.session_id = COALESCE(g.gateway_session_id, m.recipient_session_id,
+            t.accepted_session_id, t.notification_session_id)
           WHERE m.id = ? AND m.received_at IS NOT NULL
             AND s.created_at <= m.received_at`,
       ).bind(now, messageId),
@@ -169,8 +176,15 @@ export class MailReceipt {
          JOIN threads t ON t.id = m.thread_id
          JOIN agent_mailboxes recipient
            ON recipient.org_id = t.org_id AND recipient.agent_id = m.recipient_agent_id
+         LEFT JOIN gateway_teammates g
+           ON g.org_id = t.org_id
+          AND g.recipient_session_id = COALESCE(m.recipient_session_id,
+            t.accepted_session_id, t.notification_session_id)
+          AND g.status = 'active'
          JOIN wake_subscriptions subscription
-           ON subscription.session_id = COALESCE(m.recipient_session_id, t.accepted_session_id, t.notification_session_id)
+           ON subscription.org_id = t.org_id
+          AND subscription.session_id = COALESCE(g.gateway_session_id,
+            m.recipient_session_id, t.accepted_session_id, t.notification_session_id)
         WHERE m.delivery_status = 'sent' AND m.received_at IS NULL
           AND subscription.created_at <= m.created_at
           AND m.created_at >= ?
