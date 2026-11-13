@@ -97,6 +97,16 @@ export class SessionIdentityClient {
     return this.request<AccountStatus>('GET', '/v2/account/status');
   }
 
+  /** Cache identity is scoped to the OAuth bearer and verified Organization. */
+  async directoryCacheScope(organizationID: string): Promise<string> {
+    const credential = new TextEncoder().encode(this.authorization);
+    const digest = await crypto.subtle.digest('SHA-256', credential);
+    const fingerprint = Array.from(new Uint8Array(digest), (value) =>
+      value.toString(16).padStart(2, '0')).join('');
+
+    return this.addressURL + ':' + organizationID + ':' + fingerprint;
+  }
+
   async listAgents(): Promise<DirectoryAgent[]> {
     const records = await this.request<unknown>('GET', '/v2/account/agents');
 
