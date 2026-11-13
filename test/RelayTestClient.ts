@@ -110,15 +110,15 @@ export class RelayTestClient {
 
       return Response.json({ ok: true, data: [
         { id: 'agent-000a', handle: 'alpha', displayName: '小晴',
-          defaultSessionHandle: 'author' },
+          defaultSessionID: 'session-a', defaultSessionHandle: 'author' },
         { id: 'agent-000b', handle: 'beta', displayName: '大熊',
-          defaultSessionHandle: 'reviewer' },
+          defaultSessionID: 'session-b', defaultSessionHandle: 'reviewer' },
         { id: 'agent-000d', handle: 'gamma', displayName: '雙胞胎',
-          defaultSessionHandle: 'main' },
+          defaultSessionID: 'session-d', defaultSessionHandle: 'main' },
         { id: 'agent-000g', handle: 'gateway', displayName: '雙胞胎',
-          defaultSessionHandle: 'main' },
+          defaultSessionID: 'session-g', defaultSessionHandle: 'main' },
         { id: 'agent-000h', handle: 'gateway-2', displayName: '未啟用',
-          defaultSessionHandle: null },
+          defaultSessionID: null, defaultSessionHandle: null },
       ] });
     }
 
