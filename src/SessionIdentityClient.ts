@@ -144,15 +144,18 @@ export class SessionIdentityClient {
       throw new APIError(400, 'session_capability_required', 'Session ID and Runtime capability are required.');
     }
 
-    const status = await this.status();
+    // The two independent identity reads can run in parallel. Runtime
+    // ownership is still checked after both authoritative results agree.
+    const [status, verifiedSession] = await Promise.all([
+      this.status(),
+      this.session(sessionID),
+    ]);
     const organization = status?.organization;
 
     if (!organization || typeof organization.id !== 'string' ||
         typeof organization.slug !== 'string') {
       throw new APIError(403, 'organization_required', 'No authorized Organization is available.');
     }
-
-    const verifiedSession = await this.session(sessionID);
 
     if (verifiedSession.id !== sessionID ||
         verifiedSession.canonical.split('/')[0] !== organization.slug) {
