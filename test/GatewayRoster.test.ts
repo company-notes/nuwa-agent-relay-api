@@ -350,11 +350,10 @@ describe('Office Gateway registration and shared Wake use cases', () => {
          JOIN messages m ON m.id = e.message_id
          JOIN threads t ON t.id = m.thread_id
          LEFT JOIN gateway_teammates g
-           ON g.org_id = t.org_id AND g.recipient_session_id = e.session_id
-          AND g.status = 'active'
+           ON g.org_id = t.org_id AND g.recipient_session_id = m.recipient_session_id
+          AND g.gateway_session_id = e.session_id AND g.status = 'active'
          JOIN wake_subscriptions s
-           ON s.org_id = t.org_id
-          AND s.session_id = COALESCE(g.gateway_session_id, e.session_id)
+           ON s.org_id = t.org_id AND s.session_id = e.session_id
         WHERE e.status = 'pending' AND e.next_attempt_at <= ?
           AND m.received_at IS NOT NULL
           AND (e.lease_until IS NULL OR e.lease_until <= ?)
@@ -373,8 +372,29 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       nextAttempt: string; lastError: string | null;
       leaseOwner: string | null; leaseUntil: string | null; receivedAt: string | null;
     }>();
+    const wakeOwnerMembership = await env.DB.prepare(
+      `SELECT e.message_id AS messageID, e.session_id AS wakeSessionID,
+              g.gateway_session_id AS approvedGatewaySessionID,
+              m.recipient_session_id AS recipientSessionID
+         FROM wake_events e JOIN messages m ON m.id = e.message_id
+         JOIN threads t ON t.id = m.thread_id
+         LEFT JOIN gateway_teammates g
+           ON g.org_id = t.org_id AND g.recipient_session_id = m.recipient_session_id
+          AND g.gateway_session_id = e.session_id AND g.status = 'active'
+        WHERE e.message_id IN (?, ?)`,
+    ).bind(bearWaiting, analystWaiting).all<{
+      messageID: string; wakeSessionID: string;
+      approvedGatewaySessionID: string | null; recipientSessionID: string;
+    }>();
+    expect(wakeOwnerMembership.results).toEqual(expect.arrayContaining([
+      { messageID: bearWaiting, wakeSessionID: 'session-g',
+        approvedGatewaySessionID: 'session-g', recipientSessionID: 'session-b' },
+      { messageID: analystWaiting, wakeSessionID: 'session-g',
+        approvedGatewaySessionID: 'session-g', recipientSessionID: 'session-d' },
+    ]));
     expect(eligibleIDs, 'Bear Wake missing from the real dispatch selection: ' +
-      JSON.stringify({ eligibleIDs, preDispatch: preDispatch.results }))
+      JSON.stringify({ eligibleIDs, preDispatch: preDispatch.results,
+        wakeOwnerMembership: wakeOwnerMembership.results }))
       .toContain(bearWaiting);
     expect(eligibleIDs, 'Analyst first contact must stay off the due queue')
       .not.toContain(analystWaiting);
