@@ -1,4 +1,5 @@
 import type { Env } from './Env';
+import { GatewayRoster } from './GatewayRoster';
 import { APIError } from './HTTP';
 import type { SessionIdentity } from './SessionIdentityClient';
 import { WakeTarget, type WakeAuthMode } from './WakeTarget';
@@ -47,6 +48,10 @@ export class WakeRegistration {
 
   /** A pending challenge never disables the previously verified subscription. */
   async begin(callbackURL: string, authMode: WakeAuthMode, bearerToken?: string) {
+    await GatewayRoster.requireIndependentRoute(
+      this.env, this.identity.organizationID, this.identity.sessionID,
+    );
+
     const config = WakeTarget.validateConfig(callbackURL, authMode, bearerToken);
     const encryptedTarget = await WakeTarget.encrypt(this.env, config);
     const publicURL = WakeTarget.publicURL(callbackURL);
