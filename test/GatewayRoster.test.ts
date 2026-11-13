@@ -318,6 +318,24 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     ]);
     expect(held.map((item) => item.meta.changes)).toEqual([1, 1]);
 
+    // Reproduce the precise pair before confirming either coworker: a real
+    // received Message with a pending, currently leased shared-Gateway Wake.
+    const waitingPair = await env.DB.prepare(
+      `SELECT e.message_id AS messageID
+         FROM wake_events e JOIN messages m ON m.id = e.message_id
+         JOIN threads t ON t.id = m.thread_id
+        WHERE t.org_id = ? AND m.sender_session_id = ?
+          AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
+          AND e.message_id <> ? AND e.status = 'pending'`,
+    ).bind('org-id', 'session-a', 'session-b', bearFirst)
+      .all<{ messageID: string }>();
+    expect(waitingPair.results.map((entry) => entry.messageID),
+      'Confirmed recipient must own a received, pending follow-up Wake')
+      .toContain(bearWaiting);
+    expect(waitingPair.results.map((entry) => entry.messageID),
+      'A different coworker must not be released through this pair')
+      .not.toContain(analystWaiting);
+
     const bearConfirmed = await scenario.client.call('token-g', 'PUT',
       '/v2/gateway-teammates/session-b/first-contacts/session-a?session_id=session-g', {
         messageID: bearFirst, nativeThreadID: 'bear-work-thread',
