@@ -138,45 +138,60 @@ export class GatewayFirstContacts {
   }
 
   private async releaseWakes(senderSessionID: string, messageID: string): Promise<void> {
-    // A shared Gateway owns the Wake, but the Message identifies its actual
-    // sender and recipient. Release the pair in one scoped D1 update without
-    // constructing an unverified batch from a separate candidate query.
-    const now = new Date().toISOString();
-    const pairMessages = `SELECT m.id FROM messages m
-      JOIN threads t ON t.id = m.thread_id
-      WHERE t.org_id = ? AND m.sender_session_id = ?
-        AND m.recipient_session_id = ? AND m.received_at IS NOT NULL`;
+    // Queue ownership can belong to a shared Gateway. Identify pending Wakes
+    // using the immutable, received Message's actual sender and recipient.
+    const pending = await this.env.DB.prepare(
+      `SELECT e.message_id AS messageID
+         FROM wake_events e
+         JOIN messages m ON m.id = e.message_id
+         JOIN threads t ON t.id = m.thread_id
+        WHERE t.org_id = ? AND m.sender_session_id = ?
+          AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
+          AND e.message_id <> ? AND e.status = 'pending'`,
+    ).bind(this.organizationID, senderSessionID, this.recipientSessionID, messageID)
+      .all<{ messageID: string }>();
 
-    // D1 batch applies the initial receipt, the pair-scoped release, and
-    // its verification in one transaction. Cron cannot acquire a fresh lease
-    // between release and the verification query.
+    const now = new Date().toISOString();
+    const releases = pending.results.map(({ messageID: pendingID }) =>
+      this.env.DB.prepare(
+        `UPDATE wake_events
+            SET next_attempt_at = ?, last_error = NULL,
+                lease_owner = NULL, lease_until = NULL
+          WHERE message_id = ? AND status = 'pending'`,
+      ).bind(now, pendingID));
+    const verifications = pending.results.map(({ messageID: pendingID }) =>
+      this.env.DB.prepare(
+        `SELECT status, next_attempt_at AS nextAttempt,
+                lease_owner AS leaseOwner, lease_until AS leaseUntil
+           FROM wake_events WHERE message_id = ?`,
+      ).bind(pendingID));
+
+    // D1 executes each statement in one transaction. Capture the update
+    // results instead of trusting an HTTP 200 to mean leases were released.
     const outcomes = await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE wake_events SET status = 'delivered', notified_at = ?,
                 last_error = NULL, lease_owner = NULL, lease_until = NULL
           WHERE message_id = ? AND status IN ('pending', 'failed')`,
       ).bind(now, messageID),
-      this.env.DB.prepare(
-        `UPDATE wake_events SET next_attempt_at = ?, last_error = NULL,
-                lease_owner = NULL, lease_until = NULL
-          WHERE status = 'pending' AND message_id <> ?
-            AND message_id IN (${pairMessages})`,
-      ).bind(now, messageID, this.organizationID,
-        senderSessionID, this.recipientSessionID),
-      this.env.DB.prepare(
-        `SELECT e.message_id FROM wake_events e
-          WHERE e.status = 'pending' AND e.message_id <> ?
-            AND e.message_id IN (${pairMessages})
-            AND (e.next_attempt_at > ? OR e.lease_owner IS NOT NULL
-              OR e.lease_until IS NOT NULL)
-          LIMIT 1`,
-      ).bind(messageID, this.organizationID, senderSessionID,
-        this.recipientSessionID, now),
+      ...releases,
+      ...verifications,
     ]);
-    const blocked = outcomes[2].results.length > 0;
-    if (blocked) {
-      throw new APIError(503, 'gateway_wake_release_incomplete',
-        'The native conversation was confirmed, but a waiting Wake is still leased.');
+
+    for (let index = 0; index < pending.results.length; index += 1) {
+      const updated = outcomes[index + 1];
+      const row = outcomes[index + 1 + pending.results.length]
+        .results[0] as {
+          status: string; nextAttempt: string;
+          leaseOwner: string | null; leaseUntil: string | null;
+        } | undefined;
+
+      if (updated.meta.changes !== 1 || !row ||
+          row.status !== 'pending' || row.nextAttempt > now ||
+          row.leaseOwner !== null || row.leaseUntil !== null) {
+        throw new APIError(503, 'gateway_wake_release_incomplete',
+          'A matching pending Wake could not be released after native Thread confirmation.');
+      }
     }
   }
 
