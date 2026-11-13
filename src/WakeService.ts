@@ -1,5 +1,6 @@
 import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
+import { GatewayRoster } from './GatewayRoster';
 import { APIError, HTTP } from './HTTP';
 import type { SessionIdentity } from './SessionIdentityClient';
 import { WakeRegistration } from './WakeRegistration';
@@ -9,6 +10,7 @@ import { Logger } from './Logger';
 type WakeRow = {
   messageId: string;
   sessionID: string;
+  gatewaySessionID: string | null;
   organizationID: string;
   threadID: string;
   senderSessionID: string;
@@ -56,6 +58,10 @@ export class WakeService {
   }
 
   async unsubscribe(): Promise<Record<string, unknown>> {
+    await GatewayRoster.requireUnreferencedGateway(
+      this.env, this.identity.organizationID, this.identity.sessionID,
+    );
+
     await this.env.DB.prepare(
       'DELETE FROM wake_subscriptions WHERE session_id = ? AND org_id = ?',
     ).bind(this.identity.sessionID, this.identity.organizationID).run();
@@ -88,6 +94,7 @@ export class WakeService {
     const now = new Date().toISOString();
     const rows = await env.DB.prepare(
       `SELECT e.message_id AS messageId, e.session_id AS sessionID,
+              g.gateway_session_id AS gatewaySessionID,
               e.attempts, s.callback_url AS callbackURL, s.signing_secret AS signingSecret,
               s.encrypted_target AS encryptedTarget,
               t.org_id AS organizationID, m.thread_id AS threadID,
@@ -96,9 +103,13 @@ export class WakeService {
               m.recipient_agent_id AS recipientAgentID,
               m.recipient_session_id AS recipientSessionID, m.body
          FROM wake_events e
-         JOIN wake_subscriptions s ON s.session_id = e.session_id
          JOIN messages m ON m.id = e.message_id
-         JOIN threads t ON t.id = m.thread_id AND t.org_id = s.org_id
+         JOIN threads t ON t.id = m.thread_id
+         LEFT JOIN gateway_teammates g
+           ON g.org_id = t.org_id AND g.recipient_session_id = e.session_id
+          AND g.status = 'active'
+         JOIN wake_subscriptions s
+           ON s.org_id = t.org_id AND s.session_id = COALESCE(g.gateway_session_id, e.session_id)
         WHERE e.status = 'pending' AND e.next_attempt_at <= ?
           AND m.received_at IS NOT NULL
           AND (e.lease_until IS NULL OR e.lease_until <= ?)
@@ -130,7 +141,7 @@ export class WakeService {
           senderCanonicalAddress: event.senderCanonicalAddress,
           recipientAgentID: event.recipientAgentID,
           recipientSessionID: event.recipientSessionID,
-          recipientWakeSessionID: event.sessionID,
+          recipientWakeSessionID: event.gatewaySessionID ?? event.sessionID,
           organizationID: event.organizationID,
           body: event.body,
         });
