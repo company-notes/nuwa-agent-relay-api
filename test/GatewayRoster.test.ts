@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MailReceipt } from '../src/MailReceipt';
 import { WakeService } from '../src/WakeService';
@@ -202,13 +202,48 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(mismatched.status).toBe(409);
     expect(mismatched.body.error.code).toBe('gateway_first_contact_mismatch');
 
-    const confirmed = await scenario.client.call('token-g', 'PUT',
-      path + '?session_id=session-g', receipt);
+    const confirmWithDispatchTrace = async () => {
+      const dispatchSpy = vi.spyOn(WakeService, 'dispatchDue');
+
+      try {
+        const response = await scenario.client.call('token-g', 'PUT',
+          path + '?session_id=session-g', receipt);
+
+        return { response, dispatchCalls: dispatchSpy.mock.calls.length };
+      } finally {
+        dispatchSpy.mockRestore();
+      }
+    };
+    const { response: confirmed, dispatchCalls } = await confirmWithDispatchTrace();
     expect(confirmed.status).toBe(200);
     expect(confirmed.body.data).toMatchObject({
       senderSessionID: 'session-a', recipientSessionID: 'session-b',
       nativeThreadID: 'cosmo-real-thread-1', alreadyConfirmed: false,
     });
+
+    const wakeAfterConfirmation = await env.DB.prepare(
+      `SELECT status, attempts, next_attempt_at AS nextAttempt,
+              last_error AS lastError FROM wake_events WHERE message_id = ?`,
+    ).bind(second).first<{
+      status: string; attempts: number; nextAttempt: string; lastError: string | null;
+    }>();
+    expect(wakeAfterConfirmation).not.toBeNull();
+
+    if (wakeAfterConfirmation!.status === 'delivered') {
+      expect(scenario.client.wakeCallbacks.filter((entry) =>
+        entry.body.messageID === second),
+      'A delivered Wake must have a real matching callback; dispatch calls during confirmation: ' +
+        dispatchCalls + ', persisted state: ' + JSON.stringify(wakeAfterConfirmation))
+        .toHaveLength(1);
+    } else {
+      expect(wakeAfterConfirmation!.status,
+        'Wake should remain pending only until a dispatch handles the released Message')
+        .toBe('pending');
+      expect(Date.parse(wakeAfterConfirmation!.nextAttempt),
+        'A pending Wake must be eligible immediately after confirmation; dispatch calls: ' +
+        dispatchCalls + ', persisted state: ' + JSON.stringify(wakeAfterConfirmation))
+        .toBeLessThanOrEqual(Date.now());
+    }
 
     const repeated = await scenario.client.call('token-g', 'PUT',
       path + '?session_id=session-g', receipt);
@@ -220,21 +255,11 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       { messageID: first, nativeThreadID: 'wrong-native-thread' });
     expect(conflicting.status).toBe(409);
 
-    const resumed = await env.DB.prepare(
-      `SELECT next_attempt_at AS nextAttempt, status, attempts,
-              last_error AS lastError, lease_owner AS leaseOwner
-         FROM wake_events WHERE message_id = ?`,
-    ).bind(second).first<{
-      nextAttempt: string; status: string; attempts: number;
-      lastError: string | null; leaseOwner: string | null;
-    }>();
-    expect(resumed).not.toBeNull();
-    expect(Date.parse(resumed!.nextAttempt),
-      'Expected immediate release. Actual persisted Wake state: ' + JSON.stringify(resumed))
-      .toBeLessThanOrEqual(Date.now());
-
+    // The due timestamp is meaningful for pending events only. A delivered
+    // event keeps its historic retry timestamp, even after a successful Wake.
     await WakeService.dispatchDue(env);
-    expect(scenario.client.wakeCallbacks).toHaveLength(2);
+    expect(scenario.client.wakeCallbacks.map((entry) => entry.body.messageID))
+      .toEqual([first, second]);
     expect(scenario.client.wakeCallbacks[1].body).toMatchObject({
       messageID: second, recipientSessionID: 'session-b',
       recipientBotID: 'openmaus-bear-id',
@@ -294,12 +319,27 @@ describe('Office Gateway registration and shared Wake use cases', () => {
         attempts: number; lastError: string | null;
       }>();
     const schedule = new Map(queue.results.map((item) => [item.messageID, item]));
-    expect(Date.parse(schedule.get(bearWaiting)!.nextAttempt),
-      'The confirmed recipient must be released. Actual persisted states: ' +
-      JSON.stringify(queue.results)).toBeLessThanOrEqual(Date.now());
-    expect(Date.parse(schedule.get(analystWaiting)!.nextAttempt),
-      'The other recipient on the same Gateway must remain reserved. Actual states: ' +
-      JSON.stringify(queue.results)).toBeGreaterThan(Date.now());
+    const bear = schedule.get(bearWaiting);
+    const analyst = schedule.get(analystWaiting);
+    expect(bear).toBeDefined();
+    expect(analyst).toBeDefined();
+
+    if (bear!.status === 'delivered') {
+      expect(scenario.client.wakeCallbacks.filter((entry) =>
+        entry.body.messageID === bearWaiting),
+      'Delivered bear Wake must have an actual callback: ' + JSON.stringify(queue.results))
+        .toHaveLength(1);
+    } else {
+      expect(bear!.status).toBe('pending');
+      expect(Date.parse(bear!.nextAttempt),
+        'Confirmed bear Wake must be due; actual states: ' + JSON.stringify(queue.results))
+        .toBeLessThanOrEqual(Date.now());
+    }
+
+    expect(analyst!.status, 'The other coworker must remain pending').toBe('pending');
+    expect(Date.parse(analyst!.nextAttempt),
+      'The other coworker must retain its first-contact delay')
+      .toBeGreaterThan(Date.now());
 
     await WakeService.dispatchDue(env);
 
