@@ -186,6 +186,101 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(cannotReplace.status).toBe(409);
   });
 
+  it('lets real coworkers converse through two separately approved office switchboards', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const officeAWake = await scenario.client.call('token-h', 'POST',
+      '/v2/wake-subscription?session_id=session-h', {
+        callbackUrl: 'https://agent-hook.example.com/office-a',
+      });
+    expect(officeAWake.status).toBe(201);
+    await scenario.client.confirmLatestWake('token-h');
+
+    const senderAddress = 'relay-test-org/alpha/author';
+    const recipientAddress = 'relay-test-org/beta/reviewer';
+
+    expect((await scenario.invite(recipientAddress, 'office-b-bot')).status).toBe(201);
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+
+    const officeARegistration = await scenario.client.call('token-h', 'POST',
+      '/v2/gateway-teammates?session_id=session-h', {
+        recipientAddress: senderAddress,
+        recipientBotID: 'office-a-bot',
+        threadMode: 'platform',
+      });
+    expect(officeARegistration.status).toBe(201);
+    const approvedA = await scenario.client.call('token-a', 'PUT',
+      '/v2/gateway-invitation?session_id=session-a');
+    expect(approvedA.status).toBe(200);
+
+    const first = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: recipientAddress, body: 'Hello from office A to office B.',
+      });
+    expect(first.status).toBe(201);
+
+    await MailReceipt.confirmArrival(env, first.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    const reply = await scenario.client.call('token-b', 'POST',
+      '/v2/threads/' + first.body.data.threadId + '/messages?session_id=session-b', {
+        body: 'Office B answered the same call.',
+      });
+    expect(reply.status).toBe(201);
+    await MailReceipt.confirmArrival(env, reply.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    const later = await scenario.client.call('token-b', 'POST',
+      '/v2/messages?session_id=session-b', {
+        to: senderAddress, body: 'Office B proactively started a second call.',
+      });
+    expect(later.status).toBe(201);
+    expect(later.body.data.threadId).not.toBe(first.body.data.threadId);
+    await MailReceipt.confirmArrival(env, later.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    const returnReply = await scenario.client.call('token-a', 'POST',
+      '/v2/threads/' + later.body.data.threadId + '/messages?session_id=session-a', {
+        body: 'Office A answered the second call.',
+      });
+    expect(returnReply.status).toBe(201);
+    await MailReceipt.confirmArrival(env, returnReply.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    const deliveries = scenario.client.wakeRequests.filter((item) =>
+      item.body.event === 'nuwa.message.available');
+    expect(deliveries, 'Each actual message is sent through exactly the opposite office')
+      .toHaveLength(4);
+    expect(deliveries.map((item) => ({
+      path: new URL(item.url).pathname,
+      recipient: item.body.recipientSessionID,
+      bot: item.body.recipientBotID,
+      relayThread: item.body.relayThreadID,
+    }))).toEqual([
+      { path: '/gateway', recipient: 'session-b',
+        bot: 'office-b-bot', relayThread: first.body.data.threadId },
+      { path: '/office-a', recipient: 'session-a',
+        bot: 'office-a-bot', relayThread: first.body.data.threadId },
+      { path: '/office-a', recipient: 'session-a',
+        bot: 'office-a-bot', relayThread: later.body.data.threadId },
+      { path: '/gateway', recipient: 'session-b',
+        bot: 'office-b-bot', relayThread: later.body.data.threadId },
+    ]);
+
+    const history = await scenario.client.call('token-a', 'GET',
+      '/v2/threads/' + first.body.data.threadId + '?session_id=session-a');
+    expect(history.status).toBe(200);
+    expect(history.body.data.map((message: { body: string }) => message.body))
+      .toEqual(['Hello from office A to office B.', 'Office B answered the same call.']);
+
+    const newHistory = await scenario.client.call('token-b', 'GET',
+      '/v2/threads/' + later.body.data.threadId + '?session_id=session-b');
+    expect(newHistory.status).toBe(200);
+    expect(newHistory.body.data.map((message: { body: string }) => message.body))
+      .toEqual(['Office B proactively started a second call.', 'Office A answered the second call.']);
+  });
+
   it('does not delete a coworker-owned direct route when revoking an unapproved invitation', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
