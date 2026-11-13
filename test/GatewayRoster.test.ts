@@ -129,6 +129,82 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(invalid.body.error.code).toBe('gateway_recipient_required');
   });
 
+  it('lets only an approved office Gateway confirm a real first-contact receipt for its coworker', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    expect((await scenario.invite('relay-test-org/beta/reviewer',
+      'openmaus-bear-id', 'explicit', 'automatic')).status).toBe(201);
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+
+    const first = await scenario.send('token-a', 'session-a',
+      'relay-test-org/beta/reviewer', '第一次找大熊，建立原生對話。');
+    const second = await scenario.send('token-a', 'session-a',
+      'relay-test-org/beta/reviewer', '第二則應等待同一個原生 Thread。');
+    expect(scenario.client.wakeCallbacks).toHaveLength(1);
+    expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
+      messageID: first,
+      recipientSessionID: 'session-b',
+      recipientBotID: 'openmaus-bear-id',
+      recipientPlatformThreadID: null,
+    });
+
+    const path = '/v2/gateway-teammates/session-b/first-contacts/session-a';
+    const receipt = { messageID: first, nativeThreadID: 'cosmo-real-thread-1' };
+
+    const outsider = await scenario.client.call('token-h', 'PUT',
+      path + '?session_id=session-h', receipt);
+    expect(outsider.status).toBe(403);
+    const sender = await scenario.client.call('token-a', 'PUT',
+      path + '?session_id=session-a', receipt);
+    expect(sender.status).toBe(403);
+
+    const mismatched = await scenario.client.call('token-g', 'PUT',
+      path + '?session_id=session-g',
+      { messageID: second, nativeThreadID: 'cosmo-real-thread-1' });
+    expect(mismatched.status).toBe(409);
+    expect(mismatched.body.error.code).toBe('gateway_first_contact_mismatch');
+
+    const confirmed = await scenario.client.call('token-g', 'PUT',
+      path + '?session_id=session-g', receipt);
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.data).toMatchObject({
+      senderSessionID: 'session-a', recipientSessionID: 'session-b',
+      nativeThreadID: 'cosmo-real-thread-1', alreadyConfirmed: false,
+    });
+
+    const repeated = await scenario.client.call('token-g', 'PUT',
+      path + '?session_id=session-g', receipt);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body.data.alreadyConfirmed).toBe(true);
+
+    const conflicting = await scenario.client.call('token-g', 'PUT',
+      path + '?session_id=session-g',
+      { messageID: first, nativeThreadID: 'wrong-native-thread' });
+    expect(conflicting.status).toBe(409);
+
+    await WakeService.dispatchDue(env);
+    expect(scenario.client.wakeCallbacks).toHaveLength(2);
+    expect(scenario.client.wakeCallbacks[1].body).toMatchObject({
+      messageID: second, recipientSessionID: 'session-b',
+      recipientBotID: 'openmaus-bear-id',
+      recipientPlatformThreadID: 'cosmo-real-thread-1',
+    });
+
+    const recipientView = await scenario.client.call('token-b', 'GET',
+      '/v2/gateway-conversations?session_id=session-b');
+    expect(recipientView.status).toBe(200);
+    expect(recipientView.body.data).toEqual([
+      { senderSessionID: 'session-a', nativeThreadID: 'cosmo-real-thread-1' },
+    ]);
+
+    expect((await scenario.client.call('token-b', 'DELETE',
+      '/v2/gateway-invitation?session_id=session-b')).status).toBe(200);
+    const revoked = await scenario.client.call('token-g', 'PUT',
+      path + '?session_id=session-g', receipt);
+    expect(revoked.status).toBe(403);
+  });
+
   it('uses one verified office receiver for multiple independent coworkers', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
