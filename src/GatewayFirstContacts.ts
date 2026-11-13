@@ -138,27 +138,28 @@ export class GatewayFirstContacts {
   }
 
   private async releaseWakes(senderSessionID: string, messageID: string): Promise<void> {
-    // Confirmation attests the initial native-tool submission. Do not replay
-    // it on a Wake retry; release only later messages to this recipient.
+    // A shared office Gateway owns the queued Wake (wake_events.session_id),
+    // while the actual recipient owns the Message. Identify the affected pair
+    // through authenticated Message/Thread records, never the callback Session.
     const now = new Date().toISOString();
+    const pairMessages = `SELECT m.id FROM messages m
+      JOIN threads t ON t.id = m.thread_id
+      WHERE t.org_id = ? AND m.sender_session_id = ?
+        AND m.recipient_session_id = ? AND m.received_at IS NOT NULL`;
 
     await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE wake_events SET status = 'delivered', notified_at = ?,
                 last_error = NULL, lease_owner = NULL, lease_until = NULL
-          WHERE message_id = ? AND session_id = ?
-            AND status IN ('pending', 'failed')`,
-      ).bind(now, messageID, this.recipientSessionID),
+          WHERE message_id = ? AND status IN ('pending', 'failed')
+            AND message_id IN (${pairMessages})`,
+      ).bind(now, messageID, this.organizationID,
+        senderSessionID, this.recipientSessionID),
       this.env.DB.prepare(
         `UPDATE wake_events SET next_attempt_at = ?
-          WHERE status = 'pending' AND session_id = ? AND message_id <> ?
-            AND message_id IN (
-              SELECT m.id FROM messages m
-              JOIN threads t ON t.id = m.thread_id
-              WHERE t.org_id = ? AND m.sender_session_id = ?
-                AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
-            )`,
-      ).bind(now, this.recipientSessionID, messageID, this.organizationID,
+          WHERE status = 'pending' AND message_id <> ?
+            AND message_id IN (${pairMessages})`,
+      ).bind(now, messageID, this.organizationID,
         senderSessionID, this.recipientSessionID),
     ]);
   }
