@@ -157,11 +157,17 @@ export class AliasService {
     return { id, revoked: true };
   }
 
+  private async resolveAddressOrName(target: string): Promise<ResolvedSession> {
+    if (target.includes('/')) {
+      return this.address.resolve(target);
+    }
+
+    return new RecipientDirectory(this.identity, this.address).resolve(target);
+  }
+
   async resolve(target: Recipient): Promise<ResolvedSession> {
     const session = typeof target === 'string'
-      ? target.includes('/')
-        ? await this.address.resolve(target)
-        : await new RecipientDirectory(this.identity, this.address).resolve(target)
+      ? await this.resolveAddressOrName(target)
       : await this.resolveExternal(target);
 
     if (session.canonical.split('/')[0] !== this.identity.organizationSlug) {
