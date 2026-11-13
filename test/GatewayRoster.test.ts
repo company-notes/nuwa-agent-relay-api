@@ -56,7 +56,7 @@ class GatewayRosterScenario {
       '/v2/gateway-invitation?session_id=' + sessionID);
   }
 
-  async send(token: 'token-a' | 'token-c', sessionID: string, to: string, body: string) {
+  async send(token: 'token-a' | 'token-c' | 'token-d', sessionID: string, to: string, body: string) {
     const sent = await this.client.call(token, 'POST',
       '/v2/messages?session_id=' + sessionID, { to, body });
     expect(sent.status, 'A coworker must be able to call the other independently').toBe(201);
@@ -119,6 +119,63 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       expect.objectContaining({ recipientSessionID: 'session-b', status: 'active' }),
       expect.objectContaining({ recipientSessionID: 'session-d', status: 'active' }),
     ]));
+  });
+
+  it('isolates independent senders even when their native Threads use one office Webhook', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const bear = 'relay-test-org/beta/reviewer';
+    expect((await scenario.invite(bear, 'local-bear-bot', 'explicit', 'automatic')).status).toBe(201);
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+
+    const first = await scenario.send('token-a', 'session-a', bear, 'First sender, first contact.');
+    const second = await scenario.send('token-d', 'session-d', bear, 'Unrelated second sender.');
+    expect(scenario.client.wakeCallbacks).toHaveLength(2);
+    expect(scenario.client.wakeCallbacks.map((event) => event.body.recipientPlatformThreadID))
+      .toEqual([null, null]);
+
+    const a = await scenario.client.call('token-b', 'PUT',
+      '/v2/gateway-first-contacts/session-a?session_id=session-b', {
+        messageID: first, nativeThreadID: 'thread-from-a',
+      });
+    const d = await scenario.client.call('token-b', 'PUT',
+      '/v2/gateway-first-contacts/session-d?session_id=session-b', {
+        messageID: second, nativeThreadID: 'thread-from-d',
+      });
+    expect(a.status).toBe(200);
+    expect(d.status).toBe(200);
+
+    const followA = await scenario.send('token-a', 'session-a', bear, 'Second message from first sender.');
+    const followD = await scenario.send('token-d', 'session-d', bear, 'Second message from other sender.');
+    expect(scenario.client.wakeCallbacks.slice(-2).map((event) =>
+      ({ id: event.body.messageID, nativeThread: event.body.recipientPlatformThreadID })))
+      .toEqual([
+        { id: followA, nativeThread: 'thread-from-a' },
+        { id: followD, nativeThread: 'thread-from-d' },
+      ]);
+
+    const fromSender = await scenario.client.call('token-a', 'PUT',
+      '/v2/gateway-first-contacts/session-a?session_id=session-b', {
+        messageID: first, nativeThreadID: 'attacker-thread',
+      });
+    expect(fromSender.status).toBe(409);
+
+    const sharedWake = await scenario.client.call('token-b', 'GET',
+      '/v2/wake-subscription?session_id=session-b');
+    expect(sharedWake.body.data).toMatchObject({
+      enabled: true, receiverMode: 'gateway', gatewaySessionID: 'session-g',
+    });
+
+    const cannotDisable = await scenario.client.call('token-g', 'DELETE',
+      '/v2/wake-subscription?session_id=session-g');
+    expect(cannotDisable.status).toBe(409);
+
+    const cannotReplace = await scenario.client.call('token-b', 'PUT',
+      '/v2/gateway-route?session_id=session-b', {
+        recipientBotID: 'sneaky-bot', threadMode: 'platform',
+      });
+    expect(cannotReplace.status).toBe(409);
   });
 
   it('rejects unapproved teammates and cross-Session takeover attempts', async () => {
