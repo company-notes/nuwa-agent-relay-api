@@ -60,6 +60,14 @@ for backward compatibility; exactly one of `recipientName` or
 
 This avoids a per-colleague `agentAddressListAgents` +
 `agentAddressListSessions` model/tool loop during onboarding.
+
+The corresponding office removal accepts `recipient_name=<visible Bot name>`
+or the verified `recipient_address` query parameter on
+`DELETE /v2/gateway-teammates`. Relay requires exactly one input, performs a
+**fresh** authorized name-directory read on removal (no warm-cache risk for
+destructive actions), and only revokes the current authenticated Gateway's
+own approved or pending teammate; duplicate names still fail closed.
+No new Gateway MCP name lookup or user-facing Nuwa address is required.
 Native Bot discovery and obtaining its trusted provider ID still require
 the platform's provider adapter, not Relay identity guessing.
 
