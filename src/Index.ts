@@ -252,6 +252,17 @@ export class RelayAPI {
           ),
         ), 201);
       }
+
+      if (request.method === 'DELETE') {
+        const recipientAddress = new URL(request.url).searchParams.get('recipient_address');
+
+        if (!recipientAddress) {
+          throw new APIError(400, 'gateway_recipient_required',
+            'A public recipient address is required to remove a teammate.');
+        }
+
+        return HTTP.response(await roster.removeTeammate(recipientAddress));
+      }
     }
 
     if (path === '/v2/gateway-invitation') {
@@ -266,12 +277,6 @@ export class RelayAPI {
       if (request.method === 'DELETE') {
         return HTTP.response(await roster.leave());
       }
-    }
-
-    const recipientSessionID = RelayAPI.match(path, /^\/v2\/gateway-teammates\/([^/]+)$/);
-
-    if (recipientSessionID && request.method === 'DELETE') {
-      return HTTP.response(await roster.removeTeammate(recipientSessionID));
     }
 
     return null;
