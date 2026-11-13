@@ -37,23 +37,22 @@ export class RecipientDirectory {
 
     const [agent] = matches;
 
-    if (!agent.defaultSessionHandle) {
+    if (!agent.defaultSessionID || !agent.defaultSessionHandle) {
       throw new APIError(409, 'recipient_name_not_ready',
         'The named colleague does not have an available default Session.');
     }
 
-    // Resolve through Agent Address's authorized directory to avoid trusting
-    // display names as routes or recreating canonical Session identity here.
-    const session = await this.address.resolve(
-      this.identity.organizationSlug + '/' + agent.handle,
-    );
-
-    if (session.agentId !== agent.id ||
-        session.canonical.split('/')[0] !== this.identity.organizationSlug) {
-      throw new APIError(409, 'recipient_name_identity_mismatch',
-        'The named coworker changed identity while the recipient was being resolved.');
-    }
-
-    return session;
+    // Agent Address returns the verified default Session together with its
+    // Organization-scoped Agent record. One directory call resolves the full
+    // target deterministically; no second lookup or Gateway LLM turn.
+    return {
+      id: agent.defaultSessionID,
+      agentId: agent.id,
+      canonical: [
+        this.identity.organizationSlug,
+        agent.handle,
+        agent.defaultSessionHandle,
+      ].join('/'),
+    };
   }
 }
