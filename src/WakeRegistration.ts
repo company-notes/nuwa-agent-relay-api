@@ -141,6 +141,10 @@ export class WakeRegistration {
   }
 
   async verify(verificationId: string, challenge: string) {
+    await GatewayRoster.requireIndependentRoute(
+      this.env, this.identity.organizationID, this.identity.sessionID,
+    );
+
     const row = await this.env.DB.prepare(
       `SELECT verification_id AS verificationId,
               verification_digest AS verificationDigest,
