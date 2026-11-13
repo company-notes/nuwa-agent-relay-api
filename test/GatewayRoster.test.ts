@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GatewayFirstContacts } from '../src/GatewayFirstContacts';
 import { MailReceipt } from '../src/MailReceipt';
@@ -75,6 +75,9 @@ class GatewayRosterScenario {
     return sent.body.data.id as string;
   }
 }
+
+// Restore dispatch instrumentation after each case, including failed assertions.
+afterEach(() => vi.restoreAllMocks());
 
 describe('Office Gateway registration and shared Wake use cases', () => {
   it('invites a known local Bot by its real display name without an extra Gateway directory call', async () => {
@@ -282,6 +285,30 @@ describe('Office Gateway registration and shared Wake use cases', () => {
   });
 
   it('does not release another coworker waiting on the same shared Gateway', async () => {
+    const dispatchTrace: Array<{
+      startedAt: number; endedAt?: number; state: string; caller: string;
+      error?: string;
+    }> = [];
+    const originalDispatch = WakeService.dispatchDue;
+    vi.spyOn(WakeService, 'dispatchDue').mockImplementation(async (currentEnv) => {
+      const run = {
+        startedAt: Date.now(),
+        state: 'running',
+        caller: (new Error().stack ?? '').split('\\n').slice(2, 6).join(' | '),
+      } as (typeof dispatchTrace)[number];
+      dispatchTrace.push(run);
+
+      try {
+        await originalDispatch.call(WakeService, currentEnv);
+        run.state = 'completed';
+      } catch (error) {
+        run.state = 'rejected';
+        run.error = error instanceof Error ? error.message : String(error);
+        throw error;
+      } finally {
+        run.endedAt = Date.now();
+      }
+    });
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
 
@@ -361,6 +388,7 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     }
 
     expect(bearConfirmed!.status).toBe(200);
+    const confirmedAt = Date.now();
 
     const queue = await env.DB.prepare(
       `SELECT message_id AS messageID, next_attempt_at AS nextAttempt,
@@ -510,8 +538,10 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     ]));
     expect(eligibleIDs, 'WAKE_RELEASE_V12_DUE_DIAGNOSTIC: Bear Wake missing after an ' +
       'earlier lease-free receipt snapshot: ' +
-      JSON.stringify({ receiptSnapshot, eligibleIDs, preDispatch: preDispatch.results,
-        wakeOwnerMembership: wakeOwnerMembership.results }))
+      JSON.stringify({ confirmedAt, receiptSnapshot, eligibleIDs,
+        preDispatch: preDispatch.results,
+        wakeOwnerMembership: wakeOwnerMembership.results,
+        dispatchTrace }))
       .toContain(bearWaiting);
     expect(eligibleIDs, 'Analyst first contact must stay off the due queue')
       .not.toContain(analystWaiting);
