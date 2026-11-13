@@ -422,7 +422,7 @@ export class RelayAPI {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await WakeService.dispatchDue(env);
+    await WakeService.dispatchDue(env, 'scheduled');
   },
 
   async fetch(
@@ -453,7 +453,8 @@ export default {
             (request.method === 'PUT' &&
               (path.startsWith('/v2/gateway-first-contacts/') ||
                 /^\/v2\/gateway-teammates\/[^/]+\/first-contacts\/[^/]+$/.test(path))))) {
-        context.waitUntil(WakeService.dispatchDue(env));
+        context.waitUntil(WakeService.dispatchDue(env,
+          path === '/v1/mailtrigger/receipt' ? 'mail-receipt' : 'first-contact'));
       }
 
       return response;
