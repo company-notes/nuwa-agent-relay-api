@@ -149,6 +149,12 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       recipientPlatformThreadID: null,
     });
 
+    const waiting = await env.DB.prepare(
+      'SELECT session_id AS sessionID, status FROM wake_events WHERE message_id = ?',
+    ).bind(second).first<{ sessionID: string; status: string }>();
+    expect(waiting, 'A shared Gateway owns the notification, not the recipient Session')
+      .toMatchObject({ sessionID: 'session-g', status: 'pending' });
+
     const path = '/v2/gateway-teammates/session-b/first-contacts/session-a';
     const receipt = { messageID: first, nativeThreadID: 'cosmo-real-thread-1' };
 
@@ -182,6 +188,14 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       path + '?session_id=session-g',
       { messageID: first, nativeThreadID: 'wrong-native-thread' });
     expect(conflicting.status).toBe(409);
+
+    const resumed = await env.DB.prepare(
+      'SELECT next_attempt_at AS nextAttempt FROM wake_events WHERE message_id = ?',
+    ).bind(second).first<{ nextAttempt: string }>();
+    expect(resumed).not.toBeNull();
+    expect(Date.parse(resumed!.nextAttempt),
+      'Confirmation must release the next wake immediately even when routed through a shared Gateway')
+      .toBeLessThanOrEqual(Date.now());
 
     await WakeService.dispatchDue(env);
     expect(scenario.client.wakeCallbacks).toHaveLength(2);
