@@ -46,13 +46,25 @@ export class WakeService {
     ).bind(this.identity.sessionID, this.identity.organizationID)
       .first<{ callbackURL: string; authMode: string }>();
 
+    const shared = await this.env.DB.prepare(
+      `SELECT g.gateway_session_id AS gatewaySessionID,
+              s.callback_url AS callbackURL, s.auth_mode AS authMode
+         FROM gateway_teammates g
+         JOIN wake_subscriptions s ON s.session_id = g.gateway_session_id AND s.org_id = g.org_id
+        WHERE g.org_id = ? AND g.recipient_session_id = ? AND g.status = 'active'`,
+    ).bind(this.identity.organizationID, this.identity.sessionID).first<{
+      gatewaySessionID: string; callbackURL: string; authMode: string;
+    }>();
     const pending = await new WakeRegistration(this.env, this.identity).pending();
+    const callback = row ?? shared;
 
     return {
       sessionID: this.identity.sessionID,
-      enabled: Boolean(row),
-      callbackHost: row ? new URL(row.callbackURL).hostname : null,
-      authMode: row?.authMode ?? null,
+      enabled: Boolean(callback),
+      receiverMode: shared ? 'gateway' : row ? 'direct' : 'none',
+      gatewaySessionID: shared?.gatewaySessionID ?? null,
+      callbackHost: callback ? new URL(callback.callbackURL).hostname : null,
+      authMode: callback?.authMode ?? null,
       pending,
     };
   }
