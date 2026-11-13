@@ -68,14 +68,7 @@ describe('Relay resolves familiar colleague names in the one send request', () =
       });
     expect(send.status).toBe(201);
 
-    const mailbox = await client.call('token-b', 'POST',
-      '/v2/agent-mailboxes?session_id=session-b');
-    client.archiveDeliveredEmail(
-      mailbox.body.data.mailboxId,
-      '[NAR:' + send.body.data.id + '] Agent Relay message',
-    );
-
-    await MailReceipt.reconcileArchives(env);
+    await MailReceipt.confirmArrival(env, send.body.data.id, 'webhook');
     await WakeService.dispatchDue(env);
 
     expect(client.wakeCallbacks).toHaveLength(1);
