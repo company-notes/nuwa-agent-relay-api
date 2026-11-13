@@ -10,6 +10,21 @@ class GatewayRosterScenario {
 
   async setup() {
     this.client.installExternalTestTransport();
+
+    // Wrangler's D1 test environment survives across scenarios in this file.
+    // Revoke previous teammate memberships before creating this independent office.
+    for (const [token, sessionID] of [
+      ['token-b', 'session-b'], ['token-d', 'session-d'],
+    ] as const) {
+      const removed = await this.client.call(token, 'DELETE',
+        '/v2/gateway-invitation?session_id=' + sessionID);
+      expect([200, 404]).toContain(removed.status);
+    }
+
+    const oldWake = await this.client.call('token-g', 'DELETE',
+      '/v2/wake-subscription?session_id=session-g');
+    expect(oldWake.status).toBe(200);
+
     await this.client.provisionAgentMailboxes();
     const another = await this.client.call('token-d', 'POST',
       '/v2/agent-mailboxes?session_id=session-d');
