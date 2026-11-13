@@ -268,7 +268,7 @@ export class RelayAPI {
       }
     }
 
-    const recipientSessionID = RelayAPI.match(path, /^\\/v2\\/gateway-teammates\\/([^/]+)$/);
+    const recipientSessionID = RelayAPI.match(path, /^\/v2\/gateway-teammates\/([^/]+)$/);
 
     if (recipientSessionID && request.method === 'DELETE') {
       return HTTP.response(await roster.removeTeammate(recipientSessionID));
