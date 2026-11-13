@@ -1,6 +1,7 @@
 import type { Env } from './Env';
 import { GatewayFirstContactMode, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
 import { APIError } from './HTTP';
+import { RecipientDirectory } from './RecipientDirectory';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 
 enum GatewayTeammateStatus {
@@ -96,7 +97,7 @@ export class GatewayRoster {
   }
 
   async invite(
-    recipientAddress: string, recipientBotID: string,
+    recipientTarget: { address?: string; name?: string }, recipientBotID: string,
     threadMode: GatewayThreadMode,
     firstContactMode: GatewayFirstContactMode = GatewayFirstContactMode.Manual,
   ) {
@@ -104,7 +105,9 @@ export class GatewayRoster {
     GatewayRoster.validateModes(threadMode, firstContactMode);
     await this.verifiedGateway(this.identity.sessionID);
 
-    const recipient = await this.address.resolve(recipientAddress);
+    const recipient = recipientTarget.name
+      ? await new RecipientDirectory(this.identity, this.address).resolve(recipientTarget.name)
+      : await this.address.resolve(recipientTarget.address!);
 
     if (recipient.canonical.split('/')[0] !== this.identity.organizationSlug) {
       throw new APIError(403, 'gateway_teammate_forbidden',
