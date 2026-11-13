@@ -15,15 +15,18 @@ export class RecipientDirectory {
     return value.trim().normalize('NFKC').toLowerCase();
   }
 
-  async resolve(name: string): Promise<ResolvedSession> {
+  async resolve(name: string, requireFresh = false): Promise<ResolvedSession> {
     if (!name.trim() || name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
       throw new APIError(400, 'invalid_recipient_name', 'Recipient name must be a single short line.');
     }
 
     const requested = RecipientDirectory.normalize(name);
-    const scope = await this.address.directoryCacheScope(this.identity.organizationID);
-    const candidates = await AuthorizedAgentDirectoryCache.shared.read(scope,
-      () => this.address.listAgents());
+    const candidates = requireFresh
+      ? await this.address.listAgents()
+      : await AuthorizedAgentDirectoryCache.shared.read(
+        await this.address.directoryCacheScope(this.identity.organizationID),
+        () => this.address.listAgents(),
+      );
     const matches = candidates.filter((agent) =>
       RecipientDirectory.normalize(agent.displayName ?? '') === requested ||
       RecipientDirectory.normalize(agent.handle) === requested);
