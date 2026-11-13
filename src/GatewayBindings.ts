@@ -1,6 +1,7 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
 import { GatewayFirstContacts } from './GatewayFirstContacts';
+import { GatewayRoster } from './GatewayRoster';
 import { GatewayFirstContactMode, GatewayFirstContactStatus, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 
@@ -80,6 +81,9 @@ export class GatewayBindings {
     recipientBotID: string, threadMode: GatewayThreadMode,
     firstContactMode: GatewayFirstContactMode = GatewayFirstContactMode.Manual,
   ) {
+    await GatewayRoster.requireIndependentRoute(
+      this.env, this.identity.organizationID, this.identity.sessionID,
+    );
     GatewayBindings.identifier(recipientBotID, 'recipientBotID');
 
     if (!Object.values(GatewayThreadMode).includes(threadMode)) {
@@ -141,6 +145,10 @@ export class GatewayBindings {
   }
 
   async deleteRoute() {
+    await GatewayRoster.requireIndependentRoute(
+      this.env, this.identity.organizationID, this.identity.sessionID,
+    );
+
     await this.env.DB.batch([
       this.env.DB.prepare(
         'DELETE FROM gateway_first_contacts WHERE org_id = ? AND recipient_session_id = ?',
@@ -267,11 +275,24 @@ export class GatewayBindings {
       event: 'nuwa.message.available',
       eventVersion: 2,
       messageID: message.id,
-      recipientSessionID: message.recipientWakeSessionID,
+      recipientSessionID: message.recipientSessionID ?? message.recipientWakeSessionID,
     };
 
-    if (message.recipientSessionID !== message.recipientWakeSessionID) {
+    if (!message.recipientSessionID) {
       return minimal;
+    }
+
+    if (message.recipientSessionID !== message.recipientWakeSessionID) {
+      const membership = await env.DB.prepare(
+        `SELECT recipient_session_id FROM gateway_teammates
+         WHERE org_id = ? AND recipient_session_id = ? AND gateway_session_id = ?
+           AND status = 'active'`,
+      ).bind(message.organizationID, message.recipientSessionID, message.recipientWakeSessionID)
+        .first();
+
+      if (!membership) {
+        return minimal;
+      }
     }
 
     const route = await env.DB.prepare(
@@ -327,7 +348,7 @@ export class GatewayBindings {
       }
 
       await GatewayFirstContacts.reserve(env, message.organizationID, message.senderSessionID,
-        message.recipientWakeSessionID, message.id);
+        message.recipientSessionID, message.id);
 
       // A null native Thread indicates a reserved explicit first contact.
       // Omission means the platform manages its own Thread (e.g. GrokBot).
