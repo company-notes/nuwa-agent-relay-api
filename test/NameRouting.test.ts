@@ -125,6 +125,34 @@ describe('Relay resolves familiar colleague names in the one send request', () =
     expect(client.deliveries).toHaveLength(0);
   });
 
+  it('reuses a warm authorized directory for another new call, but not another OAuth grant', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionAgentMailboxes();
+
+    const first = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: '大熊', body: 'First quick message.',
+    });
+    const second = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: '大熊', body: 'Second quick message.',
+    });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(client.nameDirectoryLookups,
+      'Warm messages must share an authorized directory snapshot').toBe(1);
+
+    const separateGrant = await client.call('token-b', 'POST',
+      '/v2/messages?session_id=session-b', {
+        to: '小晴', body: 'Separate OAuth grant should resolve independently.',
+      });
+
+    expect(separateGrant.status).toBe(201);
+    expect(client.nameDirectoryLookups,
+      'Different OAuth grants must never share cached authorization').toBe(2);
+    expect(client.deliveries).toHaveLength(3);
+  });
+
   it('preserves fast canonical-address sends without a directory lookup', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
