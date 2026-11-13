@@ -1,3 +1,4 @@
+import { AuthorizedAgentDirectoryCache } from './AuthorizedAgentDirectoryCache';
 import { APIError } from './HTTP';
 import {
   SessionIdentityClient, type ResolvedSession, type SessionIdentity,
@@ -20,7 +21,9 @@ export class RecipientDirectory {
     }
 
     const requested = RecipientDirectory.normalize(name);
-    const candidates = await this.address.listAgents();
+    const scope = await this.address.directoryCacheScope(this.identity.organizationID);
+    const candidates = await AuthorizedAgentDirectoryCache.shared.read(scope,
+      () => this.address.listAgents());
     const matches = candidates.filter((agent) =>
       RecipientDirectory.normalize(agent.displayName ?? '') === requested ||
       RecipientDirectory.normalize(agent.handle) === requested);
