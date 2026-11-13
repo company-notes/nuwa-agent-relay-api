@@ -174,6 +174,18 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(queuedMessage?.receivedAt,
       'Only a confirmed MailTrigger arrival can create the waiting Wake').not.toBeNull();
 
+    const candidates = await env.DB.prepare(
+      `SELECT m.id AS messageID FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+        WHERE t.org_id = ? AND m.sender_session_id = ?
+          AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
+          AND m.id <> ?`,
+    ).bind('org-id', 'session-a', 'session-b', first)
+      .all<{ messageID: string }>();
+    expect(candidates.results.map((item) => item.messageID),
+      'The verified-message selector must include the waiting shared-Gateway Wake')
+      .toContain(second);
+
     const path = '/v2/gateway-teammates/session-b/first-contacts/session-a';
     const receipt = { messageID: first, nativeThreadID: 'cosmo-real-thread-1' };
 
@@ -209,11 +221,16 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(conflicting.status).toBe(409);
 
     const resumed = await env.DB.prepare(
-      'SELECT next_attempt_at AS nextAttempt FROM wake_events WHERE message_id = ?',
-    ).bind(second).first<{ nextAttempt: string }>();
+      `SELECT next_attempt_at AS nextAttempt, status, attempts,
+              last_error AS lastError, lease_owner AS leaseOwner
+         FROM wake_events WHERE message_id = ?`,
+    ).bind(second).first<{
+      nextAttempt: string; status: string; attempts: number;
+      lastError: string | null; leaseOwner: string | null;
+    }>();
     expect(resumed).not.toBeNull();
     expect(Date.parse(resumed!.nextAttempt),
-      'Confirmation must release the next wake immediately even when routed through a shared Gateway')
+      'Expected immediate release. Actual persisted Wake state: ' + JSON.stringify(resumed))
       .toBeLessThanOrEqual(Date.now());
 
     await WakeService.dispatchDue(env);
@@ -268,15 +285,21 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(bearConfirmed.status).toBe(200);
 
     const queue = await env.DB.prepare(
-      `SELECT message_id AS messageID, next_attempt_at AS nextAttempt
+      `SELECT message_id AS messageID, next_attempt_at AS nextAttempt,
+              status, attempts, last_error AS lastError
          FROM wake_events WHERE message_id IN (?, ?)`,
     ).bind(bearWaiting, analystWaiting)
-      .all<{ messageID: string; nextAttempt: string }>();
-    const schedule = new Map(queue.results.map((item) => [item.messageID, item.nextAttempt]));
-    expect(Date.parse(schedule.get(bearWaiting)!),
-      'The confirmed recipient must be released immediately').toBeLessThanOrEqual(Date.now());
-    expect(Date.parse(schedule.get(analystWaiting)!),
-      'The other recipient on the same Gateway must remain reserved').toBeGreaterThan(Date.now());
+      .all<{
+        messageID: string; nextAttempt: string; status: string;
+        attempts: number; lastError: string | null;
+      }>();
+    const schedule = new Map(queue.results.map((item) => [item.messageID, item]));
+    expect(Date.parse(schedule.get(bearWaiting)!.nextAttempt),
+      'The confirmed recipient must be released. Actual persisted states: ' +
+      JSON.stringify(queue.results)).toBeLessThanOrEqual(Date.now());
+    expect(Date.parse(schedule.get(analystWaiting)!.nextAttempt),
+      'The other recipient on the same Gateway must remain reserved. Actual states: ' +
+      JSON.stringify(queue.results)).toBeGreaterThan(Date.now());
 
     await WakeService.dispatchDue(env);
 
