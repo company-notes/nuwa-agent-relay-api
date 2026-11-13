@@ -103,7 +103,9 @@ export class WakeService {
     return result.results as Record<string, unknown>[];
   }
 
-  static async dispatchDue(env: Env): Promise<void> {
+  static async dispatchDue(
+    env: Env, origin: 'scheduled' | 'mail-receipt' | 'first-contact' | 'direct' = 'direct',
+  ): Promise<void> {
     const now = new Date().toISOString();
     const rows = await env.DB.prepare(
       `SELECT e.message_id AS messageId, e.session_id AS sessionID,
@@ -130,8 +132,9 @@ export class WakeService {
     ).bind(now, now).all<WakeRow>();
 
     for (const event of rows.results) {
-      // Webhook waitUntil and Cron may both run: atomically lease each event.
-      const leaseOwner = crypto.randomUUID();
+      // Preserve the trigger in the fencing token so competing dispatchers
+      // can be diagnosed without logging webhook credentials or message bodies.
+      const leaseOwner = origin + ':' + crypto.randomUUID();
       const leaseUntil = new Date(Date.now() + 30_000).toISOString();
       const claimed = await env.DB.prepare(
         `UPDATE wake_events SET lease_owner = ?, lease_until = ?
