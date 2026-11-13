@@ -303,6 +303,21 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(scenario.client.wakeCallbacks.map((item) => item.body.messageID))
       .toEqual([bearFirst, analystFirst]);
 
+    // Reproduce a Wake with an outstanding dispatch lease. Confirmation
+    // overrides this stale lease for the confirmed recipient only.
+    const heldUntil = new Date(Date.now() + 30_000).toISOString();
+    const held = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE wake_events SET lease_owner = ?, lease_until = ?
+          WHERE message_id = ? AND status = 'pending'`,
+      ).bind('held-bear', heldUntil, bearWaiting),
+      env.DB.prepare(
+        `UPDATE wake_events SET lease_owner = ?, lease_until = ?
+          WHERE message_id = ? AND status = 'pending'`,
+      ).bind('held-analyst', heldUntil, analystWaiting),
+    ]);
+    expect(held.map((item) => item.meta.changes)).toEqual([1, 1]);
+
     const bearConfirmed = await scenario.client.call('token-g', 'PUT',
       '/v2/gateway-teammates/session-b/first-contacts/session-a?session_id=session-g', {
         messageID: bearFirst, nativeThreadID: 'bear-work-thread',
@@ -311,12 +326,14 @@ describe('Office Gateway registration and shared Wake use cases', () => {
 
     const queue = await env.DB.prepare(
       `SELECT message_id AS messageID, next_attempt_at AS nextAttempt,
-              status, attempts, last_error AS lastError
+              status, attempts, last_error AS lastError,
+              lease_owner AS leaseOwner, lease_until AS leaseUntil
          FROM wake_events WHERE message_id IN (?, ?)`,
     ).bind(bearWaiting, analystWaiting)
       .all<{
         messageID: string; nextAttempt: string; status: string;
         attempts: number; lastError: string | null;
+        leaseOwner: string | null; leaseUntil: string | null;
       }>();
     const schedule = new Map(queue.results.map((item) => [item.messageID, item]));
     const bear = schedule.get(bearWaiting);
@@ -336,7 +353,13 @@ describe('Office Gateway registration and shared Wake use cases', () => {
         .toBeLessThanOrEqual(Date.now());
     }
 
+    expect(bear!.leaseOwner,
+      'Native Thread confirmation must invalidate the previously claimed Wake lease').toBeNull();
+    expect(bear!.leaseUntil).toBeNull();
     expect(analyst!.status, 'The other coworker must remain pending').toBe('pending');
+    expect(analyst!.leaseOwner, 'Do not invalidate another coworker\'s Wake lease')
+      .toBe('held-analyst');
+    expect(analyst!.leaseUntil).toBe(heldUntil);
     expect(Date.parse(analyst!.nextAttempt),
       'The other coworker must retain its first-contact delay')
       .toBeGreaterThan(Date.now());
