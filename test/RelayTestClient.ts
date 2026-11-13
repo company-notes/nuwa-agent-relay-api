@@ -67,9 +67,19 @@ export class RelayTestClient {
     agentId: 'agent-000b',
     canonical: RelayTestClient.slug + '/beta/observer',
   };
+  private readonly sessionD: Session = {
+    id: 'session-d',
+    agentId: 'agent-000d',
+    canonical: RelayTestClient.slug + '/gamma/main',
+  };
+  private readonly sessionG: Session = {
+    id: 'session-g',
+    agentId: 'agent-000g',
+    canonical: RelayTestClient.slug + '/gateway/main',
+  };
 
   private requestAgentAddress(url: URL, token: string | null, init?: RequestInit): Response {
-    if (!['Bearer token-a', 'Bearer token-b', 'Bearer token-c', 'Bearer token-foreign'].includes(token ?? '')) {
+    if (!['Bearer token-a', 'Bearer token-b', 'Bearer token-c', 'Bearer token-d', 'Bearer token-g', 'Bearer token-foreign'].includes(token ?? '')) {
       return Response.json({ ok: false, error: { code: 'unauthorized' } }, { status: 401 });
     }
 
@@ -92,7 +102,7 @@ export class RelayTestClient {
     const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
 
     if (matched) {
-      const session = [this.sessionA, this.sessionB, this.sessionC]
+      const session = [this.sessionA, this.sessionB, this.sessionC, this.sessionD, this.sessionG]
         .find((candidate) => candidate.id === matched[1]);
 
       if (!session) {
@@ -117,7 +127,7 @@ export class RelayTestClient {
 
     if (url.pathname === '/v2/account/addresses') {
       const input = url.searchParams.get('address');
-      const session = [this.sessionA, this.sessionB, this.sessionC].find((item) =>
+      const session = [this.sessionA, this.sessionB, this.sessionC, this.sessionD, this.sessionG].find((item) =>
         input === item.canonical ||
         input === item.canonical.split('/').slice(0, 2).join('/') &&
           item.id !== this.sessionC.id);
@@ -502,7 +512,7 @@ export class RelayTestClient {
   }
 
   async call(
-    token: 'token-a' | 'token-b' | 'token-c' | null,
+    token: 'token-a' | 'token-b' | 'token-c' | 'token-d' | 'token-g' | null,
     method: string,
     path: string,
     data?: object,
@@ -534,7 +544,7 @@ export class RelayTestClient {
     return { status: response.status, body: await response.json() };
   }
 
-  async confirmLatestWake(token: 'token-a' | 'token-b' | 'token-c' = 'token-b') {
+  async confirmLatestWake(token: 'token-a' | 'token-b' | 'token-c' | 'token-d' | 'token-g' = 'token-b') {
     const challenge = this.wakeChallenges.at(-1);
     expect(challenge, 'A real challenge POST must reach the target').toBeTruthy();
     const response = await this.call(token, 'POST',
