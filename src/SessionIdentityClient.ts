@@ -25,6 +25,7 @@ export type DirectoryAgent = {
   id: string;
   handle: string;
   displayName: string | null;
+  defaultSessionID: string | null;
   defaultSessionHandle: string | null;
 };
 
@@ -103,7 +104,9 @@ export class SessionIdentityClient {
       !row || typeof row !== 'object' || typeof row.id !== 'string' ||
       typeof row.handle !== 'string' || !row.handle ||
       row.displayName != null && typeof row.displayName !== 'string' ||
-      row.defaultSessionHandle != null && typeof row.defaultSessionHandle !== 'string')) {
+      row.defaultSessionID != null && typeof row.defaultSessionID !== 'string' ||
+      row.defaultSessionHandle != null && typeof row.defaultSessionHandle !== 'string' ||
+      Boolean(row.defaultSessionID) !== Boolean(row.defaultSessionHandle))) {
       throw new APIError(502, 'address_response_invalid',
         'Agent Address returned an invalid authorized directory.');
     }
