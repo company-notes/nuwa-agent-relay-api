@@ -58,5 +58,5 @@ test('uses the local installed Wrangler executable, not a global shim', () => {
     encoding: 'utf8',
   });
 
-  assert.match(version, /\\d+\\.\\d+\\.\\d+/);
+  assert.match(version, /\d+\.\d+\.\d+/);
 });
