@@ -391,16 +391,41 @@ describe('Office Gateway registration and shared Wake use cases', () => {
         .toBeLessThanOrEqual(Date.now());
     }
 
-    // Diagnostic-only probe: if confirmation still leaves a stale lease,
-    // try one exact-primary-key update through the *same D1 binding*.
-    // Preserve the pre-probe snapshot and deliberately fail below even if
-    // the probe succeeds; this must never mask a broken receipt handler.
+    // Diagnostic probes preserve the failed pre-probe snapshot and MUST NOT
+    // make this test pass. A direct idempotent receipt retry distinguishes the
+    // HTTP path from a service call using this test's DB binding; the final
+    // primary-key update checks whether D1 can clear the same physical row.
+    let receiptRetry: {
+      alreadyConfirmed?: boolean; leaseOwner?: string | null;
+      leaseUntil?: string | null; error?: string;
+    } | null = null;
     let manualProbe: {
       changes: number; leaseOwner: string | null; leaseUntil: string | null;
     } | null = null;
 
     if (bear!.status === 'pending' &&
         (bear!.leaseOwner !== null || bear!.leaseUntil !== null)) {
+      try {
+        const retried = await new GatewayFirstContacts(
+          env, 'org-id', 'session-b',
+        ).confirm('session-a', bearFirst, 'bear-work-thread');
+        const afterRetry = await env.DB.prepare(
+          `SELECT lease_owner AS leaseOwner, lease_until AS leaseUntil
+            FROM wake_events WHERE message_id = ?`,
+        ).bind(bearWaiting).first<{
+          leaseOwner: string | null; leaseUntil: string | null;
+        }>();
+        receiptRetry = {
+          alreadyConfirmed: retried.alreadyConfirmed,
+          leaseOwner: afterRetry?.leaseOwner,
+          leaseUntil: afterRetry?.leaseUntil,
+        };
+      } catch (error) {
+        receiptRetry = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
       const forced = await env.DB.prepare(
         `UPDATE wake_events SET lease_owner = NULL, lease_until = NULL
           WHERE message_id = ? AND status = 'pending'`,
@@ -419,10 +444,11 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     }
 
     expect(bear!.leaseOwner,
-      'Confirmation left an owned lease. Direct D1 primary-key probe (diagnostic only, ' +
-      'test still fails): ' + JSON.stringify({
+      'The HTTP confirmation left an owned lease. Diagnostic retries cannot ' +
+      'make this assertion pass: ' + JSON.stringify({
         previousOwner: bear!.leaseOwner,
         previousUntil: bear!.leaseUntil,
+        receiptRetry,
         manualProbe,
       })).toBeNull();
     expect(bear!.leaseUntil).toBeNull();
