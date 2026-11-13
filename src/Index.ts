@@ -2,6 +2,7 @@ import { AliasService } from './AliasService';
 import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
 import { GatewayModeCodec } from './GatewayModeCodec';
+import { GatewayRoster } from './GatewayRoster';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { MailReceipt } from './MailReceipt';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
@@ -231,6 +232,51 @@ export class RelayAPI {
     return null;
   }
 
+  private async gatewayTeammates(
+    request: Request, path: string, roster: GatewayRoster,
+  ): Promise<Response | null> {
+    if (path === '/v2/gateway-teammates') {
+      if (request.method === 'GET') {
+        return HTTP.response(await roster.list());
+      }
+
+      if (request.method === 'POST') {
+        const data = await HTTP.json(request);
+
+        return HTTP.response(await roster.invite(
+          HTTP.requiredString(data, 'recipientAddress', 255),
+          HTTP.requiredString(data, 'recipientBotID', 192),
+          GatewayModeCodec.readThreadMode(HTTP.requiredString(data, 'threadMode', 32)),
+          GatewayModeCodec.readFirstContactMode(
+            HTTP.optionalString(data, 'firstContactMode', 32) ?? 'manual',
+          ),
+        ), 201);
+      }
+    }
+
+    if (path === '/v2/gateway-invitation') {
+      if (request.method === 'GET') {
+        return HTTP.response(await roster.invitation());
+      }
+
+      if (request.method === 'PUT') {
+        return HTTP.response(await roster.approve());
+      }
+
+      if (request.method === 'DELETE') {
+        return HTTP.response(await roster.leave());
+      }
+    }
+
+    const recipientSessionID = RelayAPI.match(path, /^\\/v2\\/gateway-teammates\\/([^/]+)$/);
+
+    if (recipientSessionID && request.method === 'DELETE') {
+      return HTTP.response(await roster.removeTeammate(recipientSessionID));
+    }
+
+    return null;
+  }
+
   private async wake(
     request: Request, path: string, identity: SessionIdentity,
   ): Promise<Response | null> {
@@ -306,6 +352,7 @@ export class RelayAPI {
     const relay = new RelayV2Service(this.env, identity, address);
     const aliases = new AliasService(this.env, identity, address);
     const gatewayBindings = new GatewayBindings(this.env, identity, address);
+    const gatewayRoster = new GatewayRoster(this.env, identity, address);
 
     if (path === '/v2/agent-mailboxes' && request.method === 'POST') {
       return HTTP.response(await relay.provisionMailbox(), 201);
@@ -326,6 +373,7 @@ export class RelayAPI {
       () => this.handoffs(request, path, relay),
       () => this.threads(request, path, relay),
       () => this.gateway(request, path, gatewayBindings),
+      () => this.gatewayTeammates(request, path, gatewayRoster),
       () => this.wake(request, path, identity),
     ];
 
