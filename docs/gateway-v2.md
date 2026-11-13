@@ -53,10 +53,48 @@ A configured route **does not** grant the sender access to the recipient Session
 It only supplies the last hop after Relay's existing send, receipt, and Wake
 authorization. Replacing a Bot or thread mode while bindings remain is rejected.
 
+## Shared office Gateway: one Wake for multiple recipients
+
+The dedicated office Gateway has its **own** authenticated Agent/Session, and
+verifies one callback URL. Real coworkers remain distinct Agents with their own
+Session Runtime ownership. The roster is **opt-in**; existing independently
+subscribed recipients continue using their original Wake.
+
+| Acting Session | Resource | Action |
+| --- | --- | --- |
+| Verified office Gateway | `POST /v2/gateway-teammates` | Propose `{recipientAddress, recipientBotID, threadMode, firstContactMode?}` for a real same-Organization coworker. Starts pending only |
+| Office Gateway | `GET /v2/gateway-teammates` | List its own pending and approved recipients |
+| Office Gateway | `DELETE /v2/gateway-teammates?recipient_address=...` | Remove only its own coworker proposal/binding |
+| Coworker's independent Session | `GET /v2/gateway-invitation` | Inspect the invitation targeting this exact recipient |
+| Coworker's independent Session | `PUT /v2/gateway-invitation` | Authorize this recipient to use the selected verified Gateway, refusing existing direct routes or direct Wake |
+| Coworker's independent Session | `DELETE /v2/gateway-invitation` | Revoke its own membership and cancel only its own pending shared Wakes |
+
+Every endpoint still requires the actor's own OAuth and valid exclusive
+Session Runtime lease. The Gateway **never acquires** any recipient Runtime,
+Resume capability or permission to read a recipient's private inbox.
+Proposing an invitation cannot redirect or delete another recipient's
+existing direct route; only approved memberships may own shared bindings.
+
+After receipt, Relay looks up the recipient's **approved** roster entry,
+resolves the Gateway's already verified callback, and emits a full V2 dispatch
+containing the recipient's immutable Bot ID. The event's
+`recipientSessionID` always refers to the coworker, **not the Gateway**;
+the private Wake delivery credential belongs to the office Gateway.
+The Gateway must validate the authenticated event and dispatch only to that
+server-selected Bot. Untrusted message text cannot select another destination.
+An unapproved recipient cannot use this shared callback.
+
+The recipient's own authorized Session still configures explicit native
+conversation bindings and privately confirms first-contact Thread receipts.
+An OpenMausBot Gateway's own credentials do not authorize that confirmation.
+The shared registration reference is not a claim that the platform is already
+running the Bot, and does not replace the trusted run-result observer.
+
 ## Signed dispatch payload
 
 After the independently verified MailTrigger receipt, the queued, authenticated
-Wake uses the recipient Session's verified subscription. The Relay assembles the
+Wake uses the recipient's verified direct subscription or its approved shared
+Gateway subscription. The Relay assembles the
 Gateway event **from persisted Message and recipient-owned binding records**:
 
 ```json
@@ -148,10 +186,8 @@ on a clean V2 staging database. A real OpenMausBot UI test remains a separate
 manual staging gate; CI uses real Cloudflare D1 and Relay HTTP but substitutes
 external mail/model services where test accounts are not configured.
 
-This is a **stacked Draft PR on Relay API PR #22**. Agent Address PR #11
-supplies V2 Session identity. MCP PR #23 must later expose the management
-contract if tools (rather than a REST client) will configure bindings.
-No MailTrigger, production Worker, D1, OAuth KV or external Bot is modified.
+The recipient's route and Gateway roster APIs are opt-in. A Gateway's identity
+does not replace the real coworker's Agent Address identity or Runtime lease.
 
 ### Explicitly out of scope
 
@@ -159,7 +195,7 @@ No MailTrigger, production Worker, D1, OAuth KV or external Bot is modified.
 - Provider-specific automatic **receipt collection and private confirmation**;
   Relay can now reserve first contact, but OpenMausBot still needs a trusted
   adapter to report its actual created work Thread automatically.
-- Multi-organization Gateway management / shared physical Wake Target registry.
+- Multi-organization Gateway management or delegation without recipient approval.
 - Bot-run proof, cross-platform client adapters, attachments authorization.
 - Context compaction, memory, project classification, Semantic Router.
 - V1 Host/Work compatibility.
@@ -167,11 +203,12 @@ No MailTrigger, production Worker, D1, OAuth KV or external Bot is modified.
 ## Deploying to an existing V2 D1
 
 The deployed `migrations/0001_init.sql` is immutable. Apply
-`migrations/0002_gateway.sql` additively to the existing Relay V2 D1.
+`migrations/0002_gateway.sql`, `0003_handoff_acceptance.sql` and
+`0004_gateway_roster.sql` additively to the existing Relay V2 D1.
 Existing Message, Thread, Handoff, mailbox, Wake and MailTrigger records
 are preserved. Before migration, `GuardV2D1.mjs` accepts the complete V2
-schema; after migration `--require-migrated` requires all three Gateway
-tables. Partial Gateway tables, legacy Host/Work and unknown tables are denied.
+schema; after migration `--require-migrated` requires the Gateway tables and
+approved shared roster table. Partial Gateway tables, legacy Host/Work and unknown tables are denied.
 Historical messages with no verified canonical sender address must never be
 expanded into a full Gateway Dispatch event.
 
