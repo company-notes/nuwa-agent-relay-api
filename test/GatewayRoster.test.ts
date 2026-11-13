@@ -391,67 +391,64 @@ describe('Office Gateway registration and shared Wake use cases', () => {
         .toBeLessThanOrEqual(Date.now());
     }
 
-    // Diagnostic probes preserve the failed pre-probe snapshot and MUST NOT
-    // make this test pass. A direct idempotent receipt retry distinguishes the
-    // HTTP path from a service call using this test's DB binding; the final
-    // primary-key update checks whether D1 can clear the same physical row.
-    let receiptRetry: {
-      alreadyConfirmed?: boolean; leaseOwner?: string | null;
-      leaseUntil?: string | null; error?: string;
-    } | null = null;
-    let manualProbe: {
-      changes: number; leaseOwner: string | null; leaseUntil: string | null;
-    } | null = null;
+    // Snapshot before any diagnostic reads or writes, so a later lease
+    // cannot be mistaken for the one present at confirmation time.
+    const receiptSnapshot = {
+      status: bear!.status, attempts: bear!.attempts,
+      nextAttempt: bear!.nextAttempt, lastError: bear!.lastError,
+      leaseOwner: bear!.leaseOwner, leaseUntil: bear!.leaseUntil,
+    };
 
-    if (bear!.status === 'pending' &&
-        (bear!.leaseOwner !== null || bear!.leaseUntil !== null)) {
+    if (receiptSnapshot.status === 'pending' &&
+        (receiptSnapshot.leaseOwner !== null || receiptSnapshot.leaseUntil !== null)) {
+      // This is an intentionally failing diagnostic, not a repair to the test
+      // fixture. It runs before due-query assertions and reports both probes
+      // in the exact failure that the Windows runner will print.
+      let directReceipt: Record<string, unknown>;
+
       try {
         const retried = await new GatewayFirstContacts(
           env, 'org-id', 'session-b',
         ).confirm('session-a', bearFirst, 'bear-work-thread');
         const afterRetry = await env.DB.prepare(
-          `SELECT lease_owner AS leaseOwner, lease_until AS leaseUntil
+          `SELECT status, lease_owner AS leaseOwner, lease_until AS leaseUntil
             FROM wake_events WHERE message_id = ?`,
         ).bind(bearWaiting).first<{
-          leaseOwner: string | null; leaseUntil: string | null;
+          status: string; leaseOwner: string | null; leaseUntil: string | null;
         }>();
-        receiptRetry = {
-          alreadyConfirmed: retried.alreadyConfirmed,
-          leaseOwner: afterRetry?.leaseOwner,
-          leaseUntil: afterRetry?.leaseUntil,
+        directReceipt = {
+          alreadyConfirmed: retried.alreadyConfirmed, afterRetry,
         };
       } catch (error) {
-        receiptRetry = {
-          error: error instanceof Error ? error.message : String(error),
-        };
+        directReceipt = { error: error instanceof Error ? error.message : String(error) };
       }
 
       const forced = await env.DB.prepare(
-        `UPDATE wake_events SET lease_owner = NULL, lease_until = NULL
+        `UPDATE wake_events
+            SET lease_owner = NULL, lease_until = NULL
           WHERE message_id = ? AND status = 'pending'`,
       ).bind(bearWaiting).run();
-      const afterProbe = await env.DB.prepare(
-        `SELECT lease_owner AS leaseOwner, lease_until AS leaseUntil
+      const afterPrimaryKeyUpdate = await env.DB.prepare(
+        `SELECT status, lease_owner AS leaseOwner, lease_until AS leaseUntil
           FROM wake_events WHERE message_id = ?`,
       ).bind(bearWaiting).first<{
-        leaseOwner: string | null; leaseUntil: string | null;
+        status: string; leaseOwner: string | null; leaseUntil: string | null;
       }>();
-      manualProbe = {
-        changes: forced.meta.changes,
-        leaseOwner: afterProbe?.leaseOwner ?? null,
-        leaseUntil: afterProbe?.leaseUntil ?? null,
-      };
+
+      throw new Error('WAKE_RELEASE_V12_RECEIPT_LEASE_DIAGNOSTIC ' + JSON.stringify({
+        beforeProbes: receiptSnapshot, directReceipt,
+        primaryKeyChanges: forced.meta.changes,
+        afterPrimaryKeyUpdate,
+        otherCoworker: {
+          status: analyst!.status, leaseOwner: analyst!.leaseOwner,
+          leaseUntil: analyst!.leaseUntil,
+        },
+      }));
     }
 
-    expect(bear!.leaseOwner,
-      'The HTTP confirmation left an owned lease. Diagnostic retries cannot ' +
-      'make this assertion pass: ' + JSON.stringify({
-        previousOwner: bear!.leaseOwner,
-        previousUntil: bear!.leaseUntil,
-        receiptRetry,
-        manualProbe,
-      })).toBeNull();
-    expect(bear!.leaseUntil).toBeNull();
+    expect(receiptSnapshot.leaseOwner,
+      'Lease must be released at confirmation, not after the due query').toBeNull();
+    expect(receiptSnapshot.leaseUntil).toBeNull();
     expect(analyst!.status, 'The other coworker must remain pending').toBe('pending');
     expect(analyst!.leaseOwner, 'Do not invalidate another coworker\'s Wake lease')
       .toBe('held-analyst');
@@ -511,8 +508,9 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       { messageID: analystWaiting, wakeSessionID: 'session-g',
         approvedGatewaySessionID: 'session-g', recipientSessionID: 'session-d' },
     ]));
-    expect(eligibleIDs, 'Bear Wake missing from the real dispatch selection: ' +
-      JSON.stringify({ eligibleIDs, preDispatch: preDispatch.results,
+    expect(eligibleIDs, 'WAKE_RELEASE_V12_DUE_DIAGNOSTIC: Bear Wake missing after an ' +
+      'earlier lease-free receipt snapshot: ' +
+      JSON.stringify({ receiptSnapshot, eligibleIDs, preDispatch: preDispatch.results,
         wakeOwnerMembership: wakeOwnerMembership.results }))
       .toContain(bearWaiting);
     expect(eligibleIDs, 'Analyst first contact must stay off the due queue')
