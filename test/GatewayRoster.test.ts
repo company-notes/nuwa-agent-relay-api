@@ -178,6 +178,30 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(cannotReplace.status).toBe(409);
   });
 
+  it('does not delete a coworker-owned direct route when revoking an unapproved invitation', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const direct = await scenario.client.call('token-b', 'PUT',
+      '/v2/gateway-route?session_id=session-b', {
+        recipientBotID: 'recipient-existing-bot', threadMode: 'platform',
+      });
+    expect(direct.status).toBe(200);
+
+    const invited = await scenario.invite('relay-test-org/beta/reviewer', 'recipient-existing-bot');
+    expect(invited.status).toBe(201);
+
+    const revoked = await scenario.client.call('token-g', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-g&recipient_address=' +
+        encodeURIComponent('relay-test-org/beta/reviewer'));
+    expect(revoked.status).toBe(200);
+
+    const stillOwned = await scenario.client.call('token-b', 'GET',
+      '/v2/gateway-route?session_id=session-b');
+    expect(stillOwned.body.data, 'Unapproved Gateway must not remove independently owned routes')
+      .toMatchObject({ recipientBotID: 'recipient-existing-bot', threadMode: 'platform' });
+  });
+
   it('rejects unapproved teammates and cross-Session takeover attempts', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
