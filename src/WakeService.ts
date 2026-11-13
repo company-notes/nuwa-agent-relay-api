@@ -55,6 +55,7 @@ export class WakeService {
     ).bind(this.identity.organizationID, this.identity.sessionID).first<{
       gatewaySessionID: string; callbackURL: string; authMode: string;
     }>();
+
     const pending = await new WakeRegistration(this.env, this.identity).pending();
     const callback = row ?? shared;
 
