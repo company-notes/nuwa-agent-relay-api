@@ -50,6 +50,7 @@ export class RelayTestClient {
   failNextActionDeletion = false;
   failNextWebhookParameterUpdate = false;
   nameDirectoryLookups = 0;
+  corruptNameDirectory = false;
   autoReceiptDuringMailSend = false;
   duplicateWebhookParameterFields = false;
 
@@ -107,6 +108,13 @@ export class RelayTestClient {
 
     if (url.pathname === '/v2/account/agents') {
       this.nameDirectoryLookups += 1;
+
+      if (this.corruptNameDirectory) {
+        return Response.json({ ok: true, data: [{
+          id: 'agent-000b', handle: 'beta', displayName: '大熊',
+          defaultSessionID: 'session-b', defaultSessionHandle: null,
+        }] });
+      }
 
       return Response.json({ ok: true, data: [
         { id: 'agent-000a', handle: 'alpha', displayName: '小晴',
