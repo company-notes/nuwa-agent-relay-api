@@ -615,6 +615,33 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(analystConfirmed.status).toBe(200);
     await WakeService.dispatchDue(env);
 
+    try {
+      await vi.waitFor(async () => {
+        const delivered = await env.DB.prepare(
+          `SELECT status, lease_owner AS leaseOwner, lease_until AS leaseUntil
+            FROM wake_events WHERE message_id = ?`,
+        ).bind(analystWaiting).first<{
+          status: string; leaseOwner: string | null; leaseUntil: string | null;
+        }>();
+        expect(delivered).toMatchObject({
+          status: 'delivered', leaseOwner: null, leaseUntil: null,
+        });
+        expect(scenario.client.wakeCallbacks.filter(
+          (entry) => entry.body.messageID === analystWaiting)).toHaveLength(1);
+      }, { timeout: 10_000, interval: 50 });
+    } catch (error) {
+      const analystState = await env.DB.prepare(
+        `SELECT status, attempts, next_attempt_at AS nextAttempt,
+                last_error AS lastError, lease_owner AS leaseOwner,
+                lease_until AS leaseUntil FROM wake_events WHERE message_id = ?`,
+      ).bind(analystWaiting).first();
+      throw new Error('WAKE_DISPATCH_V13_ANALYST_STUCK ' + JSON.stringify({
+        analystState, dispatchTrace,
+        callbackIDs: scenario.client.wakeCallbacks.map((item) => item.body.messageID),
+        cause: error instanceof Error ? error.message : String(error),
+      }));
+    }
+
     expect(scenario.client.wakeCallbacks.map((item) => ({
       messageID: item.body.messageID,
       nativeThreadID: item.body.recipientPlatformThreadID,
@@ -624,7 +651,10 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       { messageID: bearWaiting, nativeThreadID: 'bear-work-thread' },
       { messageID: analystWaiting, nativeThreadID: 'analyst-work-thread' },
     ]);
-  });
+    console.info('WAKE_DISPATCH_V13_TRACE ' + JSON.stringify({
+      confirmedAt, receiptSnapshot, beforeDispatch, dispatchTrace,
+    }));
+  }, 25_000);
 
   it('revokes a named coworker using a fresh authorized directory and preserves other routes', async () => {
     const scenario = new GatewayRosterScenario();
