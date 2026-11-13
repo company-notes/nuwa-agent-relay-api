@@ -84,6 +84,7 @@ export class GatewayBindings {
     await GatewayRoster.requireIndependentRoute(
       this.env, this.identity.organizationID, this.identity.sessionID,
     );
+
     GatewayBindings.identifier(recipientBotID, 'recipientBotID');
 
     if (!Object.values(GatewayThreadMode).includes(threadMode)) {
