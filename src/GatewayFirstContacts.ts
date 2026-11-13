@@ -138,30 +138,36 @@ export class GatewayFirstContacts {
   }
 
   private async releaseWakes(senderSessionID: string, messageID: string): Promise<void> {
-    // A shared office Gateway owns the queued Wake (wake_events.session_id),
-    // while the actual recipient owns the Message. Identify the affected pair
-    // through authenticated Message/Thread records, never the callback Session.
-    const now = new Date().toISOString();
-    const pairMessages = `SELECT m.id FROM messages m
-      JOIN threads t ON t.id = m.thread_id
-      WHERE t.org_id = ? AND m.sender_session_id = ?
-        AND m.recipient_session_id = ? AND m.received_at IS NOT NULL`;
+    // Wake ownership is the callback Session, which can be a shared Gateway.
+    // Select messages by their immutable sender/recipient Session pair first,
+    // then update each Wake through its primary key. This avoids accidentally
+    // releasing another teammate's pending native first contact.
+    const waiting = await this.env.DB.prepare(
+      `SELECT e.message_id AS messageID
+         FROM wake_events e
+         JOIN messages m ON m.id = e.message_id
+         JOIN threads t ON t.id = m.thread_id
+        WHERE t.org_id = ? AND m.sender_session_id = ?
+          AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
+          AND e.message_id <> ? AND e.status = 'pending'
+        ORDER BY m.created_at, e.message_id`,
+    ).bind(this.organizationID, senderSessionID, this.recipientSessionID, messageID)
+      .all<{ messageID: string }>();
 
-    await this.env.DB.batch([
+    const now = new Date().toISOString();
+    const statements = [
       this.env.DB.prepare(
         `UPDATE wake_events SET status = 'delivered', notified_at = ?,
                 last_error = NULL, lease_owner = NULL, lease_until = NULL
-          WHERE message_id = ? AND status IN ('pending', 'failed')
-            AND message_id IN (${pairMessages})`,
-      ).bind(now, messageID, this.organizationID,
-        senderSessionID, this.recipientSessionID),
-      this.env.DB.prepare(
+          WHERE message_id = ? AND status IN ('pending', 'failed')`,
+      ).bind(now, messageID),
+      ...waiting.results.map((entry) => this.env.DB.prepare(
         `UPDATE wake_events SET next_attempt_at = ?
-          WHERE status = 'pending' AND message_id <> ?
-            AND message_id IN (${pairMessages})`,
-      ).bind(now, messageID, this.organizationID,
-        senderSessionID, this.recipientSessionID),
-    ]);
+          WHERE message_id = ? AND status = 'pending'`,
+      ).bind(now, entry.messageID)),
+    ];
+
+    await this.env.DB.batch(statements);
   }
 
   /** Explicit operator recovery if a bootstrap event may have been lost. */
