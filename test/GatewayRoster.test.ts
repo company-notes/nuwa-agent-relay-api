@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it, vi } from 'vitest';
 
+import { GatewayFirstContacts } from '../src/GatewayFirstContacts';
 import { MailReceipt } from '../src/MailReceipt';
 import { WakeService } from '../src/WakeService';
 import { RelayTestClient } from './RelayTestClient';
@@ -336,11 +337,30 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       'A different coworker must not be released through this pair')
       .not.toContain(analystWaiting);
 
-    const bearConfirmed = await scenario.client.call('token-g', 'PUT',
-      '/v2/gateway-teammates/session-b/first-contacts/session-a?session_id=session-g', {
-        messageID: bearFirst, nativeThreadID: 'bear-work-thread',
-      });
-    expect(bearConfirmed.status).toBe(200);
+    const confirmSpy = vi.spyOn(GatewayFirstContacts.prototype, 'confirm');
+    let bearConfirmed: Awaited<ReturnType<typeof scenario.client.call>>;
+
+    try {
+      bearConfirmed = await scenario.client.call('token-g', 'PUT',
+        '/v2/gateway-teammates/session-b/first-contacts/session-a?session_id=session-g', {
+          messageID: bearFirst, nativeThreadID: 'bear-work-thread',
+        });
+
+      expect(confirmSpy).toHaveBeenCalledWith(
+        'session-a', bearFirst, 'bear-work-thread');
+      const confirmingContact = confirmSpy.mock.instances[0] as unknown as {
+        organizationID: string; recipientSessionID: string;
+      };
+      expect({
+        organizationID: confirmingContact.organizationID,
+        recipientSessionID: confirmingContact.recipientSessionID,
+      }, 'The authorized Gateway confirmation must use the same immutable pair as the queued Message')
+        .toEqual({ organizationID: 'org-id', recipientSessionID: 'session-b' });
+    } finally {
+      confirmSpy.mockRestore();
+    }
+
+    expect(bearConfirmed!.status).toBe(200);
 
     const queue = await env.DB.prepare(
       `SELECT message_id AS messageID, next_attempt_at AS nextAttempt,
