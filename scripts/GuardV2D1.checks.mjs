@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { classifyDatabase, readTableNames } from './GuardV2D1.mjs';
 
@@ -47,4 +48,22 @@ test('fails closed on malformed Wrangler output instead of guessing about the D1
   assert.throws(() => readTableNames('not JSON'));
   assert.throws(() => readTableNames(JSON.stringify([{ success: false, results: [] }])));
   assert.throws(() => readTableNames(JSON.stringify([{ success: true, results: [{}] }])));
+});
+
+test('guard, remote migration and deploy require the same private production config', () => {
+  const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    .scripts;
+  const config = '--config .wrangler.deploy.jsonc';
+  const guarded = 'node scripts/GuardV2D1.mjs --remote';
+
+  assert.equal(scripts['db:migrate:remote'],
+    guarded + ' && wrangler d1 migrations apply DB --remote ' + config);
+  assert.equal(scripts.deploy,
+    guarded + ' --require-migrated && wrangler deploy ' + config);
+
+  const guard = readFileSync(new URL('./GuardV2D1.mjs', import.meta.url), 'utf8');
+
+  assert.match(guard, /WranglerRunner\.execute/);
+  assert.ok(guard.includes("'--config', '.wrangler.deploy.jsonc'"));
+  assert.doesNotMatch(guard, /execFileSync\('npx'/);
 });
