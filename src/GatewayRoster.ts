@@ -239,8 +239,15 @@ export class GatewayRoster {
     return { removed: true, recipientSessionID };
   }
 
-  async removeTeammate(recipientSessionID: string) {
-    return this.revoke(recipientSessionID, true);
+  async removeTeammate(recipientAddress: string) {
+    const recipient = await this.address.resolve(recipientAddress);
+
+    if (recipient.canonical.split('/')[0] !== this.identity.organizationSlug) {
+      throw new APIError(403, 'gateway_teammate_forbidden',
+        'A Gateway can only remove recipients within its Organization.');
+    }
+
+    return this.revoke(recipient.id, true);
   }
 
   async leave() {
