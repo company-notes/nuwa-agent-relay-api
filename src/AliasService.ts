@@ -1,5 +1,6 @@
 import type { Env } from './Env';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
+import { RecipientDirectory } from './RecipientDirectory';
 import {
   SessionIdentityClient, type ResolvedSession, type SessionIdentity,
 } from './SessionIdentityClient';
@@ -158,7 +159,9 @@ export class AliasService {
 
   async resolve(target: Recipient): Promise<ResolvedSession> {
     const session = typeof target === 'string'
-      ? await this.address.resolve(target)
+      ? target.includes('/')
+        ? await this.address.resolve(target)
+        : await new RecipientDirectory(this.identity, this.address).resolve(target)
       : await this.resolveExternal(target);
 
     if (session.canonical.split('/')[0] !== this.identity.organizationSlug) {
