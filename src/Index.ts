@@ -275,14 +275,19 @@ export class RelayAPI {
       }
 
       if (request.method === 'DELETE') {
-        const recipientAddress = new URL(request.url).searchParams.get('recipient_address');
+        const query = new URL(request.url).searchParams;
+        const address = query.get('recipient_address');
+        const name = query.get('recipient_name');
 
-        if (!recipientAddress) {
+        if (Boolean(address) === Boolean(name) ||
+            address && address.length > 255 || name && name.length > 120) {
           throw new APIError(400, 'gateway_recipient_required',
-            'A public recipient address is required to remove a teammate.');
+            'Specify exactly one valid recipient_name or recipient_address.');
         }
 
-        return HTTP.response(await roster.removeTeammate(recipientAddress));
+        return HTTP.response(await roster.removeTeammate(
+          address ? { address } : { name: name! },
+        ));
       }
     }
 
