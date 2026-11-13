@@ -13,8 +13,7 @@ The MCP forwards one authorized `POST /v2/messages` request unchanged.
 Relay checks the authenticated caller's own Runtime/Session, then resolves
 "大熊" by an **exact normalized match** to the authoritative Agent Address
 directory **within the caller's Organization**. The directory includes each
-Agent's registered display name, handle, default Session ID and handle; Relay
-needs **one server-side Agent Address directory read** to determine the destination.
+Agent's registered display name, handle, default Session ID and handle; Relay reads a **short-lived authorization-scoped directory snapshot** to determine the destination. A cold name call performs one Agent Address directory read; warm calls reuse the snapshot.
 It writes the message with the resolved immutable Agent ID and Session ID.
 
 No intermediate `agentAddressFindByName` MCP call, no model-generated slug,
@@ -82,13 +81,11 @@ not impersonate a provider agent or hold its native Bot credentials.
 
 ## Performance and future measurement
 
-- A new name-based call adds one Agent Address directory request **inside Relay**,
-  not another user/model-facing MCP turn.
+- A new name-based call may add one Agent Address directory request **inside Relay** on a cold cache miss, not another user/model-facing MCP turn.
 - Canonical-address calls and Relay Thread replies add **zero** name-directory
   requests.
-- No new D1 tables, background synchronization or distributed cache are
-  necessary for this first implementation. Avoid stale caches and guessed
-  identity mapping until measured performance warrants one.
+- A bounded **15-second per-Worker in-memory cache** stores at most 128 validated directory snapshots. Keys include the verified Organization, Agent Address origin and a SHA-256 fingerprint of the caller's OAuth bearer; no raw token or cross-grant directory cache sharing. Concurrent misses share one in-flight read; failures are never cached. Worker restarts naturally clear the cache. The normal OAuth/Session/Runtime verification still runs for **every send**, even on hits.
+- A rename, deletion or Default Session change may take up to 15 seconds to appear in a warm snapshot. Do not extend the TTL without explicit consistency tests; use authoritative resolution for sensitive operations where such staleness is unacceptable. No new D1 tables or persistent cache resources are required.
 - Measure per-stage time at the API, mailbox receipt, Wake callback, native
   Bot start and reply. Do not claim end-to-end latency is solved solely by
   reducing MCP tool calls.
