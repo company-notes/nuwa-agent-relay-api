@@ -1,4 +1,5 @@
 import { env, exports } from 'cloudflare:workers';
+import { AuthorizedAgentDirectoryCache } from '../src/AuthorizedAgentDirectoryCache';
 import { expect, vi } from 'vitest';
 
 const MAILTRIGGER_TEST_ORIGIN = new URL(env.MAILTRIGGER_API_URL).origin;
@@ -539,6 +540,7 @@ export class RelayTestClient {
   }
 
   installExternalTestTransport(): void {
+    AuthorizedAgentDirectoryCache.shared.clear();
     vi.stubGlobal('fetch', this.externalFetch.bind(this));
   }
 
