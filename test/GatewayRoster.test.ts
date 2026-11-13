@@ -219,6 +219,63 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(revoked.status).toBe(403);
   });
 
+  it('does not release another coworker waiting on the same shared Gateway', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    expect((await scenario.invite('relay-test-org/beta/reviewer',
+      'bear-bot', 'explicit', 'automatic')).status).toBe(201);
+    expect((await scenario.invite('relay-test-org/gamma/main',
+      'analyst-bot', 'explicit', 'automatic')).status).toBe(201);
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+    expect((await scenario.approve('token-d', 'session-d')).status).toBe(200);
+
+    const bearFirst = await scenario.send('token-a', 'session-a',
+      'relay-test-org/beta/reviewer', 'Start the bear conversation.');
+    const bearWaiting = await scenario.send('token-a', 'session-a',
+      'relay-test-org/beta/reviewer', 'Queue a bear follow-up.');
+    const analystFirst = await scenario.send('token-a', 'session-a',
+      'relay-test-org/gamma/main', 'Start the analyst conversation.');
+    const analystWaiting = await scenario.send('token-a', 'session-a',
+      'relay-test-org/gamma/main', 'Queue an analyst follow-up.');
+
+    expect(scenario.client.wakeCallbacks.map((item) => item.body.messageID))
+      .toEqual([bearFirst, analystFirst]);
+
+    const bearConfirmed = await scenario.client.call('token-g', 'PUT',
+      '/v2/gateway-teammates/session-b/first-contacts/session-a?session_id=session-g', {
+        messageID: bearFirst, nativeThreadID: 'bear-work-thread',
+      });
+    expect(bearConfirmed.status).toBe(200);
+    await WakeService.dispatchDue(env);
+
+    expect(scenario.client.wakeCallbacks.map((item) => item.body.messageID))
+      .toEqual([bearFirst, analystFirst, bearWaiting]);
+    const analystQueued = await env.DB.prepare(
+      'SELECT status FROM wake_events WHERE message_id = ?',
+    ).bind(analystWaiting).first<{ status: string }>();
+    expect(analystQueued?.status,
+      'Confirming one recipient must not release another recipient on the same shared Gateway')
+      .toBe('pending');
+
+    const analystConfirmed = await scenario.client.call('token-g', 'PUT',
+      '/v2/gateway-teammates/session-d/first-contacts/session-a?session_id=session-g', {
+        messageID: analystFirst, nativeThreadID: 'analyst-work-thread',
+      });
+    expect(analystConfirmed.status).toBe(200);
+    await WakeService.dispatchDue(env);
+
+    expect(scenario.client.wakeCallbacks.map((item) => ({
+      messageID: item.body.messageID,
+      nativeThreadID: item.body.recipientPlatformThreadID,
+    }))).toEqual([
+      { messageID: bearFirst, nativeThreadID: null },
+      { messageID: analystFirst, nativeThreadID: null },
+      { messageID: bearWaiting, nativeThreadID: 'bear-work-thread' },
+      { messageID: analystWaiting, nativeThreadID: 'analyst-work-thread' },
+    ]);
+  });
+
   it('revokes a named coworker using a fresh authorized directory and preserves other routes', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
