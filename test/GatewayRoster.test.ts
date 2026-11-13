@@ -391,8 +391,40 @@ describe('Office Gateway registration and shared Wake use cases', () => {
         .toBeLessThanOrEqual(Date.now());
     }
 
+    // Diagnostic-only probe: if confirmation still leaves a stale lease,
+    // try one exact-primary-key update through the *same D1 binding*.
+    // Preserve the pre-probe snapshot and deliberately fail below even if
+    // the probe succeeds; this must never mask a broken receipt handler.
+    let manualProbe: {
+      changes: number; leaseOwner: string | null; leaseUntil: string | null;
+    } | null = null;
+
+    if (bear!.status === 'pending' &&
+        (bear!.leaseOwner !== null || bear!.leaseUntil !== null)) {
+      const forced = await env.DB.prepare(
+        `UPDATE wake_events SET lease_owner = NULL, lease_until = NULL
+          WHERE message_id = ? AND status = 'pending'`,
+      ).bind(bearWaiting).run();
+      const afterProbe = await env.DB.prepare(
+        `SELECT lease_owner AS leaseOwner, lease_until AS leaseUntil
+          FROM wake_events WHERE message_id = ?`,
+      ).bind(bearWaiting).first<{
+        leaseOwner: string | null; leaseUntil: string | null;
+      }>();
+      manualProbe = {
+        changes: forced.meta.changes,
+        leaseOwner: afterProbe?.leaseOwner ?? null,
+        leaseUntil: afterProbe?.leaseUntil ?? null,
+      };
+    }
+
     expect(bear!.leaseOwner,
-      'Native Thread confirmation must invalidate the previously claimed Wake lease').toBeNull();
+      'Confirmation left an owned lease. Direct D1 primary-key probe (diagnostic only, ' +
+      'test still fails): ' + JSON.stringify({
+        previousOwner: bear!.leaseOwner,
+        previousUntil: bear!.leaseUntil,
+        manualProbe,
+      })).toBeNull();
     expect(bear!.leaseUntil).toBeNull();
     expect(analyst!.status, 'The other coworker must remain pending').toBe('pending');
     expect(analyst!.leaseOwner, 'Do not invalidate another coworker\'s Wake lease')
