@@ -205,6 +205,53 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(revoked.status).toBe(403);
   });
 
+  it('revokes a named coworker using a fresh authorized directory and preserves other routes', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    expect((await scenario.invite('relay-test-org/beta/reviewer',
+      'bear-to-remove')).status).toBe(201);
+    expect((await scenario.invite('relay-test-org/gamma/main',
+      'analyst-to-keep')).status).toBe(201);
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+    expect((await scenario.approve('token-d', 'session-d')).status).toBe(200);
+
+    const ambiguous = await scenario.client.call('token-g', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-g&recipient_name=' +
+        encodeURIComponent('雙胞胎'));
+    expect(ambiguous.status).toBe(409);
+    expect(ambiguous.body.error.code).toBe('recipient_name_ambiguous');
+
+    const revoked = await scenario.client.call('token-g', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-g&recipient_name=' +
+        encodeURIComponent('大熊'));
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.data).toMatchObject({
+      removed: true, recipientSessionID: 'session-b',
+    });
+    expect(scenario.client.nameDirectoryLookups,
+      'Revocation must resolve the current name through Agent Address').toBe(2);
+
+    const roster = await scenario.client.call('token-g', 'GET',
+      '/v2/gateway-teammates?session_id=session-g');
+    expect(roster.status).toBe(200);
+    expect(roster.body.data).toHaveLength(1);
+    expect(roster.body.data[0]).toMatchObject({
+      recipientSessionID: 'session-d', recipientBotID: 'analyst-to-keep',
+      status: 'active',
+    });
+
+    const noTarget = await scenario.client.call('token-h', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-h&recipient_name=' +
+        encodeURIComponent('雙胞胎'));
+    expect(noTarget.status).toBe(409);
+
+    const both = await scenario.client.call('token-g', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-g&recipient_name=' +
+        encodeURIComponent('大熊') + '&recipient_address=relay-test-org/gamma/main');
+    expect(both.status).toBe(400);
+  });
+
   it('uses one verified office receiver for multiple independent coworkers', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
