@@ -257,8 +257,13 @@ export class GatewayRoster {
     return { removed: true, recipientSessionID };
   }
 
-  async removeTeammate(recipientAddress: string) {
-    const recipient = await this.address.resolve(recipientAddress);
+  async removeTeammate(recipientTarget: { address?: string; name?: string }) {
+    // Destructive operations must consult current authoritative names, not a
+    // short-lived snapshot that may still contain a previous display name.
+    const recipient = recipientTarget.name
+      ? await new RecipientDirectory(this.identity, this.address).resolve(
+        recipientTarget.name, true)
+      : await this.address.resolve(recipientTarget.address!);
 
     if (recipient.canonical.split('/')[0] !== this.identity.organizationSlug) {
       throw new APIError(403, 'gateway_teammate_forbidden',
