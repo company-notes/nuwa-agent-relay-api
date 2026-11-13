@@ -76,6 +76,59 @@ class GatewayRosterScenario {
 }
 
 describe('Office Gateway registration and shared Wake use cases', () => {
+  it('invites a known local Bot by its real display name without an extra Gateway directory call', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const invitation = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-teammates?session_id=session-g', {
+        recipientName: '大熊',
+        recipientBotID: 'native-bear-001',
+        threadMode: 'platform',
+      });
+
+    expect(invitation.status).toBe(201);
+    expect(invitation.body.data).toMatchObject({
+      status: 'pending', recipientSessionID: 'session-b',
+      recipientCanonicalAddress: 'relay-test-org/beta/reviewer',
+      recipientBotID: 'native-bear-001',
+    });
+    expect(scenario.client.nameDirectoryLookups).toBe(1);
+
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+
+    const messageID = await scenario.send('token-a', 'session-a', '大熊',
+      '你好！密語是星河。');
+    expect(scenario.client.wakeCallbacks).toHaveLength(1);
+    expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
+      messageID,
+      recipientSessionID: 'session-b',
+      recipientBotID: 'native-bear-001',
+      body: '你好！密語是星河。',
+    });
+    expect(scenario.client.nameDirectoryLookups).toBe(2,
+      'One directory read for registration and one for message send; none in Gateway Wake.');
+
+    const ambiguous = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-teammates?session_id=session-g', {
+        recipientName: '雙胞胎',
+        recipientBotID: 'never-route',
+        threadMode: 'platform',
+      });
+    expect(ambiguous.status).toBe(409);
+    expect(ambiguous.body.error.code).toBe('recipient_name_ambiguous');
+
+    const invalid = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-teammates?session_id=session-g', {
+        recipientName: '大熊',
+        recipientAddress: 'relay-test-org/gamma/main',
+        recipientBotID: 'never-route',
+        threadMode: 'platform',
+      });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error.code).toBe('gateway_recipient_required');
+  });
+
   it('uses one verified office receiver for multiple independent coworkers', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
