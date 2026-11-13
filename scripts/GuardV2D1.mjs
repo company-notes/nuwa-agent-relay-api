@@ -21,6 +21,8 @@ const GATEWAY_TABLES = [
   'gateway_first_contacts',
 ];
 
+const ROSTER_TABLES = ['gateway_teammates'];
+
 const KNOWN_INFRASTRUCTURE = new Set(['d1_migrations', 'sqlite_sequence', '_cf_KV', '_cf_METADATA']);
 
 export function classifyDatabase(names, requireMigrated = false) {
@@ -36,7 +38,7 @@ export function classifyDatabase(names, requireMigrated = false) {
     throw new Error('Refusing legacy Host/Work D1 database. Use a new isolated V2 D1.');
   }
 
-  const unknown = [...tables].filter((name) => !REQUIRED.includes(name) && !GATEWAY_TABLES.includes(name));
+  const unknown = [...tables].filter((name) => !REQUIRED.includes(name) && !GATEWAY_TABLES.includes(name) && !ROSTER_TABLES.includes(name));
 
   if (unknown.length) {
     throw new Error('Refusing unrecognized D1 tables: ' + unknown.join(', '));
@@ -58,6 +60,16 @@ export function classifyDatabase(names, requireMigrated = false) {
 
   if (requireMigrated && gatewayTables.length !== GATEWAY_TABLES.length) {
     throw new Error('Gateway V2 migration is not applied.');
+  }
+
+  const rosterTables = ROSTER_TABLES.filter((name) => tables.has(name));
+
+  if (rosterTables.length > 0 && gatewayTables.length !== GATEWAY_TABLES.length) {
+    throw new Error('Refusing Gateway roster without its base V2 tables.');
+  }
+
+  if (requireMigrated && rosterTables.length !== ROSTER_TABLES.length) {
+    throw new Error('Gateway roster migration is not applied.');
   }
 
   return 'v2';
