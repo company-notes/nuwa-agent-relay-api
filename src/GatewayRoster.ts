@@ -168,6 +168,7 @@ export class GatewayRoster {
       'SELECT recipient_session_id FROM gateway_routes WHERE org_id = ? AND recipient_session_id = ?',
     ).bind(this.identity.organizationID, this.identity.sessionID)
       .first<{ recipient_session_id: string }>();
+
     const direct = await this.env.DB.prepare(
       'SELECT session_id FROM wake_subscriptions WHERE org_id = ? AND session_id = ?',
     ).bind(this.identity.organizationID, this.identity.sessionID)
