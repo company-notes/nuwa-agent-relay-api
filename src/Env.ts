@@ -1,4 +1,9 @@
+export interface AgentAddressWorker {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
+
 export interface Env {
+  ADDRESS_WORKER: AgentAddressWorker;
   DB: D1Database;
   ADDRESS_API_URL: string;
   MAILTRIGGER_API_URL: string;
