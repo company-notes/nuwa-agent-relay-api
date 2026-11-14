@@ -1,4 +1,5 @@
 import { env, exports } from 'cloudflare:workers';
+import { AgentAddressTransport } from '../src/AgentAddressTransport';
 import { AuthorizedAgentDirectoryCache } from '../src/AuthorizedAgentDirectoryCache';
 import { expect, vi } from 'vitest';
 
@@ -546,6 +547,14 @@ export class RelayTestClient {
 
   installExternalTestTransport(): void {
     AuthorizedAgentDirectoryCache.shared.clear();
+
+    vi.spyOn(AgentAddressTransport.prototype, 'request').mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      const authorization = new Headers(init?.headers).get('authorization');
+
+      return this.requestAgentAddress(url, authorization, init);
+    });
+
     vi.stubGlobal('fetch', this.externalFetch.bind(this));
   }
 
