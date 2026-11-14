@@ -4,6 +4,12 @@
   "main": "src/Index.ts",
   "compatibility_date": "2026-09-09",
   "workers_dev": true,
+  "services": [
+    {
+      "binding": "ADDRESS_WORKER",
+      "service": "agent-address"
+    }
+  ],
   "triggers": {
     "crons": ["* * * * *"]
   },
