@@ -138,29 +138,61 @@ export class GatewayFirstContacts {
   }
 
   private async releaseWakes(senderSessionID: string, messageID: string): Promise<void> {
-    // Confirmation attests the initial native-tool submission. Do not replay
-    // it on a Wake retry; release only later messages to this recipient.
-    const now = new Date().toISOString();
+    // Queue ownership can belong to a shared Gateway. Identify pending Wakes
+    // using the immutable, received Message's actual sender and recipient.
+    const pending = await this.env.DB.prepare(
+      `SELECT e.message_id AS messageID
+         FROM wake_events e
+         JOIN messages m ON m.id = e.message_id
+         JOIN threads t ON t.id = m.thread_id
+        WHERE t.org_id = ? AND m.sender_session_id = ?
+          AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
+          AND e.message_id <> ? AND e.status = 'pending'`,
+    ).bind(this.organizationID, senderSessionID, this.recipientSessionID, messageID)
+      .all<{ messageID: string }>();
 
-    await this.env.DB.batch([
+    const now = new Date().toISOString();
+    const releases = pending.results.map(({ messageID: pendingID }) =>
+      this.env.DB.prepare(
+        `UPDATE wake_events
+            SET next_attempt_at = ?, last_error = NULL,
+                lease_owner = NULL, lease_until = NULL
+          WHERE message_id = ? AND status = 'pending'`,
+      ).bind(now, pendingID));
+    const verifications = pending.results.map(({ messageID: pendingID }) =>
+      this.env.DB.prepare(
+        `SELECT status, next_attempt_at AS nextAttempt,
+                lease_owner AS leaseOwner, lease_until AS leaseUntil
+           FROM wake_events WHERE message_id = ?`,
+      ).bind(pendingID));
+
+    // D1 executes each statement in one transaction. Capture the update
+    // results instead of trusting an HTTP 200 to mean leases were released.
+    const outcomes = await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE wake_events SET status = 'delivered', notified_at = ?,
                 last_error = NULL, lease_owner = NULL, lease_until = NULL
-          WHERE message_id = ? AND session_id = ?
-            AND status IN ('pending', 'failed')`,
-      ).bind(now, messageID, this.recipientSessionID),
-      this.env.DB.prepare(
-        `UPDATE wake_events SET next_attempt_at = ?
-          WHERE status = 'pending' AND session_id = ? AND message_id <> ?
-            AND message_id IN (
-              SELECT m.id FROM messages m
-              JOIN threads t ON t.id = m.thread_id
-              WHERE t.org_id = ? AND m.sender_session_id = ?
-                AND m.recipient_session_id = ? AND m.received_at IS NOT NULL
-            )`,
-      ).bind(now, this.recipientSessionID, messageID, this.organizationID,
-        senderSessionID, this.recipientSessionID),
+          WHERE message_id = ? AND status IN ('pending', 'failed')`,
+      ).bind(now, messageID),
+      ...releases,
+      ...verifications,
     ]);
+
+    for (let index = 0; index < pending.results.length; index += 1) {
+      const updated = outcomes[index + 1];
+      const row = outcomes[index + 1 + pending.results.length]
+        .results[0] as {
+          status: string; nextAttempt: string;
+          leaseOwner: string | null; leaseUntil: string | null;
+        } | undefined;
+
+      if (updated.meta.changes !== 1 || !row ||
+          row.status !== 'pending' || row.nextAttempt > now ||
+          row.leaseOwner !== null || row.leaseUntil !== null) {
+        throw new APIError(503, 'gateway_wake_release_incomplete',
+          'A matching pending Wake could not be released after native Thread confirmation.');
+      }
+    }
   }
 
   /** Explicit operator recovery if a bootstrap event may have been lost. */

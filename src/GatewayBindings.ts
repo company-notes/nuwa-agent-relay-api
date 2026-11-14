@@ -226,19 +226,67 @@ export class GatewayBindings {
     return this.firstContacts().pending();
   }
 
-  async confirmFirstContact(senderSessionID: string, messageID: string, nativeThreadID: string) {
-    GatewayBindings.identifier(nativeThreadID, 'nativeThreadID');
-    const route = await this.route();
-
+  private static requireAutomaticFirstContact(
+    route: Pick<GatewayRoute, 'threadMode' | 'firstContactMode'> | null,
+  ): void {
     if (!route || route.threadMode !== GatewayThreadMode.Explicit ||
         route.firstContactMode !== GatewayFirstContactMode.Automatic) {
       throw new APIError(409, 'gateway_first_contact_unavailable',
         'Automatic first contact requires an explicit-thread Gateway route.');
     }
+  }
 
+  async confirmFirstContact(senderSessionID: string, messageID: string, nativeThreadID: string) {
+    GatewayBindings.identifier(nativeThreadID, 'nativeThreadID');
+    GatewayBindings.requireAutomaticFirstContact(await this.route());
     await this.validateSender(senderSessionID);
 
     return this.firstContacts().confirm(senderSessionID, messageID, nativeThreadID);
+  }
+
+  /**
+   * An approved office Gateway may submit a native tool receipt for a teammate
+   * without possessing that teammate's OAuth or Runtime capability.
+   */
+  async confirmTeammateFirstContact(
+    recipientSessionID: string, senderSessionID: string,
+    messageID: string, nativeThreadID: string,
+  ) {
+    GatewayBindings.identifier(nativeThreadID, 'nativeThreadID');
+
+    if (recipientSessionID === this.identity.sessionID ||
+        senderSessionID === recipientSessionID) {
+      throw new APIError(403, 'gateway_teammate_forbidden',
+        'A shared Gateway can only confirm another approved recipient.');
+    }
+
+    const route = await this.env.DB.prepare(
+      `SELECT r.recipient_bot_id AS recipientBotID,
+              r.recipient_canonical_address AS recipientCanonicalAddress,
+              r.thread_mode AS threadMode,
+              r.first_contact_mode AS firstContactMode
+         FROM gateway_teammates t
+         JOIN gateway_routes r ON r.org_id = t.org_id
+           AND r.recipient_session_id = t.recipient_session_id
+           AND r.recipient_agent_id = t.recipient_agent_id
+           AND r.recipient_bot_id = t.recipient_bot_id
+           AND r.thread_mode = t.thread_mode
+           AND r.first_contact_mode = t.first_contact_mode
+         WHERE t.org_id = ? AND t.gateway_session_id = ?
+           AND t.recipient_session_id = ? AND t.status = 'active'`,
+    ).bind(this.identity.organizationID, this.identity.sessionID, recipientSessionID)
+      .first<GatewayRouteRow>();
+
+    if (!route) {
+      throw new APIError(403, 'gateway_teammate_forbidden',
+        'Only an approved Gateway can confirm this recipient native Thread.');
+    }
+
+    GatewayBindings.requireAutomaticFirstContact(GatewayBindings.readRoute(route));
+    await this.validateSender(senderSessionID);
+
+    return new GatewayFirstContacts(this.env, this.identity.organizationID,
+      recipientSessionID).confirm(senderSessionID, messageID, nativeThreadID);
   }
 
   async cancelFirstContact(senderSessionID: string) {

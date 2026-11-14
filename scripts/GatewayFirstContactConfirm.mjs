@@ -8,13 +8,16 @@
  *   NUWA_GATEWAY_OAUTH_TOKEN
  *   NUWA_GATEWAY_RUNTIME_TOKEN
  *   NUWA_GATEWAY_RECIPIENT_SESSION_ID
+ *   NUWA_GATEWAY_SESSION_ID          optional office Gateway Session ID when acting for an approved coworker
  *   NUWA_GATEWAY_RELAY_ORIGIN        trusted staging Relay HTTPS origin
  *
  * Usage:
  * node scripts/GatewayFirstContactConfirm.mjs --sender-session-id <uuid> --message-id <uuid> --native-thread-id <OpenMausBot-thread>
  *   --authorize-staging-confirmation
  *
- * The receiving Runtime must be the authorized owner of the receiving Session.
+ * Direct mode requires the recipient Runtime. For an approved shared office
+ * Gateway, set NUWA_GATEWAY_SESSION_ID and supply that Gateway's OAuth/Runtime
+ * credentials; Relay verifies the recipient's active teammate approval.
  */
 const OPTIONS = new Map([
   ['--sender-session-id', 'senderSessionID'],
@@ -68,6 +71,7 @@ async function run() {
   const oauth = process.env.NUWA_GATEWAY_OAUTH_TOKEN;
   const runtime = process.env.NUWA_GATEWAY_RUNTIME_TOKEN;
   const recipient = process.env.NUWA_GATEWAY_RECIPIENT_SESSION_ID;
+  const gateway = process.env.NUWA_GATEWAY_SESSION_ID;
   const origin = process.env.NUWA_GATEWAY_RELAY_ORIGIN;
 
   if (!oauth || !runtime || !recipient || !origin) {
@@ -84,9 +88,18 @@ async function run() {
     throw Error('NUWA_GATEWAY_RELAY_ORIGIN must be a clean trusted HTTPS staging origin.');
   }
 
-  const url = new URL('/v2/gateway-first-contacts/' +
-    encodeURIComponent(args.senderSessionID), configured.origin);
-  url.searchParams.set('session_id', recipient);
+  const identifier = /^[A-Za-z0-9._:-]{1,192}$/;
+
+  if (!identifier.test(recipient) || gateway && (!identifier.test(gateway) || gateway === recipient)) {
+    throw Error('Invalid trusted recipient or office Gateway Session configuration.');
+  }
+
+  const path = gateway
+    ? '/v2/gateway-teammates/' + encodeURIComponent(recipient) +
+        '/first-contacts/' + encodeURIComponent(args.senderSessionID)
+    : '/v2/gateway-first-contacts/' + encodeURIComponent(args.senderSessionID);
+  const url = new URL(path, configured.origin);
+  url.searchParams.set('session_id', gateway ?? recipient);
 
   const response = await fetch(url, {
     method: 'PUT',

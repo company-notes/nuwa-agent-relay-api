@@ -213,6 +213,20 @@ export class RelayAPI {
       return HTTP.response(await bindings.cancelFirstContact(firstContactSender));
     }
 
+    const teammateFirstContact = path.match(
+      /^\/v2\/gateway-teammates\/([^/]+)\/first-contacts\/([^/]+)$/,
+    );
+
+    if (teammateFirstContact && request.method === 'PUT') {
+      const data = await HTTP.json(request);
+
+      return HTTP.response(await bindings.confirmTeammateFirstContact(
+        teammateFirstContact[1], teammateFirstContact[2],
+        HTTP.requiredString(data, 'messageID', 64),
+        HTTP.requiredString(data, 'nativeThreadID', 192),
+      ));
+    }
+
     const senderSessionID = RelayAPI.match(
       path, /^\/v2\/gateway-conversations\/([^/]+)$/,
     );
@@ -242,9 +256,16 @@ export class RelayAPI {
 
       if (request.method === 'POST') {
         const data = await HTTP.json(request);
+        const address = HTTP.optionalString(data, 'recipientAddress', 255);
+        const name = HTTP.optionalString(data, 'recipientName', 120);
+
+        if (Boolean(address) === Boolean(name)) {
+          throw new APIError(400, 'gateway_recipient_required',
+            'Specify exactly one recipientAddress or recipientName.');
+        }
 
         return HTTP.response(await roster.invite(
-          HTTP.requiredString(data, 'recipientAddress', 255),
+          address ? { address } : { name: name! },
           HTTP.requiredString(data, 'recipientBotID', 192),
           GatewayModeCodec.readThreadMode(HTTP.requiredString(data, 'threadMode', 32)),
           GatewayModeCodec.readFirstContactMode(
@@ -254,14 +275,19 @@ export class RelayAPI {
       }
 
       if (request.method === 'DELETE') {
-        const recipientAddress = new URL(request.url).searchParams.get('recipient_address');
+        const query = new URL(request.url).searchParams;
+        const address = query.get('recipient_address');
+        const name = query.get('recipient_name');
 
-        if (!recipientAddress) {
+        if (Boolean(address) === Boolean(name) ||
+            address && address.length > 255 || name && name.length > 120) {
           throw new APIError(400, 'gateway_recipient_required',
-            'A public recipient address is required to remove a teammate.');
+            'Specify exactly one valid recipient_name or recipient_address.');
         }
 
-        return HTTP.response(await roster.removeTeammate(recipientAddress));
+        return HTTP.response(await roster.removeTeammate(
+          address ? { address } : { name: name! },
+        ));
       }
     }
 
@@ -396,7 +422,7 @@ export class RelayAPI {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await WakeService.dispatchDue(env);
+    await WakeService.dispatchDue(env, 'scheduled');
   },
 
   async fetch(
@@ -424,8 +450,11 @@ export default {
 
       if (response.ok && context &&
           ((request.method === 'POST' && path === '/v1/mailtrigger/receipt') ||
-            (request.method === 'PUT' && path.startsWith('/v2/gateway-first-contacts/')))) {
-        context.waitUntil(WakeService.dispatchDue(env));
+            (request.method === 'PUT' &&
+              (path.startsWith('/v2/gateway-first-contacts/') ||
+                /^\/v2\/gateway-teammates\/[^/]+\/first-contacts\/[^/]+$/.test(path))))) {
+        context.waitUntil(WakeService.dispatchDue(env,
+          path === '/v1/mailtrigger/receipt' ? 'mail-receipt' : 'first-contact'));
       }
 
       return response;

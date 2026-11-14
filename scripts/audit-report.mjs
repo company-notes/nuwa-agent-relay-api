@@ -1,12 +1,25 @@
 import { spawnSync } from 'node:child_process';
 
-const result = spawnSync('npm', ['audit', '--json'], {
+// npm run provides the CLI entry point. Spawn it through Node instead of
+// attempting to execute the Windows npm.cmd shim without a shell.
+const npmCLI = process.env.npm_execpath;
+
+if (!npmCLI) {
+  console.error('Unable to run npm audit:', { errorCode: 'npm_execpath_missing' });
+  process.exit(2);
+}
+
+const result = spawnSync(process.execPath, [npmCLI, 'audit', '--json'], {
   encoding: 'utf8',
   maxBuffer: 32 * 1024 * 1024,
 });
 
 if (result.error) {
-  console.error('Unable to run npm audit:', { errorType: result.error.name || 'Error' });
+  console.error('Unable to run npm audit:', {
+    errorType: result.error.name || 'Error',
+    errorCode: /^[A-Z0-9_]{1,64}$/.test(result.error.code ?? '')
+      ? result.error.code : 'unknown',
+  });
   process.exitCode = 2;
 } else {
   let report;

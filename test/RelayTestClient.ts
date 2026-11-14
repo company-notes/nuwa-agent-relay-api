@@ -1,4 +1,5 @@
 import { env, exports } from 'cloudflare:workers';
+import { AuthorizedAgentDirectoryCache } from '../src/AuthorizedAgentDirectoryCache';
 import { expect, vi } from 'vitest';
 
 const MAILTRIGGER_TEST_ORIGIN = new URL(env.MAILTRIGGER_API_URL).origin;
@@ -49,6 +50,8 @@ export class RelayTestClient {
   providerCreatesOriginRoutes = false;
   failNextActionDeletion = false;
   failNextWebhookParameterUpdate = false;
+  nameDirectoryLookups = 0;
+  corruptNameDirectory = false;
   autoReceiptDuringMailSend = false;
   duplicateWebhookParameterFields = false;
 
@@ -102,6 +105,30 @@ export class RelayTestClient {
             : { id: 'org-id', slug: RelayTestClient.slug },
         },
       });
+    }
+
+    if (url.pathname === '/v2/account/agents') {
+      this.nameDirectoryLookups += 1;
+
+      if (this.corruptNameDirectory) {
+        return Response.json({ ok: true, data: [{
+          id: 'agent-000b', handle: 'beta', displayName: '大熊',
+          defaultSessionID: 'session-b', defaultSessionHandle: null,
+        }] });
+      }
+
+      return Response.json({ ok: true, data: [
+        { id: 'agent-000a', handle: 'alpha', displayName: '小晴',
+          defaultSessionID: 'session-a', defaultSessionHandle: 'author' },
+        { id: 'agent-000b', handle: 'beta', displayName: '大熊',
+          defaultSessionID: 'session-b', defaultSessionHandle: 'reviewer' },
+        { id: 'agent-000d', handle: 'gamma', displayName: '雙胞胎',
+          defaultSessionID: 'session-d', defaultSessionHandle: 'main' },
+        { id: 'agent-000g', handle: 'gateway', displayName: '雙胞胎',
+          defaultSessionID: 'session-g', defaultSessionHandle: 'main' },
+        { id: 'agent-000h', handle: 'gateway-2', displayName: '未啟用',
+          defaultSessionID: null, defaultSessionHandle: null },
+      ] });
     }
 
     const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
@@ -513,6 +540,7 @@ export class RelayTestClient {
   }
 
   installExternalTestTransport(): void {
+    AuthorizedAgentDirectoryCache.shared.clear();
     vi.stubGlobal('fetch', this.externalFetch.bind(this));
   }
 

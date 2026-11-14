@@ -4,15 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:smoke": "node --test scripts/V2Smoke.checks.mjs scripts/GuardV2D1.checks.mjs scripts/GatewayMigration.checks.mjs",
+    "test:smoke": "node --test scripts/V2Smoke.checks.mjs scripts/GuardV2D1.checks.mjs scripts/GatewayMigration.checks.mjs scripts/WranglerRunner.checks.mjs",
     "dev": "wrangler dev",
     "check": "tsc --noEmit",
     "style:check": "node scripts/check-code-principles.mjs",
     "test": "vitest run",
     "test:core": "vitest run test/CoreFlow.test.ts",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "db:migrate:remote": "node scripts/GuardV2D1.mjs --remote && wrangler d1 migrations apply DB --remote",
-    "deploy": "node scripts/GuardV2D1.mjs --remote --require-migrated && wrangler deploy",
+    "db:migrate:remote": "node scripts/GuardV2D1.mjs --remote && wrangler d1 migrations apply DB --remote --config .wrangler.deploy.jsonc",
+    "deploy": "node scripts/GuardV2D1.mjs --remote --require-migrated && wrangler deploy --config .wrangler.deploy.jsonc",
     "audit:report": "node scripts/audit-report.mjs",
     "audit:check": "node scripts/audit-report.mjs --enforce",
     "smoke:v2": "node scripts/V2Smoke.mjs"
