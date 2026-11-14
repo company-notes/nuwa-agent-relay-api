@@ -33,7 +33,7 @@ export class SessionIdentityClient {
   constructor(
     private readonly addressURL: Env['ADDRESS_API_URL'],
     private readonly authorization: string,
-    private readonly requester: typeof fetch = fetch,
+    private readonly requester: typeof fetch,
   ) {
     const origin = new URL(addressURL);
 
