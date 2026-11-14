@@ -1,3 +1,4 @@
+import { AgentAddressTransport } from './AgentAddressTransport';
 import { SessionIdentityClient } from './SessionIdentityClient';
 import type { Env } from './Env';
 import { APIError } from './HTTP';
@@ -8,7 +9,11 @@ export class WakePairingOAuth {
   static readonly origin = 'https://agent-relay.company-notes.com';
   static readonly callbackURL = WakePairingOAuth.origin + '/wake-pair/oauth/callback';
 
-  constructor(private readonly env: Env) {}
+  private readonly transport: AgentAddressTransport;
+
+  constructor(private readonly env: Env) {
+    this.transport = new AgentAddressTransport(env.ADDRESS_WORKER);
+  }
 
   private endpoint(path: string): string {
     const origin = new URL(this.env.ADDRESS_API_URL);
@@ -23,7 +28,7 @@ export class WakePairingOAuth {
 
   private async post(path: string, data: URLSearchParams | Record<string, unknown>): Promise<Record<string, unknown>> {
     const json = !(data instanceof URLSearchParams);
-    const response = await fetch(this.endpoint(path), {
+    const response = await this.transport.request(this.endpoint(path), {
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -107,8 +112,8 @@ export class WakePairingOAuth {
     }
 
     const identity = new SessionIdentityClient(
-      this.env.ADDRESS_API_URL,
-      'Bearer ' + token,
+      this.env.ADDRESS_API_URL, 'Bearer ' + token,
+      this.transport.request.bind(this.transport),
     );
     const status = await identity.status();
 
