@@ -10,6 +10,11 @@ export default defineConfig(async () => {
         wrangler: { configPath: './wrangler.jsonc' },
         miniflare: {
           compatibilityDate: '2026-08-01',
+          serviceBindings: {
+            ADDRESS_WORKER: async () => {
+              throw new Error('Agent Address test transport must be supplied explicitly.');
+            },
+          },
           bindings: {
             TEST_MIGRATIONS: migrations,
             MAILTRIGGER_API_TOKEN: 'test-mailtrigger-token',
