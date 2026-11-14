@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { WranglerRunner } from './WranglerRunner.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -92,7 +93,19 @@ export function readTableNames(output) {
   return names;
 }
 
+export function validateProductionBindings(config) {
+  const bindings = config.services?.filter((item) => item.binding === 'ADDRESS_WORKER') ?? [];
+
+  if (config.name !== 'nuwa-agent-relay-api' ||
+      bindings.length !== 1 || bindings[0].service !== 'agent-address') {
+    throw new Error('Refusing Relay deployment without canonical Agent Address service binding.');
+  }
+}
+
 export function guardRemoteDatabase(requireMigrated = false) {
+  const config = JSON.parse(readFileSync('.wrangler.deploy.jsonc', 'utf8'));
+  validateProductionBindings(config);
+
   const query = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name";
   const output = WranglerRunner.execute([
     'd1', 'execute', 'DB', '--remote',
