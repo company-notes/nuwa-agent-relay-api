@@ -44,6 +44,7 @@ export class RelayTestClient {
   failNextWake = false;
   redirectNextWake = false;
   failAddressStatus = false;
+  failPublicAddressRequests = false;
   failNextRouteCreation = false;
   failNextRouteLookup = false;
   failNextRouteDeletion = false;
@@ -471,6 +472,10 @@ export class RelayTestClient {
     }
 
     if (url.hostname === 'address.company-notes.com') {
+      if (this.failPublicAddressRequests) {
+        throw new TypeError('Public Worker subrequest to Agent Address is unavailable.');
+      }
+
       if (url.pathname === '/register' && init?.method === 'POST') {
         const registration = JSON.parse(String(init.body));
         expect(registration.redirect_uris).toEqual([
