@@ -66,6 +66,21 @@ class AddressScenario {
 }
 
 describe('Relay V2 Session authorization', () => {
+  it('returns a safe gateway error when Agent Address transport throws TypeError', async () => {
+    const unreachable: typeof fetch = async () => {
+      throw new TypeError('Connection failed with sensitive upstream details.');
+    };
+    const client = new SessionIdentityClient(
+      'https://address.example.com', 'Bearer oauth-a', unreachable,
+    );
+
+    await expect(client.status()).rejects.toMatchObject({
+      status: 502,
+      code: 'address_transport_failed',
+      message: 'Agent Address service request failed.',
+    });
+  });
+
   it('authenticates the active Runtime and obtains immutable Agent and Session identities', async () => {
     const scenario = new AddressScenario();
     const client = new SessionIdentityClient(
