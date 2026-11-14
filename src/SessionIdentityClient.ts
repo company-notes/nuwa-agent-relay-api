@@ -1,5 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
+import { Logger } from './Logger';
 
 export type SessionIdentity = {
   organizationID: string;
@@ -30,10 +31,11 @@ export type DirectoryAgent = {
 };
 
 export class SessionIdentityClient {
+  private static readonly logger = Logger.forModule('relay.address');
   constructor(
     private readonly addressURL: Env['ADDRESS_API_URL'],
     private readonly authorization: string,
-    private readonly requester: typeof fetch = fetch,
+    private readonly requester: typeof fetch,
   ) {
     const origin = new URL(addressURL);
 
@@ -44,17 +46,27 @@ export class SessionIdentityClient {
   }
 
   private async request<T>(method: 'GET' | 'PATCH', path: string, body?: Record<string, string>): Promise<T> {
-    const response = await this.requester(new URL(path, this.addressURL), {
-      method,
-      headers: {
-        authorization: this.authorization,
-        accept: 'application/json',
-        ...(body ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      redirect: 'manual',
-      signal: AbortSignal.timeout(10_000),
-    });
+    let response: Response;
+
+    try {
+      response = await this.requester(new URL(path, this.addressURL), {
+        method,
+        headers: {
+          authorization: this.authorization,
+          accept: 'application/json',
+          ...(body ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (error) {
+      // Do not log OAuth tokens, request URLs or upstream exception messages.
+      SessionIdentityClient.logger.exception('transport_failed', error);
+
+      throw new APIError(502, 'address_transport_failed',
+        'Agent Address service request failed.');
+    }
 
     if (response.status >= 300 && response.status < 400) {
       throw new APIError(502, 'address_unexpected_redirect', 'Agent Address unexpectedly redirected.');

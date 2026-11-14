@@ -1,4 +1,5 @@
 import { env, exports } from 'cloudflare:workers';
+import { AgentAddressTransport } from '../src/AgentAddressTransport';
 import { AuthorizedAgentDirectoryCache } from '../src/AuthorizedAgentDirectoryCache';
 import { expect, vi } from 'vitest';
 
@@ -44,6 +45,7 @@ export class RelayTestClient {
   failNextWake = false;
   redirectNextWake = false;
   failAddressStatus = false;
+  failPublicAddressRequests = false;
   failNextRouteCreation = false;
   failNextRouteLookup = false;
   failNextRouteDeletion = false;
@@ -440,7 +442,9 @@ export class RelayTestClient {
     throw new Error(`Unexpected MailTrigger request: ${url.pathname}`);
   }
 
-  private async externalFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  private async externalFetch(
+    input: RequestInfo | URL, init?: RequestInit, privateBinding = false,
+  ): Promise<Response> {
     // Cloudflare Workers rejects redirect: 'error' before making an outbound
     // request. Node's mocked fetch must enforce the same runtime restriction.
     if (init?.redirect === 'error') {
@@ -471,6 +475,10 @@ export class RelayTestClient {
     }
 
     if (url.hostname === 'address.company-notes.com') {
+      if (this.failPublicAddressRequests && !privateBinding) {
+        throw new TypeError('Public Worker subrequest to Agent Address is unavailable.');
+      }
+
       if (url.pathname === '/register' && init?.method === 'POST') {
         const registration = JSON.parse(String(init.body));
         expect(registration.redirect_uris).toEqual([
@@ -541,6 +549,10 @@ export class RelayTestClient {
 
   installExternalTestTransport(): void {
     AuthorizedAgentDirectoryCache.shared.clear();
+
+    vi.spyOn(AgentAddressTransport.prototype, 'request')
+      .mockImplementation((input, init) => this.externalFetch(input, init, true));
+
     vi.stubGlobal('fetch', this.externalFetch.bind(this));
   }
 

@@ -4,6 +4,25 @@ import { describe, expect, it } from 'vitest';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Relay API failure and access boundaries', () => {
+  it('keeps Relay inbox, Wake, roster and mailbox working when public Address fetch throws TypeError', async () => {
+    // Regression: production 2026-11-14 returned HTTP 500 before reaching any Relay operation.
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    client.failPublicAddressRequests = true;
+
+    const inbox = await client.call('token-a', 'GET', '/v2/inbox?session_id=session-a');
+    expect(inbox.status).toBe(200);
+
+    const wake = await client.call('token-a', 'GET', '/v2/wake-subscription?session_id=session-a');
+    expect(wake.status).toBe(200);
+
+    const roster = await client.call('token-a', 'GET', '/v2/gateway-teammates?session_id=session-a');
+    expect(roster.status).toBe(200);
+
+    const mailbox = await client.call('token-a', 'POST', '/v2/agent-mailboxes?session_id=session-a');
+    expect(mailbox.status).toBe(201);
+  });
+
   it('reports upstream Agent Address outages as a gateway failure, not a forbidden identity', async () => {
     // Regression: Agent Address HTTP 503 must not be translated into a misleading HTTP 403.
     const client = new RelayTestClient();

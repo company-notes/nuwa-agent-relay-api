@@ -1,4 +1,5 @@
 import { AliasService } from './AliasService';
+import { AgentAddressTransport } from './AgentAddressTransport';
 import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
 import { GatewayModeCodec } from './GatewayModeCodec';
@@ -378,7 +379,10 @@ export class RelayAPI {
         'Authenticated requests require session_id and a Runtime capability header.');
     }
 
-    const address = new SessionIdentityClient(this.env.ADDRESS_API_URL, authorization);
+    const transport = new AgentAddressTransport(this.env.ADDRESS_WORKER);
+    const address = new SessionIdentityClient(
+      this.env.ADDRESS_API_URL, authorization, transport.request.bind(transport),
+    );
     const identity = await address.authorize(sessionID, runtimeToken);
     const relay = new RelayV2Service(this.env, identity, address);
     const aliases = new AliasService(this.env, identity, address);
