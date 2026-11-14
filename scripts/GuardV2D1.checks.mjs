@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { classifyDatabase, readTableNames } from './GuardV2D1.mjs';
+import { classifyDatabase, readTableNames, validateProductionBindings } from './GuardV2D1.mjs';
 
 const v2 = [
   'agent_mailboxes', 'agent_aliases', 'threads', 'messages',
@@ -66,4 +66,23 @@ test('guard, remote migration and deploy require the same private production con
   assert.match(guard, /WranglerRunner\.execute/);
   assert.ok(guard.includes("'--config', '.wrangler.deploy.jsonc'"));
   assert.doesNotMatch(guard, /execFileSync\('npx'/);
+});
+
+test('requires canonical Agent Address binding before remote schema inspection or deploy', () => {
+  const config = {
+    name: 'nuwa-agent-relay-api',
+    services: [{ binding: 'ADDRESS_WORKER', service: 'agent-address' }],
+  };
+
+  assert.doesNotThrow(() => validateProductionBindings(config));
+
+  for (const missing of [
+    { ...config, services: [] },
+    { ...config, services: [{ binding: 'ADDRESS_WORKER', service: 'other-worker' }] },
+    { ...config, services: [...config.services, ...config.services] },
+    { ...config, name: 'other-worker' },
+  ]) {
+    assert.throws(() => validateProductionBindings(missing),
+      /canonical Agent Address service binding/);
+  }
 });
