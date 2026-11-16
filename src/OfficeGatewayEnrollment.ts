@@ -274,6 +274,7 @@ export class OfficeGatewayEnrollment {
         results[index] = await this.enroll(coworkers[index]);
       }
     });
+
     const completed = await Promise.allSettled(workers);
     const failures = completed.filter((result) => result.status === 'rejected');
 
