@@ -1371,6 +1371,28 @@ describe('Gateway coworker speaking scenarios', () => {
     ).bind(valid.body.data.id).first();
     expect(audit).toEqual({ senderAuthMode: 'passphrase', actorSessionID: 'session-g' });
 
+
+    const incoming = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        from: '小安-辦公室', to: '小晴-辦公室', body: '小晴，請幫忙確認。',
+      });
+    expect(incoming.status).toBe(201);
+    const replyTo = '/v2/threads/' + incoming.body.data.threadId +
+      '/messages?session_id=session-g';
+
+    const missingReply = await scenario.client.call('token-g', 'POST', replyTo, {
+      from: '小晴-辦公室', body: '已確認。',
+    });
+    expect(missingReply.status).toBe(403);
+    expect(missingReply.body.error.code).toBe('coworker_passphrase_required');
+
+    const correctReply = await scenario.client.call('token-g', 'POST', replyTo, {
+      from: '小晴-辦公室', passphrase: 'xiaoqing-private-phrase-2026',
+      body: '已確認。',
+    });
+    expect(correctReply.status).toBe(201);
+    expect(correctReply.body.data.threadId).toBe(incoming.body.data.threadId);
+
     const secrets = await env.DB.prepare(
       'SELECT passphrase_salt AS salt, passphrase_hash AS hash ' +
       'FROM gateway_office_coworkers WHERE recipient_bot_id = ?',
