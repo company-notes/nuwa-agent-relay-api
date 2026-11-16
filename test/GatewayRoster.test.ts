@@ -688,20 +688,6 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(scenario.client.nameDirectoryLookups,
       'Every destructive name resolution must read Agent Address freshly').toBe(3);
 
-    const directory = await scenario.client.call('token-g', 'GET',
-      '/v2/gateway-office-coworkers?session_id=session-g');
-    expect(directory.status).toBe(200);
-    expect(directory.body.data).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        displayName: '雲朵', recipientBotID: 'office-cloud-001', enabled: true,
-        recipientSessionID: enrolled.body.data[0].recipientSessionID,
-      }),
-      expect.objectContaining({
-        displayName: '小河', recipientBotID: 'office-river-002', enabled: true,
-        recipientSessionID: enrolled.body.data[1].recipientSessionID,
-      }),
-    ]));
-    expect(JSON.stringify(directory.body)).not.toContain('resumeToken');
 
     const roster = await scenario.client.call('token-g', 'GET',
       '/v2/gateway-teammates?session_id=session-g');
@@ -973,6 +959,7 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     await scenario.send('token-a', 'session-a', bear, 'After revocation.');
     expect(scenario.client.wakeCallbacks).toHaveLength(0);
   });
+
   it('revoking one shared office coworker cancels only that coworker\'s pending Wake', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
@@ -1083,6 +1070,21 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       .toEqual(enrolled.body.data.map((item: { recipientCanonicalAddress: string }) =>
         expect.stringMatching(/^relay-test-org\/office-[a-f0-9]{32}\/main$/)));
     expect(JSON.stringify(enrolled.body)).not.toContain('private-office-resume');
+
+    const directory = await scenario.client.call('token-g', 'GET',
+      '/v2/gateway-office-coworkers?session_id=session-g');
+    expect(directory.status).toBe(200);
+    expect(directory.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displayName: '雲朵', recipientBotID: 'office-cloud-001', enabled: true,
+        recipientSessionID: enrolled.body.data[0].recipientSessionID,
+      }),
+      expect.objectContaining({
+        displayName: '小河', recipientBotID: 'office-river-002', enabled: true,
+        recipientSessionID: enrolled.body.data[1].recipientSessionID,
+      }),
+    ]));
+    expect(JSON.stringify(directory.body)).not.toContain('resumeToken');
 
     const roster = await scenario.client.call('token-g', 'GET',
       '/v2/gateway-teammates?session_id=session-g');
