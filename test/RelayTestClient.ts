@@ -59,6 +59,9 @@ export class RelayTestClient {
   nameDirectoryLookups = 0;
   corruptNameDirectory = false;
   autoReceiptDuringMailSend = false;
+  mailboxCreationDelayMs = 0;
+  activeMailboxCreations = 0;
+  maxConcurrentMailboxCreations = 0;
   duplicateWebhookParameterFields = false;
 
   private readonly sessionA: Session = {
@@ -557,6 +560,18 @@ export class RelayTestClient {
       const token = new Headers(init?.headers).get('authorization');
 
       return this.requestAgentAddress(url, token, init);
+    }
+
+    if (url.origin === MAILTRIGGER_TEST_ORIGIN &&
+      url.pathname === '/api/v1/mailbox/' && init?.method === 'POST' &&
+      this.mailboxCreationDelayMs > 0) {
+      this.activeMailboxCreations += 1;
+      this.maxConcurrentMailboxCreations = Math.max(
+        this.maxConcurrentMailboxCreations, this.activeMailboxCreations,
+      );
+
+      await new Promise<void>((resolve) => setTimeout(resolve, this.mailboxCreationDelayMs));
+      this.activeMailboxCreations -= 1;
     }
 
     if (url.origin === MAILTRIGGER_TEST_ORIGIN) {
