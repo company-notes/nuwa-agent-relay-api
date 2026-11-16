@@ -100,11 +100,12 @@ export class RelayV2Service {
     await this.env.DB.prepare(
       `INSERT INTO messages
          (id, thread_id, kind, sender_agent_id, sender_session_id,
-          sender_canonical_address, recipient_agent_id, recipient_session_id, subject, body,
-          artifacts_json, delivery_status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+          sender_canonical_address, sender_display_name, recipient_agent_id,
+          recipient_session_id, subject, body, artifacts_json, delivery_status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).bind(id, thread.id, kind, this.identity.agentID, this.identity.sessionID,
-      this.identity.canonicalAddress, recipientAgentID, recipientSessionID, subject, body,
+      this.identity.canonicalAddress, this.identity.agentDisplayName,
+      recipientAgentID, recipientSessionID, subject, body,
       JSON.stringify(artifactLinks), createdAt).run();
 
     return this.submitStoredMessage(id, thread, recipientAgentID, recipientSessionID,
