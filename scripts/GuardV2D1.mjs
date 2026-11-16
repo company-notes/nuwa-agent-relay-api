@@ -25,6 +25,7 @@ const GATEWAY_TABLES = [
 const ROSTER_TABLES = ['gateway_teammates'];
 
 const OFFICE_TABLES = ['gateway_office_coworkers'];
+const DELEGATION_TABLES = ['gateway_office_delegation'];
 
 const KNOWN_INFRASTRUCTURE = new Set(['d1_migrations', 'sqlite_sequence', '_cf_KV', '_cf_METADATA']);
 
@@ -41,7 +42,7 @@ export function classifyDatabase(names, requireMigrated = false) {
     throw new Error('Refusing legacy Host/Work D1 database. Use a new isolated V2 D1.');
   }
 
-  const unknown = [...tables].filter((name) => !REQUIRED.includes(name) && !GATEWAY_TABLES.includes(name) && !ROSTER_TABLES.includes(name) && !OFFICE_TABLES.includes(name));
+  const unknown = [...tables].filter((name) => !REQUIRED.includes(name) && !GATEWAY_TABLES.includes(name) && !ROSTER_TABLES.includes(name) && !OFFICE_TABLES.includes(name) && !DELEGATION_TABLES.includes(name));
 
   if (unknown.length) {
     throw new Error('Refusing unrecognized D1 tables: ' + unknown.join(', '));
@@ -83,6 +84,16 @@ export function classifyDatabase(names, requireMigrated = false) {
 
   if (requireMigrated && officeTables.length !== OFFICE_TABLES.length) {
     throw new Error('Office Gateway registration migration is not applied.');
+  }
+
+  const delegationTables = DELEGATION_TABLES.filter((name) => tables.has(name));
+
+  if (delegationTables.length > 0 && officeTables.length !== OFFICE_TABLES.length) {
+    throw new Error('Refusing office delegation without registered office tables.');
+  }
+
+  if (requireMigrated && delegationTables.length !== DELEGATION_TABLES.length) {
+    throw new Error('Office delegation migration is not applied.');
   }
 
   return 'v2';
