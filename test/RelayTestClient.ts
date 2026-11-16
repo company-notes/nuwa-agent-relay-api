@@ -9,6 +9,7 @@ type Session = {
   id: string;
   agentId: string;
   canonical: string;
+  agentDisplayName?: string;
 };
 
 export class RelayTestClient {
@@ -68,11 +69,13 @@ export class RelayTestClient {
     id: 'session-a',
     agentId: 'agent-000a',
     canonical: RelayTestClient.slug + '/alpha/author',
+    agentDisplayName: '小晴',
   };
   private readonly sessionB: Session = {
     id: 'session-b',
     agentId: 'agent-000b',
     canonical: RelayTestClient.slug + '/beta/reviewer',
+    agentDisplayName: '大熊',
   };
   private readonly sessionC: Session = {
     id: 'session-c',
@@ -88,6 +91,7 @@ export class RelayTestClient {
     id: 'session-g',
     agentId: 'agent-000g',
     canonical: RelayTestClient.slug + '/gateway/main',
+    agentDisplayName: 'Gateway',
   };
   private readonly sessionH: Session = {
     id: 'session-h',
