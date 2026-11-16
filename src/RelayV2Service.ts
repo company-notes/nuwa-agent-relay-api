@@ -104,7 +104,7 @@ export class RelayV2Service {
           recipient_session_id, subject, body, artifacts_json, delivery_status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).bind(id, thread.id, kind, this.identity.agentID, this.identity.sessionID,
-      this.identity.canonicalAddress, this.identity.agentDisplayName,
+      this.identity.canonicalAddress, this.identity.agentDisplayName ?? null,
       recipientAgentID, recipientSessionID, subject, body,
       JSON.stringify(artifactLinks), createdAt).run();
 
