@@ -19,6 +19,7 @@ class GatewayRosterScenario {
       WHERE org_id = ? AND gateway_session_id = ? AND recipient_session_id IS NOT NULL`;
 
     await env.DB.batch([
+      env.DB.prepare('DELETE FROM gateway_office_delegation WHERE org_id = ? AND gateway_session_id = ?').bind(organizationID, gatewaySessionID),
       env.DB.prepare('DELETE FROM wake_events WHERE session_id = ?')
         .bind(gatewaySessionID),
       env.DB.prepare(
@@ -1235,5 +1236,166 @@ describe('Office Gateway registration and shared Wake use cases', () => {
           enabled: true,
         })]));
     }
+  });
+});
+
+
+describe('Gateway coworker speaking scenarios', () => {
+  it('delivers an authentic office conversation while auditing the Gateway actor', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const office = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [
+          { displayName: '小晴-辦公室', recipientBotID: 'xiaoqing-native', threadMode: 'platform' },
+          { displayName: '小安-辦公室', recipientBotID: 'annie-native', threadMode: 'platform' },
+        ],
+      });
+    expect(office.status).toBe(201);
+
+    const forbidden = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        from: '小晴-辦公室', to: '小安-辦公室', body: '首次來電。',
+      });
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.body.error.code).toBe('gateway_delegation_disabled');
+
+    expect((await scenario.client.call('token-g', 'PUT',
+      '/v2/gateway-office-delegation?session_id=session-g', { enabled: true })).status).toBe(200);
+
+    const sent = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        from: '小晴-辦公室', to: '小安-辦公室', body: '請確認 NUWA-GROK-01。',
+      });
+    expect(sent.status).toBe(201);
+    const messageID = sent.body.data.id as string;
+    const threadID = sent.body.data.threadId as string;
+
+    const audit = await env.DB.prepare(
+      'SELECT t.sender_session_id AS senderSessionID, t.recipient_session_id AS recipientSessionID, ' +
+      'm.actor_session_id AS actorSessionID, m.sender_auth_mode AS senderAuthMode, ' +
+      'm.sender_display_name AS senderDisplayName ' +
+      'FROM threads t JOIN messages m ON m.thread_id = t.id WHERE m.id = ?',
+    ).bind(messageID).first();
+    expect(audit).toEqual({
+      senderSessionID: office.body.data[0].recipientSessionID,
+      recipientSessionID: office.body.data[1].recipientSessionID,
+      actorSessionID: 'session-g',
+      senderAuthMode: 'office-trust',
+      senderDisplayName: '小晴-辦公室',
+    });
+
+    await MailReceipt.confirmArrival(env, messageID, 'webhook');
+    await WakeService.dispatchDue(env);
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === messageID)?.body)
+      .toMatchObject({
+        body: '請確認 NUWA-GROK-01.', senderDisplayName: '小晴-辦公室',
+        recipientBotID: 'annie-native', relayThreadID: threadID,
+      });
+
+    const replied = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + threadID + '/messages?session_id=session-g', {
+        from: '小安-辦公室', body: '小晴，已收到。',
+      });
+    expect(replied.status).toBe(201);
+    const replyID = replied.body.data.id as string;
+    const reply = await env.DB.prepare(
+      'SELECT sender_session_id AS senderSessionID, recipient_session_id AS recipientSessionID, ' +
+      'actor_session_id AS actorSessionID, sender_auth_mode AS senderAuthMode ' +
+      'FROM messages WHERE id = ?',
+    ).bind(replyID).first();
+    expect(reply).toEqual({
+      senderSessionID: office.body.data[1].recipientSessionID,
+      recipientSessionID: office.body.data[0].recipientSessionID,
+      actorSessionID: 'session-g', senderAuthMode: 'office-trust',
+    });
+
+    await MailReceipt.confirmArrival(env, replyID, 'webhook');
+    await WakeService.dispatchDue(env);
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === replyID)?.body)
+      .toMatchObject({
+        senderDisplayName: '小安-辦公室', recipientBotID: 'xiaoqing-native',
+        relayThreadID: threadID,
+      });
+  });
+
+  it('enforces an optional enrolled passphrase and rejects omission, misuse and stale phrases', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const office = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [
+          {
+            displayName: '小晴-辦公室', recipientBotID: 'xiaoqing-native',
+            threadMode: 'platform', passphrase: 'xiaoqing-private-phrase-2026',
+          },
+          { displayName: '小安-辦公室', recipientBotID: 'annie-native', threadMode: 'platform' },
+        ],
+      });
+    expect(office.status).toBe(201);
+    expect((await scenario.client.call('token-g', 'PUT',
+      '/v2/gateway-office-delegation?session_id=session-g', { enabled: true })).status).toBe(200);
+
+    const send = (from: string, passphrase?: string) => scenario.client.call(
+      'token-g', 'POST', '/v2/messages?session_id=session-g', {
+        from, to: '小安-辦公室', body: '同事通話。',
+        ...(passphrase === undefined ? {} : { passphrase }),
+      });
+
+    const missing = await send('小晴-辦公室');
+    expect(missing.status).toBe(403);
+    expect(missing.body.error.code).toBe('coworker_passphrase_required');
+
+    const invalid = await send('小晴-辦公室', 'incorrect-phrase');
+    expect(invalid.status).toBe(403);
+    expect(invalid.body.error.code).toBe('coworker_passphrase_invalid');
+
+    const outsider = await send('大熊');
+    expect(outsider.status).toBe(403);
+    expect(outsider.body.error.code).toBe('gateway_sender_not_enrolled');
+
+    const otherGateway = await scenario.client.call('token-h', 'POST',
+      '/v2/messages?session_id=session-h', {
+        from: '小晴-辦公室', to: '小安-辦公室', body: '另一 Gateway。',
+      });
+    expect(otherGateway.status).toBe(403);
+
+    const valid = await send(office.body.data[0].recipientCanonicalAddress,
+      'xiaoqing-private-phrase-2026');
+    expect(valid.status).toBe(201);
+    const audit = await env.DB.prepare(
+      'SELECT sender_auth_mode AS senderAuthMode, actor_session_id AS actorSessionID ' +
+      'FROM messages WHERE id = ?',
+    ).bind(valid.body.data.id).first();
+    expect(audit).toEqual({ senderAuthMode: 'passphrase', actorSessionID: 'session-g' });
+
+    const secrets = await env.DB.prepare(
+      'SELECT passphrase_salt AS salt, passphrase_hash AS hash ' +
+      'FROM gateway_office_coworkers WHERE recipient_bot_id = ?',
+    ).bind('xiaoqing-native').first();
+    expect(secrets?.salt).toBeTruthy();
+    expect(secrets?.hash).toBeTruthy();
+    expect(JSON.stringify(secrets)).not.toContain('xiaoqing-private-phrase-2026');
+
+    const replaced = await scenario.client.call('token-g', 'PUT',
+      '/v2/gateway-office-coworkers/xiaoqing-native/passphrase?session_id=session-g', {
+        passphrase: 'xiaoqing-new-private-phrase-2026',
+      });
+    expect(replaced.status).toBe(200);
+    expect(replaced.body.data).toMatchObject({ configured: true });
+    expect((await send('小晴-辦公室', 'xiaoqing-private-phrase-2026')).status).toBe(403);
+    expect((await send('小晴-辦公室', 'xiaoqing-new-private-phrase-2026')).status).toBe(201);
+
+    const removed = await scenario.client.call('token-g', 'DELETE',
+      '/v2/gateway-office-coworkers/xiaoqing-native/passphrase?session_id=session-g');
+    expect(removed.status).toBe(200);
+    expect(removed.body.data).toMatchObject({ configured: false });
+    expect((await send('小晴-辦公室')).status).toBe(201);
+
+    expect((await scenario.client.call('token-g', 'PUT',
+      '/v2/gateway-office-delegation?session_id=session-g', { enabled: false })).status).toBe(200);
+    expect((await send('小晴-辦公室')).status).toBe(403);
   });
 });
