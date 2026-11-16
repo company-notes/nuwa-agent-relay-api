@@ -10,8 +10,9 @@ class GatewayRosterScenario {
   readonly client = new RelayTestClient();
 
   private async clearPreviousOfficeRegistration(): Promise<void> {
-    // Test-only D1 data survives between scenarios. Remove the previous
-    // synthetic office before the next scenario requests Gateway Wake removal.
+    // Test-only D1 data survives between scenarios. Discard the previous
+    // synthetic office's provider-backed mailboxes before resetting its routes
+    // and Gateway Wake, preserving unrelated Agents' mailbox registrations.
     const organizationID = 'org-id';
     const gatewaySessionID = 'session-g';
     const officeSessions = `SELECT recipient_session_id FROM gateway_office_coworkers
@@ -20,6 +21,14 @@ class GatewayRosterScenario {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM wake_events WHERE session_id = ?')
         .bind(gatewaySessionID),
+      env.DB.prepare(
+        `DELETE FROM agent_mailboxes
+          WHERE org_id = ? AND agent_id IN (
+            SELECT recipient_agent_id FROM gateway_office_coworkers
+              WHERE org_id = ? AND gateway_session_id = ?
+                AND recipient_agent_id IS NOT NULL
+          )`,
+      ).bind(organizationID, organizationID, gatewaySessionID),
       env.DB.prepare(
         `DELETE FROM gateway_teammates
           WHERE org_id = ? AND gateway_session_id = ?
