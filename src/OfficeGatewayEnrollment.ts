@@ -74,7 +74,7 @@ export class OfficeGatewayEnrollment {
       `SELECT agent_handle AS agentHandle, display_name AS displayName,
               recipient_agent_id AS recipientAgentID, recipient_session_id AS recipientSessionID,
               recipient_canonical_address AS recipientCanonicalAddress,
-              activated_at AS activatedAt, passphrase_hash AS passphraseHash
+              activated_at AS activatedAt
          FROM gateway_office_coworkers
         WHERE org_id = ? AND gateway_session_id = ? AND recipient_bot_id = ?`,
     ).bind(this.identity.organizationID, this.identity.sessionID,
