@@ -306,7 +306,7 @@ export class GatewayBindings {
       threadID: string;
       senderSessionID: string;
       senderCanonicalAddress: string;
-      senderDisplayName: string | null;
+      senderDisplayName?: string | null;
       recipientAgentID: string;
       recipientSessionID: string | null;
       recipientWakeSessionID: string;
