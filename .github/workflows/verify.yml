@@ -41,7 +41,7 @@ jobs:
 
   deploy:
     if: >-
-      github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+      github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -128,7 +128,7 @@ jobs:
 
   smoke:
     name: Verify official Relay and MailTrigger webhook
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: deploy
     runs-on: ubuntu-latest
     timeout-minutes: 5
