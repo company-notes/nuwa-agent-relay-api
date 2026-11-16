@@ -7,7 +7,8 @@ export default defineConfig(async () => {
   return {
     plugins: [
       cloudflareTest({
-        wrangler: { configPath: './wrangler.jsonc' },
+        // Keep Worker tests independent of the operator's production .dev.vars.
+        wrangler: { configPath: './test/wrangler.jsonc' },
         miniflare: {
           compatibilityDate: '2026-08-01',
           serviceBindings: {
