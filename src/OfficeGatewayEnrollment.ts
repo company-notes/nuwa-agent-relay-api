@@ -18,7 +18,6 @@ type Reservation = {
   recipientAgentID: string | null;
   recipientSessionID: string | null;
   recipientCanonicalAddress: string | null;
-  createdAt: string;
   activatedAt: string | null;
 };
 
@@ -66,7 +65,7 @@ export class OfficeGatewayEnrollment {
       `SELECT agent_handle AS agentHandle, display_name AS displayName,
               recipient_agent_id AS recipientAgentID, recipient_session_id AS recipientSessionID,
               recipient_canonical_address AS recipientCanonicalAddress,
-              created_at AS createdAt, activated_at AS activatedAt
+              activated_at AS activatedAt
          FROM gateway_office_coworkers
         WHERE org_id = ? AND gateway_session_id = ? AND recipient_bot_id = ?`,
     ).bind(this.identity.organizationID, this.identity.sessionID,
@@ -107,21 +106,9 @@ export class OfficeGatewayEnrollment {
         'The display name already identifies another Agent in this Organization.');
     }
 
-    const existing = agents.find((entry) => entry.handle === reservation.agentHandle);
-    let recipient: ResolvedSession;
+    const recipient = await this.address.registerOfficeAgent(
+      reservation.agentHandle, coworker.displayName);
 
-    if (existing) {
-      if (existing.displayName !== coworker.displayName || !existing.defaultSessionID ||
-          !existing.createdAt || existing.createdAt < reservation.createdAt) {
-        throw new APIError(409, 'office_registration_conflict',
-          'A pre-existing Agent cannot be taken over by the office registration.');
-      }
-
-      recipient = await this.address.session(existing.defaultSessionID);
-    } else {
-      recipient = await this.address.registerOfficeAgent(
-        reservation.agentHandle, coworker.displayName);
-    }
 
     if (recipient.canonical !== this.identity.organizationSlug +
         '/' + reservation.agentHandle + '/main') {
