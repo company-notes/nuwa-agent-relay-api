@@ -1002,6 +1002,12 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       { displayName: '小河', recipientBotID: 'office-river-002', threadMode: 'platform' },
     ];
 
+    const missingBeforeEnrollment = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: '雲朵', body: 'Name not yet present in the office directory.',
+      });
+    expect(missingBeforeEnrollment.status).toBe(404);
+
     const enrolled = await office(members);
     expect(enrolled.status).toBe(201);
     expect(enrolled.body.data).toHaveLength(2);
@@ -1025,7 +1031,6 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       ]));
     }
 
-    const recipient = enrolled.body.data[0];
     const mailbox = await env.DB.prepare(
       'SELECT mailbox_email AS email FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',
     ).bind('org-id', roster.body.data.find(
