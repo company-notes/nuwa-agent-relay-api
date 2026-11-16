@@ -1,8 +1,8 @@
 import { AgentMailboxService } from './AgentMailboxService';
 import type { Env } from './Env';
 import { GatewayFirstContactMode, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
-import { GatewayRoster } from './GatewayRoster';
 import { APIError } from './HTTP';
+import { PlatformBotIdentity } from './PlatformBotIdentity';
 import { SessionIdentityClient, type ResolvedSession, type SessionIdentity } from './SessionIdentityClient';
 
 export type OfficeCoworker = {
@@ -232,7 +232,7 @@ export class OfficeGatewayEnrollment {
     const seenNames = new Set<string>();
 
     for (const coworker of coworkers) {
-      GatewayRoster.identifier(coworker.recipientBotID, 'recipientBotID');
+      PlatformBotIdentity.requireID(coworker.recipientBotID, 'recipientBotID');
 
       if (!coworker.displayName.trim() || coworker.displayName.length > 120 ||
           /[\u0000-\u001f\u007f]/.test(coworker.displayName)) {
