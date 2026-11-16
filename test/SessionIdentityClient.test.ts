@@ -97,6 +97,7 @@ describe('Relay V2 Session authorization', () => {
       agentID: 'agent-a',
       sessionID: 'session-a',
       canonicalAddress: 'nuwa/reviewer/main',
+      agentDisplayName: null,
     });
     expect(scenario.requests.map(({ path }) => path)).toEqual([
       '/v2/account/status',
