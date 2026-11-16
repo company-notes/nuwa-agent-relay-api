@@ -49,6 +49,14 @@ class GatewayMigrationScenario {
     assert.equal(message.deliveryStatus, 'sent');
     assert.equal(message.senderAddress, '');
 
+    const attribution = this.db.prepare(
+      'SELECT actor_session_id AS actorSessionID, sender_auth_mode AS senderAuthMode ' +
+      'FROM messages WHERE id = ?',
+    ).get('msg-live');
+    assert.equal(attribution.actorSessionID, null,
+      'Historic messages must not be falsely attributed to a new Gateway actor.');
+    assert.equal(attribution.senderAuthMode, null);
+
     const thread = this.db.prepare('SELECT sender_session_id AS sender FROM threads WHERE id = ?')
       .get('thread-live');
     assert.equal(thread.sender, 'session-a');
@@ -63,7 +71,8 @@ class GatewayMigrationScenario {
     ).all().map((item) => item.name);
     assert.deepEqual(gateway, [
       'gateway_conversations', 'gateway_first_contacts',
-      'gateway_office_coworkers', 'gateway_routes', 'gateway_teammates',
+      'gateway_office_coworkers', 'gateway_office_delegation',
+      'gateway_routes', 'gateway_teammates',
     ]);
 
     this.db.prepare(
@@ -96,6 +105,8 @@ test('upgrade deployed V2 with existing message and pending Wake without data lo
     scenario.apply('0003_handoff_acceptance.sql');
     scenario.apply('0004_gateway_roster.sql');
     scenario.apply('0005_office_gateway_coworkers.sql');
+    scenario.apply('0006_sender_display_name.sql');
+    scenario.apply('0007_gateway_delegated_speaking.sql');
     scenario.verify();
   } finally {
     scenario.close();

@@ -307,6 +307,7 @@ export class GatewayBindings {
       senderSessionID: string;
       senderCanonicalAddress: string;
       senderDisplayName?: string | null;
+      senderAuthMode?: string | null;
       recipientAgentID: string;
       recipientSessionID: string | null;
       recipientWakeSessionID: string;
@@ -364,6 +365,7 @@ export class GatewayBindings {
       senderSessionID: message.senderSessionID,
       senderCanonicalAddress: message.senderCanonicalAddress,
       senderDisplayName: message.senderDisplayName || message.senderCanonicalAddress,
+      ...(message.senderAuthMode ? { senderAuthMode: message.senderAuthMode } : {}),
       recipientAgentID: message.recipientAgentID,
       recipientCanonicalAddress: route.recipientCanonicalAddress,
       recipientBotID: route.recipientBotID,
