@@ -2,6 +2,7 @@ import { AgentMailboxService } from './AgentMailboxService';
 import type { Env } from './Env';
 import { GatewayFirstContactMode, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
 import { APIError } from './HTTP';
+import { Logger } from './Logger';
 import { PlatformBotIdentity } from './PlatformBotIdentity';
 import { SessionIdentityClient, type ResolvedSession, type SessionIdentity } from './SessionIdentityClient';
 
@@ -23,6 +24,7 @@ type Reservation = {
 
 /** Registers office-owned addresses and routes under one authorized Gateway. */
 export class OfficeGatewayEnrollment {
+  private static readonly logger = Logger.forModule('office.enrollment');
   private static readonly MAX_CONCURRENT_ENROLLMENTS = 4;
 
   constructor(
@@ -273,12 +275,15 @@ export class OfficeGatewayEnrollment {
       }
     });
     const completed = await Promise.allSettled(workers);
-    const failed = completed.find((result) => result.status === 'rejected');
+    const failures = completed.filter((result) => result.status === 'rejected');
 
-    if (failed?.status === 'rejected') {
-      // Successful coworkers stay registered; repeating the roster resumes
-      // from their stable addresses and routes.
-      throw failed.reason;
+    for (const failure of failures) {
+      OfficeGatewayEnrollment.logger.exception('coworker_enrollment_failed', failure.reason);
+    }
+
+    if (failures.length > 0) {
+      // A retry resumes successful coworkers from their stable addresses and routes.
+      throw failures[0].reason;
     }
 
     return results;
