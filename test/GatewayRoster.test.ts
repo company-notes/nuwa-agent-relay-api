@@ -19,7 +19,9 @@ class GatewayRosterScenario {
       WHERE org_id = ? AND gateway_session_id = ? AND recipient_session_id IS NOT NULL`;
 
     await env.DB.batch([
-      env.DB.prepare('DELETE FROM gateway_office_delegation WHERE org_id = ? AND gateway_session_id = ?').bind(organizationID, gatewaySessionID),
+      env.DB.prepare(
+        'DELETE FROM gateway_office_delegation WHERE org_id = ? AND gateway_session_id = ?',
+      ).bind(organizationID, gatewaySessionID),
       env.DB.prepare('DELETE FROM wake_events WHERE session_id = ?')
         .bind(gatewaySessionID),
 
@@ -1249,7 +1251,7 @@ describe('Office Gateway registration and shared Wake use cases', () => {
 
 
 describe('Gateway coworker speaking scenarios', () => {
-  it('delivers an authentic office conversation while auditing the Gateway actor', async () => {
+  it('delivers an office-declared conversation while auditing the real Gateway actor', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
 
