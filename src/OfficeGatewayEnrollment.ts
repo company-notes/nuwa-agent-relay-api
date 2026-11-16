@@ -23,6 +23,8 @@ type Reservation = {
 
 /** Registers office-owned addresses and routes under one authorized Gateway. */
 export class OfficeGatewayEnrollment {
+  private static readonly MAX_CONCURRENT_ENROLLMENTS = 4;
+
   constructor(
     private readonly env: Env,
     private readonly identity: SessionIdentity,
@@ -259,10 +261,24 @@ export class OfficeGatewayEnrollment {
 
     await this.requireVerifiedWake();
 
-    const results = [];
+    const results: Record<string, unknown>[] = new Array(coworkers.length);
+    let nextIndex = 0;
+    const concurrency = Math.min(coworkers.length,
+      OfficeGatewayEnrollment.MAX_CONCURRENT_ENROLLMENTS);
 
-    for (const coworker of coworkers) {
-      results.push(await this.enroll(coworker));
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (nextIndex < coworkers.length) {
+        const index = nextIndex++;
+        results[index] = await this.enroll(coworkers[index]);
+      }
+    });
+    const completed = await Promise.allSettled(workers);
+    const failed = completed.find((result) => result.status === 'rejected');
+
+    if (failed?.status === 'rejected') {
+      // Successful coworkers stay registered; repeating the roster resumes
+      // from their stable addresses and routes.
+      throw failed.reason;
     }
 
     return results;
