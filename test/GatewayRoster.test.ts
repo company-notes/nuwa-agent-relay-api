@@ -22,6 +22,14 @@ class GatewayRosterScenario {
       env.DB.prepare('DELETE FROM gateway_office_delegation WHERE org_id = ? AND gateway_session_id = ?').bind(organizationID, gatewaySessionID),
       env.DB.prepare('DELETE FROM wake_events WHERE session_id = ?')
         .bind(gatewaySessionID),
+
+      env.DB.prepare(
+        `DELETE FROM agent_aliases WHERE org_id = ? AND agent_id IN (
+          SELECT recipient_agent_id FROM gateway_office_coworkers
+            WHERE org_id = ? AND gateway_session_id = ?
+              AND recipient_agent_id IS NOT NULL
+        )`,
+      ).bind(organizationID, organizationID, gatewaySessionID),
       env.DB.prepare(
         `DELETE FROM agent_mailboxes
           WHERE org_id = ? AND agent_id IN (
