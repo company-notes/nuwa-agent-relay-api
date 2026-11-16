@@ -222,7 +222,7 @@ export class OfficeGatewayEnrollment {
       `SELECT display_name AS displayName, recipient_bot_id AS recipientBotID,
               recipient_session_id AS recipientSessionID,
               recipient_canonical_address AS recipientCanonicalAddress,
-              activated_at AS activatedAt
+              activated_at AS activatedAt, passphrase_hash AS passphraseHash
          FROM gateway_office_coworkers
         WHERE org_id = ? AND gateway_session_id = ?
         ORDER BY display_name, recipient_bot_id`,
