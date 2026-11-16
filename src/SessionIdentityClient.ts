@@ -8,12 +8,14 @@ export type SessionIdentity = {
   agentID: string;
   sessionID: string;
   canonicalAddress: string;
+  agentDisplayName?: string | null;
 };
 
 export type ResolvedSession = {
   id: string;
   agentId: string;
   canonical: string;
+  agentDisplayName?: string | null;
 };
 
 type AccountStatus = {
@@ -206,6 +208,7 @@ export class SessionIdentityClient {
       agentID: verifiedSession.agentId,
       sessionID: verifiedSession.id,
       canonicalAddress: verifiedSession.canonical,
+      agentDisplayName: verifiedSession.agentDisplayName ?? null,
     };
   }
 }

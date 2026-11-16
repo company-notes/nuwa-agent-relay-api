@@ -1,6 +1,7 @@
 import { AgentMailboxService } from './AgentMailboxService';
 import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
+import { GatewaySpeaker, SenderAuthMode, type SpeakerRequest } from './GatewaySpeaker';
 import { HandoffAcceptance } from './HandoffAcceptance';
 import { APIError, type JSONRecord } from './HTTP';
 import { MailTriggerClient } from './MailTriggerClient';
@@ -38,7 +39,7 @@ type MessageRow = {
   createdAt: string;
 };
 
-export type RelayMessageInput = {
+export type RelayMessageInput = SpeakerRequest & {
   to: Recipient;
   subject: string;
   body: string;
@@ -62,6 +63,8 @@ export class RelayV2Service {
     private readonly env: Env,
     private readonly identity: SessionIdentity,
     private readonly address: SessionIdentityClient,
+    private readonly actorSessionID?: string,
+    private readonly senderAuthMode: SenderAuthMode = SenderAuthMode.Session,
   ) {
     this.mail = new MailTriggerClient(env);
     this.mailboxes = new AgentMailboxService(env);
@@ -100,12 +103,15 @@ export class RelayV2Service {
     await this.env.DB.prepare(
       `INSERT INTO messages
          (id, thread_id, kind, sender_agent_id, sender_session_id,
-          sender_canonical_address, recipient_agent_id, recipient_session_id, subject, body,
-          artifacts_json, delivery_status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+          sender_canonical_address, sender_display_name, recipient_agent_id,
+          recipient_session_id, subject, body, artifacts_json, delivery_status, created_at,
+          actor_session_id, sender_auth_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
     ).bind(id, thread.id, kind, this.identity.agentID, this.identity.sessionID,
-      this.identity.canonicalAddress, recipientAgentID, recipientSessionID, subject, body,
-      JSON.stringify(artifactLinks), createdAt).run();
+      this.identity.canonicalAddress, this.identity.agentDisplayName ?? null,
+      recipientAgentID, recipientSessionID, subject, body,
+      JSON.stringify(artifactLinks), createdAt,
+      this.actorSessionID ?? this.identity.sessionID, this.senderAuthMode).run();
 
     return this.submitStoredMessage(id, thread, recipientAgentID, recipientSessionID,
       kind, subject, body, artifactLinks, sender.mailboxId, recipient.mailboxEmail);
@@ -168,7 +174,42 @@ export class RelayV2Service {
     return { id, threadId: thread.id, messageId: deliveryID };
   }
 
+  private async requireSpeakingAgent(): Promise<void> {
+    const office = await this.env.DB.prepare(
+      `SELECT 1 FROM gateway_office_coworkers
+        WHERE org_id = ? AND gateway_session_id = ?
+          AND activated_at IS NOT NULL LIMIT 1`,
+    ).bind(this.identity.organizationID, this.identity.sessionID).first();
+
+    if (office) {
+      throw new APIError(403, 'gateway_voice_forbidden',
+        'The office Gateway forwards messages; individual coworkers speak through their own Sessions.');
+    }
+  }
+
   async send(kind: ThreadKind, request: RelayMessageInput) {
+    if (kind !== 'message' && request.from !== undefined) {
+      throw new APIError(403, 'gateway_handoff_delegation_forbidden',
+        'Office speaking delegation applies only to messages and Thread replies.');
+    }
+
+    const selected = await new GatewaySpeaker(
+      this.env, this.identity, this.address,
+    ).resolve(request.from, request.passphrase);
+
+    if (selected) {
+      return new RelayV2Service(
+        this.env, selected.identity, this.address,
+        this.identity.sessionID, selected.authMode,
+      ).sendAuthorized(kind, request);
+    }
+
+    await this.requireSpeakingAgent();
+
+    return this.sendAuthorized(kind, request);
+  }
+
+  private async sendAuthorized(kind: ThreadKind, request: RelayMessageInput) {
     const recipient = await this.recipient(request.to);
     const agentHandoff = kind === 'handoff' &&
       typeof request.to === 'string' && request.to.split('/').length === 2;
@@ -223,7 +264,29 @@ export class RelayV2Service {
     return row;
   }
 
-  async reply(threadID: string, body: string, subject: string | null, artifactLinks: string[]) {
+  async reply(
+    threadID: string, body: string, subject: string | null, artifactLinks: string[],
+    speaker: SpeakerRequest = {},
+  ) {
+    const selected = await new GatewaySpeaker(
+      this.env, this.identity, this.address,
+    ).resolve(speaker.from, speaker.passphrase);
+
+    if (selected) {
+      return new RelayV2Service(
+        this.env, selected.identity, this.address,
+        this.identity.sessionID, selected.authMode,
+      ).replyAuthorized(threadID, body, subject, artifactLinks);
+    }
+
+    await this.requireSpeakingAgent();
+
+    return this.replyAuthorized(threadID, body, subject, artifactLinks);
+  }
+
+  private async replyAuthorized(
+    threadID: string, body: string, subject: string | null, artifactLinks: string[],
+  ) {
     const thread = await this.thread(threadID);
     const fromSender = thread.senderSessionID === this.identity.sessionID;
     const toSessionID = fromSender

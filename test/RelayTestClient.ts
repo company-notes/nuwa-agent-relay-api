@@ -9,6 +9,7 @@ type Session = {
   id: string;
   agentId: string;
   canonical: string;
+  agentDisplayName?: string;
 };
 
 export class RelayTestClient {
@@ -59,17 +60,22 @@ export class RelayTestClient {
   nameDirectoryLookups = 0;
   corruptNameDirectory = false;
   autoReceiptDuringMailSend = false;
+  mailboxCreationDelayMs = 0;
+  activeMailboxCreations = 0;
+  maxConcurrentMailboxCreations = 0;
   duplicateWebhookParameterFields = false;
 
   private readonly sessionA: Session = {
     id: 'session-a',
     agentId: 'agent-000a',
     canonical: RelayTestClient.slug + '/alpha/author',
+    agentDisplayName: '小晴',
   };
   private readonly sessionB: Session = {
     id: 'session-b',
     agentId: 'agent-000b',
     canonical: RelayTestClient.slug + '/beta/reviewer',
+    agentDisplayName: '大熊',
   };
   private readonly sessionC: Session = {
     id: 'session-c',
@@ -85,6 +91,7 @@ export class RelayTestClient {
     id: 'session-g',
     agentId: 'agent-000g',
     canonical: RelayTestClient.slug + '/gateway/main',
+    agentDisplayName: 'Gateway',
   };
   private readonly sessionH: Session = {
     id: 'session-h',
@@ -557,6 +564,18 @@ export class RelayTestClient {
       const token = new Headers(init?.headers).get('authorization');
 
       return this.requestAgentAddress(url, token, init);
+    }
+
+    if (url.origin === MAILTRIGGER_TEST_ORIGIN &&
+      url.pathname === '/api/v1/mailbox/' && init?.method === 'POST' &&
+      this.mailboxCreationDelayMs > 0) {
+      this.activeMailboxCreations += 1;
+      this.maxConcurrentMailboxCreations = Math.max(
+        this.maxConcurrentMailboxCreations, this.activeMailboxCreations,
+      );
+
+      await new Promise<void>((resolve) => setTimeout(resolve, this.mailboxCreationDelayMs));
+      this.activeMailboxCreations -= 1;
     }
 
     if (url.origin === MAILTRIGGER_TEST_ORIGIN) {

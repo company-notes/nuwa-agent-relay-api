@@ -11,6 +11,12 @@ class GatewayScenario {
   async setup() {
     this.client.installExternalTestTransport();
 
+    // A prior scenario may intentionally leave a retryable Wake pending.
+    // Each test owns its receiving Session's delivery history.
+    await env.DB.prepare(
+      'DELETE FROM wake_events WHERE session_id = ?',
+    ).bind('session-b').run();
+
     // Each scenario starts with its own recipient configuration, including D1 bindings.
     const cleared = await this.client.call('token-b', 'DELETE',
       '/v2/gateway-route?session_id=session-b');
@@ -109,6 +115,7 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
       recipientBotID: 'cosmo-bot-immutable',
       senderSessionID: 'session-a',
       senderCanonicalAddress: 'relay-test-org/alpha/author',
+      senderDisplayName: '小晴',
       recipientCanonicalAddress: 'relay-test-org/beta/reviewer',
       body: 'Hello Cosmo, remember the phrase star river.',
     });
@@ -214,7 +221,8 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     const allowedWakeFields = new Set([
       'event', 'eventVersion', 'messageID', 'recipientSessionID',
       'relayThreadID', 'senderSessionID', 'senderCanonicalAddress',
-      'recipientAgentID', 'recipientCanonicalAddress', 'recipientBotID',
+      'senderDisplayName', 'senderAuthMode', 'recipientAgentID',
+      'recipientCanonicalAddress', 'recipientBotID',
       'body', 'recipientPlatformThreadID',
     ]);
     expect(Object.keys(scenario.client.wakeCallbacks[0].body)

@@ -1,13 +1,16 @@
 import { AgentMailboxService } from './AgentMailboxService';
+import { CoworkerPassphrases } from './CoworkerPassphrases';
 import type { Env } from './Env';
 import { GatewayFirstContactMode, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
 import { APIError } from './HTTP';
+import { Logger } from './Logger';
 import { PlatformBotIdentity } from './PlatformBotIdentity';
 import { SessionIdentityClient, type ResolvedSession, type SessionIdentity } from './SessionIdentityClient';
 
 export type OfficeCoworker = {
   displayName: string;
   recipientBotID: string;
+  passphrase?: string;
   threadMode: GatewayThreadMode;
   firstContactMode: GatewayFirstContactMode;
 };
@@ -23,12 +26,18 @@ type Reservation = {
 
 /** Registers office-owned addresses and routes under one authorized Gateway. */
 export class OfficeGatewayEnrollment {
+  private static readonly logger = Logger.forModule('office.enrollment');
+  private static readonly MAX_CONCURRENT_ENROLLMENTS = 4;
+  private readonly passphrases: CoworkerPassphrases;
+
   constructor(
     private readonly env: Env,
     private readonly identity: SessionIdentity,
     private readonly address: SessionIdentityClient,
     private readonly mailboxes = new AgentMailboxService(env),
-  ) {}
+  ) {
+    this.passphrases = new CoworkerPassphrases(env, identity);
+  }
 
   private async requireVerifiedWake(): Promise<void> {
     const wake = await this.env.DB.prepare(
@@ -190,6 +199,11 @@ export class OfficeGatewayEnrollment {
 
   private async enroll(coworker: OfficeCoworker): Promise<Record<string, unknown>> {
     const reservation = await this.reservation(coworker);
+
+    if (coworker.passphrase !== undefined) {
+      await this.passphrases.setDuringEnrollment(coworker.recipientBotID, coworker.passphrase);
+    }
+
     const recipient = await this.resolveRegistered(coworker, reservation);
 
     await this.mailboxes.provision(this.identity.organizationID, recipient.agentId);
@@ -208,17 +222,18 @@ export class OfficeGatewayEnrollment {
       `SELECT display_name AS displayName, recipient_bot_id AS recipientBotID,
               recipient_session_id AS recipientSessionID,
               recipient_canonical_address AS recipientCanonicalAddress,
-              activated_at AS activatedAt
+              activated_at AS activatedAt, passphrase_hash AS passphraseHash
          FROM gateway_office_coworkers
         WHERE org_id = ? AND gateway_session_id = ?
         ORDER BY display_name, recipient_bot_id`,
     ).bind(this.identity.organizationID, this.identity.sessionID).all<{
       displayName: string; recipientBotID: string; recipientSessionID: string | null;
       recipientCanonicalAddress: string | null; activatedAt: string | null;
+      passphraseHash: string | null;
     }>();
 
-    return records.results.map(({ activatedAt, ...record }) => ({
-      ...record, enabled: activatedAt !== null,
+    return records.results.map(({ activatedAt, passphraseHash, ...record }) => ({
+      ...record, enabled: activatedAt !== null, hasPassphrase: passphraseHash !== null,
     }));
   }
 
@@ -233,6 +248,10 @@ export class OfficeGatewayEnrollment {
 
     for (const coworker of coworkers) {
       PlatformBotIdentity.requireID(coworker.recipientBotID, 'recipientBotID');
+
+      if (coworker.passphrase !== undefined) {
+        CoworkerPassphrases.validate(coworker.passphrase);
+      }
 
       if (!coworker.displayName.trim() || coworker.displayName.length > 120 ||
           /[\u0000-\u001f\u007f]/.test(coworker.displayName)) {
@@ -259,10 +278,28 @@ export class OfficeGatewayEnrollment {
 
     await this.requireVerifiedWake();
 
-    const results = [];
+    const results: Record<string, unknown>[] = new Array(coworkers.length);
+    let nextIndex = 0;
+    const concurrency = Math.min(coworkers.length,
+      OfficeGatewayEnrollment.MAX_CONCURRENT_ENROLLMENTS);
 
-    for (const coworker of coworkers) {
-      results.push(await this.enroll(coworker));
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (nextIndex < coworkers.length) {
+        const index = nextIndex++;
+        results[index] = await this.enroll(coworkers[index]);
+      }
+    });
+
+    const completed = await Promise.allSettled(workers);
+    const failures = completed.filter((result) => result.status === 'rejected');
+
+    for (const failure of failures) {
+      OfficeGatewayEnrollment.logger.exception('coworker_enrollment_failed', failure.reason);
+    }
+
+    if (failures.length > 0) {
+      // A retry resumes successful coworkers from their stable addresses and routes.
+      throw failures[0].reason;
     }
 
     return results;

@@ -15,6 +15,8 @@ type WakeRow = {
   threadID: string;
   senderSessionID: string;
   senderCanonicalAddress: string;
+  senderDisplayName: string | null;
+  senderAuthMode: string | null;
   recipientAgentID: string;
   recipientSessionID: string | null;
   body: string;
@@ -115,6 +117,8 @@ export class WakeService {
               t.org_id AS organizationID, m.thread_id AS threadID,
               m.sender_session_id AS senderSessionID,
               m.sender_canonical_address AS senderCanonicalAddress,
+              m.sender_display_name AS senderDisplayName,
+              m.sender_auth_mode AS senderAuthMode,
               m.recipient_agent_id AS recipientAgentID,
               m.recipient_session_id AS recipientSessionID, m.body
          FROM wake_events e
@@ -155,6 +159,8 @@ export class WakeService {
           threadID: event.threadID,
           senderSessionID: event.senderSessionID,
           senderCanonicalAddress: event.senderCanonicalAddress,
+          senderDisplayName: event.senderDisplayName,
+          senderAuthMode: event.senderAuthMode,
           recipientAgentID: event.recipientAgentID,
           recipientSessionID: event.recipientSessionID,
           recipientWakeSessionID: event.gatewaySessionID ?? event.sessionID,
