@@ -1382,6 +1382,16 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(audit).toEqual({ senderAuthMode: 'passphrase', actorSessionID: 'session-g' });
 
 
+
+    await MailReceipt.confirmArrival(env, valid.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+    expect(scenario.client.wakeCallbacks.find((entry) =>
+      entry.body.messageID === valid.body.data.id)?.body).toMatchObject({
+        senderDisplayName: '小晴-辦公室',
+        senderAuthMode: 'passphrase',
+        recipientBotID: 'annie-native',
+      });
+
     const incoming = await scenario.client.call('token-g', 'POST',
       '/v2/messages?session_id=session-g', {
         from: '小安-辦公室', to: '小晴-辦公室', body: '小晴，請幫忙確認。',
