@@ -53,7 +53,7 @@ export class GatewayRoster {
     throw new APIError(500, 'gateway_roster_invalid', 'Stored Gateway teammate state is invalid.');
   }
 
-  private static identifier(value: string, label: string) {
+  static identifier(value: string, label: string) {
     if (!/^[A-Za-z0-9._:-]{1,192}$/.test(value)) {
       throw new APIError(400, 'invalid_gateway_binding', label + ' is not a valid platform identifier.');
     }
@@ -249,6 +249,10 @@ export class GatewayRoster {
       this.env.DB.prepare(
         'DELETE FROM gateway_routes WHERE org_id = ? AND recipient_session_id = ? AND recipient_bot_id = ?',
       ).bind(this.identity.organizationID, recipientSessionID, row.recipientBotID),
+      this.env.DB.prepare(
+        `UPDATE gateway_office_coworkers SET activated_at = NULL
+          WHERE org_id = ? AND recipient_session_id = ?`,
+      ).bind(this.identity.organizationID, recipientSessionID),
       this.env.DB.prepare(
         'DELETE FROM gateway_teammates WHERE org_id = ? AND recipient_session_id = ?',
       ).bind(this.identity.organizationID, recipientSessionID),
