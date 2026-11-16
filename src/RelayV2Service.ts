@@ -169,7 +169,22 @@ export class RelayV2Service {
     return { id, threadId: thread.id, messageId: deliveryID };
   }
 
+  private async requireSpeakingAgent(): Promise<void> {
+    const office = await this.env.DB.prepare(
+      `SELECT 1 FROM gateway_office_coworkers
+        WHERE org_id = ? AND gateway_session_id = ?
+          AND activated_at IS NOT NULL LIMIT 1`,
+    ).bind(this.identity.organizationID, this.identity.sessionID).first();
+
+    if (office) {
+      throw new APIError(403, 'gateway_voice_forbidden',
+        'The office Gateway forwards messages; individual coworkers speak through their own Sessions.');
+    }
+  }
+
   async send(kind: ThreadKind, request: RelayMessageInput) {
+    await this.requireSpeakingAgent();
+
     const recipient = await this.recipient(request.to);
     const agentHandoff = kind === 'handoff' &&
       typeof request.to === 'string' && request.to.split('/').length === 2;
@@ -225,6 +240,8 @@ export class RelayV2Service {
   }
 
   async reply(threadID: string, body: string, subject: string | null, artifactLinks: string[]) {
+    await this.requireSpeakingAgent();
+
     const thread = await this.thread(threadID);
     const fromSender = thread.senderSessionID === this.identity.sessionID;
     const toSessionID = fromSender
