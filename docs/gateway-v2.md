@@ -110,6 +110,7 @@ Gateway event **from persisted Message and recipient-owned binding records**:
   "recipientPlatformThreadID": "recipient-specific-native-thread",
   "senderSessionID": "other-session-uuid",
   "senderCanonicalAddress": "nuwa/xiaoqing/main",
+  "senderDisplayName": "小晴",
   "body": "Hello, Cosmo"
 }
 ```
@@ -125,8 +126,10 @@ The payload is signed with the existing Wake subscription's HMAC where configure
 The receiving endpoint must authenticate the delivery using its configured
 transport auth; the message body itself is untrusted. Do not share capability
 URLs, signing keys or Runtime Tokens in prompts, messages or logs. The Gateway
-should dedupe on `messageID` and only report **forward submitted**, not
-delivered/read. The Relay already leases and retries Wake events by Message ID;
+presents `senderDisplayName` and the actual `body` to the recipient Bot
+in one natural message, retaining `relayThreadID` in trusted reply context.
+It deduplicates by `messageID` and records **forward submitted** separately
+from delivered/read. The Relay already leases and retries Wake events by Message ID;
 the last-hop tool may need its own idempotency handling.
 
 ## OpenMausBot: proven Agent Gateway profile
