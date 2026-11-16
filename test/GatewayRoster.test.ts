@@ -1192,6 +1192,12 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
 
+    const staleOfficeMailboxes = await env.DB.prepare(
+      'SELECT COUNT(*) AS count FROM agent_mailboxes WHERE org_id = ? AND agent_id LIKE ?',
+    ).bind('org-id', 'office-agent-%').first<{ count: number }>();
+    expect(staleOfficeMailboxes?.count,
+      'Each simulated office starts with no mailboxes from the previous scenario').toBe(0);
+
     scenario.client.mailboxCreationDelayMs = 80;
     const coworkers = Array.from({ length: 4 }, (_, index) => ({
       displayName: 'Office parallel coworker ' + index,
