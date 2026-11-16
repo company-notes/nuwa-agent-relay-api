@@ -1153,8 +1153,6 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(scenario.client.officeRegistrations).toHaveLength(3);
   });
 
-
-
   it('enrolls one real office roster without serializing every slow provider provisioning', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
@@ -1188,5 +1186,4 @@ describe('Office Gateway registration and shared Wake use cases', () => {
         })]));
     }
   });
-
 });
