@@ -1101,6 +1101,14 @@ describe('Office Gateway registration and shared Wake use cases', () => {
 
     // A registered address is a real recipient, not authorization for the
     // office Gateway to send messages or accept work as that coworker.
+    const gatewayCannotSpeak = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        to: '雲朵', body: 'Gateway tried to relay a coworker reply as itself.',
+      });
+    expect(gatewayCannotSpeak.status,
+      'The office switchboard must not publish a coworker reply with Gateway authority').toBe(403);
+    expect(gatewayCannotSpeak.body.error.code).toBe('gateway_voice_forbidden');
+
     const forbiddenVoice = await scenario.client.call('token-g', 'POST',
       '/v2/messages?session_id=' + enrolled.body.data[0].recipientSessionID, {
         to: '小晴', body: 'Gateway must never speak as 雲朵.',
