@@ -9,8 +9,35 @@ import { RelayTestClient } from './RelayTestClient';
 class GatewayRosterScenario {
   readonly client = new RelayTestClient();
 
+  private async clearPreviousOfficeRegistration(): Promise<void> {
+    // Test-only D1 data survives between scenarios. Remove the previous
+    // synthetic office before the next scenario requests Gateway Wake removal.
+    const organizationID = 'org-id';
+    const gatewaySessionID = 'session-g';
+    const officeSessions = `SELECT recipient_session_id FROM gateway_office_coworkers
+      WHERE org_id = ? AND gateway_session_id = ? AND recipient_session_id IS NOT NULL`;
+
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM wake_events WHERE session_id = ?')
+        .bind(gatewaySessionID),
+      env.DB.prepare(
+        `DELETE FROM gateway_teammates
+          WHERE org_id = ? AND gateway_session_id = ?
+            AND recipient_session_id IN (${officeSessions})`,
+      ).bind(organizationID, gatewaySessionID, organizationID, gatewaySessionID),
+      env.DB.prepare(
+        `DELETE FROM gateway_routes
+          WHERE org_id = ? AND recipient_session_id IN (${officeSessions})`,
+      ).bind(organizationID, organizationID, gatewaySessionID),
+      env.DB.prepare(
+        'DELETE FROM gateway_office_coworkers WHERE org_id = ? AND gateway_session_id = ?',
+      ).bind(organizationID, gatewaySessionID),
+    ]);
+  }
+
   async setup() {
     this.client.installExternalTestTransport();
+    await this.clearPreviousOfficeRegistration();
 
     // Wrangler's D1 test environment survives across scenarios in this file.
     // Revoke previous teammate memberships before creating this independent office.
