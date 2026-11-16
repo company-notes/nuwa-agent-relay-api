@@ -6,6 +6,7 @@ import { GatewayModeCodec } from './GatewayModeCodec';
 import { GatewayRoster } from './GatewayRoster';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { MailReceipt } from './MailReceipt';
+import { OfficeGatewayEnrollment, type OfficeCoworker } from './OfficeGatewayEnrollment';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 import { WakePairing } from './WakePairing';
@@ -247,6 +248,40 @@ export class RelayAPI {
     return null;
   }
 
+  private async officeGateway(
+    request: Request, path: string, enrollment: OfficeGatewayEnrollment,
+  ): Promise<Response | null> {
+    if (path !== '/v2/gateway-office-coworkers') {
+      return null;
+    }
+
+    if (request.method === 'GET') {
+      return HTTP.response(await enrollment.listOffice());
+    }
+
+    if (request.method !== 'POST') {
+      return null;
+    }
+
+    const data = await HTTP.json(request);
+
+    if (!Array.isArray(data.coworkers) ||
+        data.coworkers.some((item) => !item || typeof item !== 'object' || Array.isArray(item))) {
+      throw new APIError(400, 'invalid_office_roster', 'A list of native coworkers is required.');
+    }
+
+    const coworkers: OfficeCoworker[] = data.coworkers.map((record: JSONRecord) => ({
+      displayName: HTTP.requiredString(record, 'displayName', 120),
+      recipientBotID: HTTP.requiredString(record, 'recipientBotID', 192),
+      threadMode: GatewayModeCodec.readThreadMode(HTTP.requiredString(record, 'threadMode', 32)),
+      firstContactMode: GatewayModeCodec.readFirstContactMode(
+        HTTP.optionalString(record, 'firstContactMode', 32) ?? 'manual',
+      ),
+    }));
+
+    return HTTP.response(await enrollment.enrollOffice(coworkers), 201);
+  }
+
   private async gatewayTeammates(
     request: Request, path: string, roster: GatewayRoster,
   ): Promise<Response | null> {
@@ -388,6 +423,7 @@ export class RelayAPI {
     const aliases = new AliasService(this.env, identity, address);
     const gatewayBindings = new GatewayBindings(this.env, identity, address);
     const gatewayRoster = new GatewayRoster(this.env, identity, address);
+    const officeGateway = new OfficeGatewayEnrollment(this.env, identity, address);
 
     if (path === '/v2/agent-mailboxes' && request.method === 'POST') {
       return HTTP.response(await relay.provisionMailbox(), 201);
@@ -409,6 +445,7 @@ export class RelayAPI {
       () => this.threads(request, path, relay),
       () => this.gateway(request, path, gatewayBindings),
       () => this.gatewayTeammates(request, path, gatewayRoster),
+      () => this.officeGateway(request, path, officeGateway),
       () => this.wake(request, path, identity),
     ];
 

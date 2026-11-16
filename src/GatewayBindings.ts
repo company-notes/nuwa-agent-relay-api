@@ -1,5 +1,6 @@
 import type { Env } from './Env';
 import { APIError } from './HTTP';
+import { PlatformBotIdentity } from './PlatformBotIdentity';
 import { GatewayFirstContacts } from './GatewayFirstContacts';
 import { GatewayRoster } from './GatewayRoster';
 import { GatewayFirstContactMode, GatewayFirstContactStatus, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
@@ -30,14 +31,6 @@ export class GatewayBindings {
     private readonly identity: SessionIdentity,
     private readonly address: SessionIdentityClient,
   ) {}
-
-  private static identifier(value: string, name: string): string {
-    if (!/^[A-Za-z0-9._:-]{1,192}$/.test(value)) {
-      throw new APIError(400, 'invalid_gateway_binding', `${name} is not a valid platform identifier.`);
-    }
-
-    return value;
-  }
 
   private static readRoute(row: GatewayRouteRow): GatewayRoute {
     return {
@@ -85,7 +78,7 @@ export class GatewayBindings {
       this.env, this.identity.organizationID, this.identity.sessionID,
     );
 
-    GatewayBindings.identifier(recipientBotID, 'recipientBotID');
+    PlatformBotIdentity.requireID(recipientBotID, 'recipientBotID');
 
     if (!Object.values(GatewayThreadMode).includes(threadMode)) {
       throw new APIError(400, 'invalid_gateway_mode', 'Unsupported Gateway thread mode.');
@@ -180,7 +173,7 @@ export class GatewayBindings {
   }
 
   async setConversation(senderSessionID: string, nativeThreadID: string) {
-    GatewayBindings.identifier(nativeThreadID, 'nativeThreadID');
+    PlatformBotIdentity.requireID(nativeThreadID, 'nativeThreadID');
 
     const route = await this.route();
 
@@ -237,7 +230,7 @@ export class GatewayBindings {
   }
 
   async confirmFirstContact(senderSessionID: string, messageID: string, nativeThreadID: string) {
-    GatewayBindings.identifier(nativeThreadID, 'nativeThreadID');
+    PlatformBotIdentity.requireID(nativeThreadID, 'nativeThreadID');
     GatewayBindings.requireAutomaticFirstContact(await this.route());
     await this.validateSender(senderSessionID);
 
@@ -252,7 +245,7 @@ export class GatewayBindings {
     recipientSessionID: string, senderSessionID: string,
     messageID: string, nativeThreadID: string,
   ) {
-    GatewayBindings.identifier(nativeThreadID, 'nativeThreadID');
+    PlatformBotIdentity.requireID(nativeThreadID, 'nativeThreadID');
 
     if (recipientSessionID === this.identity.sessionID ||
         senderSessionID === recipientSessionID) {

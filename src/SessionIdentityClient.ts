@@ -28,6 +28,7 @@ export type DirectoryAgent = {
   displayName: string | null;
   defaultSessionID: string | null;
   defaultSessionHandle: string | null;
+
 };
 
 export class SessionIdentityClient {
@@ -45,7 +46,7 @@ export class SessionIdentityClient {
     }
   }
 
-  private async request<T>(method: 'GET' | 'PATCH', path: string, body?: Record<string, string>): Promise<T> {
+  private async request<T>(method: 'GET' | 'PATCH' | 'POST' | 'PUT', path: string, body?: Record<string, string>): Promise<T> {
     let response: Response;
 
     try {
@@ -134,6 +135,17 @@ export class SessionIdentityClient {
     }
 
     return records as DirectoryAgent[];
+  }
+
+  async registerOfficeAgent(agentName: string, agentDisplayName: string): Promise<ResolvedSession> {
+    // A stable request ID is scoped by the OAuth Organization in Agent Address.
+    // Its idempotent response contains only the public Session, never a Runtime credential.
+    const registered = await this.request<{ session: unknown }>(
+      'PUT', '/v2/account/agent-registrations/' + encodeURIComponent(agentName),
+      { agentName, agentDisplayName, sessionName: 'main' },
+    );
+
+    return SessionIdentityClient.requireSession(registered.session);
   }
 
   async session(sessionID: string): Promise<ResolvedSession> {

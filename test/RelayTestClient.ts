@@ -39,6 +39,10 @@ export class RelayTestClient {
   readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
   readonly wakeChallenges: Array<{ verificationId: string; challenge: string; sessionID: string }> = [];
   readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string; redirect: RequestRedirect | undefined }> = [];
+  readonly officeRegistrations: Array<{ displayName: string; agentName: string }> = [];
+  private readonly officeAgents: Array<Session & {
+    handle: string; displayName: string; createdAt: string;
+  }> = [];
 
   failNextMail = false;
   loseNextMailAcknowledgement = false;
@@ -109,6 +113,44 @@ export class RelayTestClient {
       });
     }
 
+    const registration = url.pathname.match(
+      /^\/v2\/account\/agent-registrations\/(office-[a-f0-9]{32})$/,
+    );
+
+    if (registration && init?.method === 'PUT') {
+      const input = JSON.parse(String(init.body)) as {
+        agentName: string; agentDisplayName: string; sessionName: string;
+      };
+      const existing = this.officeAgents.find((agent) => agent.handle === input.agentName);
+
+      if (registration[1] !== input.agentName ||
+          (existing && (existing.displayName !== input.agentDisplayName ||
+            existing.canonical !== RelayTestClient.slug + '/' +
+            input.agentName + '/' + input.sessionName))) {
+        return Response.json({ ok: false, error: { code: 'agent_registration_conflict' } },
+          { status: 409 });
+      }
+
+      if (existing) {
+        return Response.json({ ok: true, data: { session: existing } });
+      }
+
+      const registered = {
+        id: 'office-session-' + crypto.randomUUID(),
+        agentId: 'office-agent-' + crypto.randomUUID(),
+        canonical: RelayTestClient.slug + '/' + input.agentName + '/' + input.sessionName,
+        handle: input.agentName,
+        displayName: input.agentDisplayName,
+        createdAt: new Date().toISOString(),
+      };
+      this.officeAgents.push(registered);
+      this.officeRegistrations.push({
+        displayName: input.agentDisplayName, agentName: input.agentName,
+      });
+
+      return Response.json({ ok: true, data: { session: registered } });
+    }
+
     if (url.pathname === '/v2/account/agents') {
       this.nameDirectoryLookups += 1;
 
@@ -130,13 +172,22 @@ export class RelayTestClient {
           defaultSessionID: 'session-g', defaultSessionHandle: 'main' },
         { id: 'agent-000h', handle: 'gateway-2', displayName: '未啟用',
           defaultSessionID: null, defaultSessionHandle: null },
+        ...this.officeAgents.map((agent) => ({
+          id: agent.agentId,
+          handle: agent.handle,
+          displayName: agent.displayName,
+          defaultSessionID: agent.id,
+          defaultSessionHandle: 'main',
+          createdAt: agent.createdAt,
+        })),
       ] });
     }
 
     const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
 
     if (matched) {
-      const session = [this.sessionA, this.sessionB, this.sessionC, this.sessionD, this.sessionG, this.sessionH]
+      const session = [this.sessionA, this.sessionB, this.sessionC,
+        this.sessionD, this.sessionG, this.sessionH, ...this.officeAgents]
         .find((candidate) => candidate.id === matched[1]);
 
       if (!session) {
@@ -161,7 +212,8 @@ export class RelayTestClient {
 
     if (url.pathname === '/v2/account/addresses') {
       const input = url.searchParams.get('address');
-      const session = [this.sessionA, this.sessionB, this.sessionC, this.sessionD, this.sessionG, this.sessionH].find((item) =>
+      const session = [this.sessionA, this.sessionB, this.sessionC,
+        this.sessionD, this.sessionG, this.sessionH, ...this.officeAgents].find((item) =>
         input === item.canonical ||
         input === item.canonical.split('/').slice(0, 2).join('/') &&
           item.id !== this.sessionC.id);

@@ -688,6 +688,7 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(scenario.client.nameDirectoryLookups,
       'Every destructive name resolution must read Agent Address freshly').toBe(3);
 
+
     const roster = await scenario.client.call('token-g', 'GET',
       '/v2/gateway-teammates?session_id=session-g');
     expect(roster.status).toBe(200);
@@ -958,4 +959,197 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     await scenario.send('token-a', 'session-a', bear, 'After revocation.');
     expect(scenario.client.wakeCallbacks).toHaveLength(0);
   });
+
+  it('revoking one shared office coworker cancels only that coworker\'s pending Wake', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    expect((await scenario.invite('relay-test-org/beta/reviewer',
+      'bear-bot')).status).toBe(201);
+    expect((await scenario.invite('relay-test-org/gamma/main',
+      'analyst-bot')).status).toBe(201);
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+    expect((await scenario.approve('token-d', 'session-d')).status).toBe(200);
+
+    const bear = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: '大熊', body: 'Please call the bear.',
+      });
+    const analyst = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: 'relay-test-org/gamma/main', body: 'Please call the analyst.',
+      });
+    expect(bear.status).toBe(201);
+    expect(analyst.status).toBe(201);
+
+    await MailReceipt.confirmArrival(env, bear.body.data.id, 'webhook');
+    await MailReceipt.confirmArrival(env, analyst.body.data.id, 'webhook');
+
+    const queued = await env.DB.prepare(
+      'SELECT message_id AS messageID FROM wake_events WHERE message_id IN (?, ?) AND status = ?',
+    ).bind(bear.body.data.id, analyst.body.data.id, 'pending')
+      .all<{ messageID: string }>();
+    expect(queued.results.map((row) => row.messageID))
+      .toEqual(expect.arrayContaining([bear.body.data.id, analyst.body.data.id]));
+
+    const removed = await scenario.client.call('token-g', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-g&recipient_address=' +
+        encodeURIComponent('relay-test-org/beta/reviewer'));
+    expect(removed.status).toBe(200);
+
+    const remaining = await env.DB.prepare(
+      'SELECT message_id AS messageID FROM wake_events WHERE message_id IN (?, ?) AND status = ?',
+    ).bind(bear.body.data.id, analyst.body.data.id, 'pending')
+      .all<{ messageID: string }>();
+    expect(remaining.results.map((row) => row.messageID)).toEqual([analyst.body.data.id]);
+
+    await WakeService.dispatchDue(env);
+    expect(scenario.client.wakeCallbacks).toHaveLength(1);
+    expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
+      recipientBotID: 'analyst-bot',
+      messageID: analyst.body.data.id,
+    });
+  });
+
+  it('keeps office registration inside an authorized, verified Gateway and rejects name collisions', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const coworker = {
+      displayName: '大熊', recipientBotID: 'office-must-not-steal',
+      threadMode: 'platform',
+    };
+    const collision = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [coworker],
+      });
+
+    expect(collision.status).toBe(409);
+    expect(collision.body.error.code).toBe('office_coworker_name_conflict');
+    expect(scenario.client.officeRegistrations).toHaveLength(0);
+
+    const unverified = await scenario.client.call('token-h', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-h', {
+        coworkers: [{ ...coworker, displayName: '未登記' }],
+      });
+    expect(unverified.status).toBe(409);
+    expect(unverified.body.error.code).toBe('gateway_wake_required');
+
+    const duplicated = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [coworker, coworker],
+      });
+    expect(duplicated.status).toBe(409);
+    expect(duplicated.body.error.code).toBe('office_roster_duplicate');
+    expect(scenario.client.officeRegistrations).toHaveLength(0);
+  });
+
+  it('connects a whole native office under one authorized Gateway Wake without coworker OAuth', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const office = (coworkers: object[]) => scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', { coworkers });
+    const members = [
+      { displayName: '雲朵', recipientBotID: 'office-cloud-001', threadMode: 'platform' },
+      { displayName: '小河', recipientBotID: 'office-river-002', threadMode: 'platform' },
+    ];
+
+    const missingBeforeEnrollment = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: '雲朵', body: 'Name not yet present in the office directory.',
+      });
+    expect(missingBeforeEnrollment.status).toBe(404);
+
+    const enrolled = await office(members);
+    expect(enrolled.status).toBe(201);
+    expect(enrolled.body.data).toHaveLength(2);
+    expect(scenario.client.officeRegistrations).toHaveLength(2);
+    expect(enrolled.body.data.map((item: { recipientCanonicalAddress: string }) =>
+      item.recipientCanonicalAddress))
+      .toEqual(enrolled.body.data.map((item: { recipientCanonicalAddress: string }) =>
+        expect.stringMatching(/^relay-test-org\/office-[a-f0-9]{32}\/main$/)));
+    expect(JSON.stringify(enrolled.body)).not.toContain('private-office-resume');
+
+    const directory = await scenario.client.call('token-g', 'GET',
+      '/v2/gateway-office-coworkers?session_id=session-g');
+    expect(directory.status).toBe(200);
+    expect(directory.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displayName: '雲朵', recipientBotID: 'office-cloud-001', enabled: true,
+        recipientSessionID: enrolled.body.data[0].recipientSessionID,
+      }),
+      expect.objectContaining({
+        displayName: '小河', recipientBotID: 'office-river-002', enabled: true,
+        recipientSessionID: enrolled.body.data[1].recipientSessionID,
+      }),
+    ]));
+    expect(JSON.stringify(directory.body)).not.toContain('resumeToken');
+
+    const roster = await scenario.client.call('token-g', 'GET',
+      '/v2/gateway-teammates?session_id=session-g');
+    expect(roster.status).toBe(200);
+    for (const member of members) {
+      expect(roster.body.data).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          recipientBotID: member.recipientBotID,
+          status: 'active',
+          gatewaySessionID: 'session-g',
+        }),
+      ]));
+    }
+
+    // A registered address is a real recipient, not authorization for the
+    // office Gateway to send messages or accept work as that coworker.
+    const forbiddenVoice = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=' + enrolled.body.data[0].recipientSessionID, {
+        to: '小晴', body: 'Gateway must never speak as 雲朵.',
+      });
+    expect(forbiddenVoice.status).toBe(409);
+    expect(forbiddenVoice.body.error.code).toBe('address_authorization_failed');
+
+    const mailbox = await env.DB.prepare(
+      'SELECT mailbox_email AS email FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',
+    ).bind('org-id', roster.body.data.find(
+      (member: { recipientBotID: string }) => member.recipientBotID === 'office-cloud-001',
+    ).recipientAgentID)
+      .first<{ email: string }>();
+    expect(mailbox?.email).toBeTruthy();
+
+    const oneWake = await env.DB.prepare(
+      'SELECT COUNT(*) AS count FROM wake_subscriptions WHERE session_id IN (?, ?)',
+    ).bind(enrolled.body.data[0].recipientSessionID,
+      enrolled.body.data[1].recipientSessionID).first<{ count: number }>();
+    expect(oneWake?.count).toBe(0);
+
+    const submitted = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: '雲朵', body: '小晴直接撥給雲朵，由辦公室總機接線。',
+      });
+    expect(submitted.status).toBe(201);
+    await MailReceipt.confirmArrival(env, submitted.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    expect(scenario.client.wakeCallbacks).toHaveLength(1);
+    expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
+      event: 'nuwa.message.available',
+      recipientBotID: 'office-cloud-001',
+      recipientSessionID: enrolled.body.data[0].recipientSessionID,
+      senderSessionID: 'session-a',
+    });
+
+    const again = await office(members);
+    expect(again.status).toBe(201);
+    expect(again.body.data).toEqual(enrolled.body.data);
+    expect(scenario.client.officeRegistrations,
+      'Retried office onboarding reuses actual Agent Addresses').toHaveLength(2);
+
+    const third = await office([
+      { displayName: '山雀', recipientBotID: 'office-bird-003', threadMode: 'platform' },
+    ]);
+    expect(third.status).toBe(201);
+    expect(scenario.client.officeRegistrations).toHaveLength(3);
+  });
+
+
 });

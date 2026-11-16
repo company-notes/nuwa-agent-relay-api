@@ -11,12 +11,15 @@ const v2 = [
 
 const gateway = ['gateway_routes', 'gateway_conversations', 'gateway_first_contacts'];
 const roster = ['gateway_teammates'];
+const office = ['gateway_office_coworkers'];
 
 test('accepts only a new empty or fully migrated V2 database', () => {
   assert.equal(classifyDatabase(['d1_migrations', '_cf_KV', '_cf_METADATA']), 'empty');
   assert.equal(classifyDatabase([...v2, 'd1_migrations', '_cf_KV']), 'v2');
   assert.equal(classifyDatabase([...v2, ...gateway]), 'v2');
-  assert.equal(classifyDatabase([...v2, ...gateway, ...roster], true), 'v2');
+  assert.equal(classifyDatabase([...v2, ...gateway, ...roster, ...office], true), 'v2');
+  assert.throws(() => classifyDatabase([...v2, ...gateway, ...roster], true),
+    /Office Gateway registration migration/);
   assert.throws(() => classifyDatabase([...v2, ...gateway], true), /Gateway roster migration/);
   assert.throws(() => classifyDatabase(v2, true), /Gateway V2 migration/);
 });
@@ -30,6 +33,7 @@ test('blocks old production D1, mixed and partial schemas before migrate or depl
     [...v2, gateway[0]],
     [...v2, gateway[0], gateway[1]],
     [...v2, ...roster],
+    [...v2, ...gateway, ...office],
     ['_cf_KV', 'paired_hosts'],
     ['_cf_UNKNOWN'],
   ]) {

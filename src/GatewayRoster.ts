@@ -1,6 +1,7 @@
 import type { Env } from './Env';
 import { GatewayFirstContactMode, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
 import { APIError } from './HTTP';
+import { PlatformBotIdentity } from './PlatformBotIdentity';
 import { RecipientDirectory } from './RecipientDirectory';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 
@@ -53,12 +54,6 @@ export class GatewayRoster {
     throw new APIError(500, 'gateway_roster_invalid', 'Stored Gateway teammate state is invalid.');
   }
 
-  private static identifier(value: string, label: string) {
-    if (!/^[A-Za-z0-9._:-]{1,192}$/.test(value)) {
-      throw new APIError(400, 'invalid_gateway_binding', label + ' is not a valid platform identifier.');
-    }
-  }
-
   private static validateModes(threadMode: GatewayThreadMode, firstContactMode: GatewayFirstContactMode) {
     if (!Object.values(GatewayThreadMode).includes(threadMode) ||
         !Object.values(GatewayFirstContactMode).includes(firstContactMode) ||
@@ -101,7 +96,7 @@ export class GatewayRoster {
     threadMode: GatewayThreadMode,
     firstContactMode: GatewayFirstContactMode = GatewayFirstContactMode.Manual,
   ) {
-    GatewayRoster.identifier(recipientBotID, 'recipientBotID');
+    PlatformBotIdentity.requireID(recipientBotID, 'recipientBotID');
     GatewayRoster.validateModes(threadMode, firstContactMode);
     await this.verifiedGateway(this.identity.sessionID);
 
@@ -238,8 +233,12 @@ export class GatewayRoster {
     // A pending proposal must never erase the recipient's unrelated route.
     await this.env.DB.batch([
       this.env.DB.prepare(
-        `DELETE FROM wake_events WHERE session_id = ? AND status = 'pending'`,
-      ).bind(recipientSessionID),
+        `DELETE FROM wake_events WHERE session_id = ? AND status = 'pending'
+          AND message_id IN (
+            SELECT m.id FROM messages m JOIN threads t ON t.id = m.thread_id
+             WHERE t.org_id = ? AND m.recipient_session_id = ?
+          )`,
+      ).bind(row.gatewaySessionID, this.identity.organizationID, recipientSessionID),
       this.env.DB.prepare(
         'DELETE FROM gateway_first_contacts WHERE org_id = ? AND recipient_session_id = ?',
       ).bind(this.identity.organizationID, recipientSessionID),
@@ -249,6 +248,10 @@ export class GatewayRoster {
       this.env.DB.prepare(
         'DELETE FROM gateway_routes WHERE org_id = ? AND recipient_session_id = ? AND recipient_bot_id = ?',
       ).bind(this.identity.organizationID, recipientSessionID, row.recipientBotID),
+      this.env.DB.prepare(
+        `UPDATE gateway_office_coworkers SET activated_at = NULL
+          WHERE org_id = ? AND recipient_session_id = ?`,
+      ).bind(this.identity.organizationID, recipientSessionID),
       this.env.DB.prepare(
         'DELETE FROM gateway_teammates WHERE org_id = ? AND recipient_session_id = ?',
       ).bind(this.identity.organizationID, recipientSessionID),
