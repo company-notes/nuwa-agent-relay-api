@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "nuwa-agent-relay-api-test",
+  "main": "../src/Index.ts",
+  "compatibility_date": "2026-09-09",
+  "workers_dev": false,
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "ADDRESS_API_URL": "https://address.company-notes.com",
+    "MAILTRIGGER_API_URL": "https://route.mxnodes.com",
+    "MAILTRIGGER_AUTH_SCHEME": "Token"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nuwa-agent-relay-api-test",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../migrations"
+    }
+  ]
+}
