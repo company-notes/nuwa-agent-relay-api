@@ -1097,6 +1097,15 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       ]));
     }
 
+    // A registered address is a real recipient, not authorization for the
+    // office Gateway to send messages or accept work as that coworker.
+    const forbiddenVoice = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=' + enrolled.body.data[0].recipientSessionID, {
+        to: '小晴', body: 'Gateway must never speak as 雲朵.',
+      });
+    expect(forbiddenVoice.status).toBe(409);
+    expect(forbiddenVoice.body.error.code).toBe('address_authorization_failed');
+
     const mailbox = await env.DB.prepare(
       'SELECT mailbox_email AS email FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',
     ).bind('org-id', roster.body.data.find(
