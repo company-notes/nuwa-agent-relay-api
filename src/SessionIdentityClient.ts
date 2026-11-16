@@ -8,7 +8,7 @@ export type SessionIdentity = {
   agentID: string;
   sessionID: string;
   canonicalAddress: string;
-  agentDisplayName: string | null;
+  agentDisplayName?: string | null;
 };
 
 export type ResolvedSession = {
