@@ -1299,6 +1299,7 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === messageID)?.body)
       .toMatchObject({
         body: '請確認 NUWA-GROK-01.', senderDisplayName: '小晴-辦公室',
+        senderAuthMode: 'office-trust',
         recipientBotID: 'annie-native', relayThreadID: threadID,
       });
 
@@ -1323,7 +1324,8 @@ describe('Gateway coworker speaking scenarios', () => {
     await WakeService.dispatchDue(env);
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === replyID)?.body)
       .toMatchObject({
-        senderDisplayName: '小安-辦公室', recipientBotID: 'xiaoqing-native',
+        senderDisplayName: '小安-辦公室', senderAuthMode: 'office-trust',
+        recipientBotID: 'xiaoqing-native',
         relayThreadID: threadID,
       });
   });
