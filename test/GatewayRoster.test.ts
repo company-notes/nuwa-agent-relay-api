@@ -1132,6 +1132,8 @@ describe('Office Gateway registration and shared Wake use cases', () => {
 
     expect(scenario.client.wakeCallbacks).toHaveLength(1);
     expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
+      senderDisplayName: '小晴',
+      body: '小晴直接撥給雲朵，由辦公室總機接線。',
       event: 'nuwa.message.available',
       recipientBotID: 'office-cloud-001',
       recipientSessionID: enrolled.body.data[0].recipientSessionID,
@@ -1151,5 +1153,40 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(scenario.client.officeRegistrations).toHaveLength(3);
   });
 
+
+
+  it('enrolls one real office roster without serializing every slow provider provisioning', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    scenario.client.mailboxCreationDelayMs = 80;
+    const coworkers = Array.from({ length: 4 }, (_, index) => ({
+      displayName: 'Office parallel coworker ' + index,
+      recipientBotID: 'office-parallel-' + index,
+      threadMode: 'platform',
+    }));
+
+    const enrolled = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', { coworkers });
+
+    expect(enrolled.status, 'The whole office should be accepted together').toBe(201);
+    expect(enrolled.body.data).toHaveLength(coworkers.length);
+    expect(scenario.client.maxConcurrentMailboxCreations,
+      'Independent coworkers should not wait for each prior MailTrigger mailbox').toBeGreaterThan(1);
+
+    const office = await scenario.client.call('token-g', 'GET',
+      '/v2/gateway-office-coworkers?session_id=session-g');
+    expect(office.status).toBe(200);
+
+    for (const coworker of coworkers) {
+      expect(office.body.data,
+        'Every actual Bot should have its own active route under the verified Gateway')
+        .toEqual(expect.arrayContaining([expect.objectContaining({
+          displayName: coworker.displayName,
+          recipientBotID: coworker.recipientBotID,
+          enabled: true,
+        })]));
+    }
+  });
 
 });
