@@ -62,9 +62,8 @@ class GatewayMigrationScenario {
         WHERE type = 'table' AND name LIKE 'gateway_%' ORDER BY name`,
     ).all().map((item) => item.name);
     assert.deepEqual(gateway, [
-      'gateway_conversations', 'gateway_first_contacts', 'gateway_routes',
-      'gateway_teammates',
-      'gateway_office_coworkers',
+      'gateway_conversations', 'gateway_first_contacts',
+      'gateway_office_coworkers', 'gateway_routes', 'gateway_teammates',
     ]);
 
     this.db.prepare(
