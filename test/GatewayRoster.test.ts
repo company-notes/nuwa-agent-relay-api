@@ -688,6 +688,21 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(scenario.client.nameDirectoryLookups,
       'Every destructive name resolution must read Agent Address freshly').toBe(3);
 
+    const directory = await scenario.client.call('token-g', 'GET',
+      '/v2/gateway-office-coworkers?session_id=session-g');
+    expect(directory.status).toBe(200);
+    expect(directory.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displayName: '雲朵', recipientBotID: 'office-cloud-001', enabled: true,
+        recipientSessionID: enrolled.body.data[0].recipientSessionID,
+      }),
+      expect.objectContaining({
+        displayName: '小河', recipientBotID: 'office-river-002', enabled: true,
+        recipientSessionID: enrolled.body.data[1].recipientSessionID,
+      }),
+    ]));
+    expect(JSON.stringify(directory.body)).not.toContain('resumeToken');
+
     const roster = await scenario.client.call('token-g', 'GET',
       '/v2/gateway-teammates?session_id=session-g');
     expect(roster.status).toBe(200);
