@@ -1,6 +1,7 @@
 import type { Env } from './Env';
 import { GatewayFirstContactMode, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
 import { APIError } from './HTTP';
+import { PlatformBotIdentity } from './PlatformBotIdentity';
 import { RecipientDirectory } from './RecipientDirectory';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 
@@ -53,12 +54,6 @@ export class GatewayRoster {
     throw new APIError(500, 'gateway_roster_invalid', 'Stored Gateway teammate state is invalid.');
   }
 
-  static identifier(value: string, label: string) {
-    if (!/^[A-Za-z0-9._:-]{1,192}$/.test(value)) {
-      throw new APIError(400, 'invalid_gateway_binding', label + ' is not a valid platform identifier.');
-    }
-  }
-
   private static validateModes(threadMode: GatewayThreadMode, firstContactMode: GatewayFirstContactMode) {
     if (!Object.values(GatewayThreadMode).includes(threadMode) ||
         !Object.values(GatewayFirstContactMode).includes(firstContactMode) ||
@@ -101,7 +96,7 @@ export class GatewayRoster {
     threadMode: GatewayThreadMode,
     firstContactMode: GatewayFirstContactMode = GatewayFirstContactMode.Manual,
   ) {
-    GatewayRoster.identifier(recipientBotID, 'recipientBotID');
+    PlatformBotIdentity.requireID(recipientBotID, 'recipientBotID');
     GatewayRoster.validateModes(threadMode, firstContactMode);
     await this.verifiedGateway(this.identity.sessionID);
 
