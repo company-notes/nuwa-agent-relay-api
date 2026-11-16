@@ -3,7 +3,7 @@ import { CoworkerPassphrases, type StoredCoworkerPassphrase } from './CoworkerPa
 import type { Env } from './Env';
 import { APIError } from './HTTP';
 import {
-  SessionIdentityClient, type SessionIdentity,
+  SessionIdentityClient, type SessionIdentity, type ResolvedSession,
 } from './SessionIdentityClient';
 
 export enum SenderAuthMode {
@@ -66,6 +66,45 @@ export class GatewaySpeaker {
     return { enabled };
   }
 
+
+  private async resolveSender(from: Recipient): Promise<ResolvedSession> {
+    if (typeof from !== 'string' || from.includes('/') ||
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
+      return new AliasService(this.env, this.actor, this.address).resolve(from);
+    }
+
+    const name = from.trim().normalize('NFKC').toLowerCase();
+
+    if (!name || name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
+      throw new APIError(400, 'invalid_gateway_sender_name',
+        'Coworker display names must be one short line.');
+    }
+
+    // Resolve within this office, not a cached Organization directory: two
+    // offices may have namesakes and previous test/roster snapshots may expire.
+    const list = await this.env.DB.prepare(
+      'SELECT recipient_agent_id AS agentID, recipient_session_id AS sessionID, ' +
+      'recipient_canonical_address AS canonicalAddress, display_name AS displayName ' +
+      'FROM gateway_office_coworkers WHERE org_id = ? AND gateway_session_id = ? ' +
+      'AND activated_at IS NOT NULL',
+    ).bind(this.actor.organizationID, this.actor.sessionID).all<{
+      agentID: string; sessionID: string; canonicalAddress: string; displayName: string;
+    }>();
+    const matches = list.results.filter((entry) =>
+      entry.displayName.trim().normalize('NFKC').toLowerCase() === name);
+
+    if (matches.length !== 1) {
+      throw new APIError(403, 'gateway_sender_not_enrolled',
+        'This display name is not a unique active coworker of this Gateway.');
+    }
+
+    return {
+      id: matches[0].sessionID,
+      agentId: matches[0].agentID,
+      canonical: matches[0].canonicalAddress,
+    };
+  }
+
   async resolve(
     from: Recipient | undefined, passphrase: string | undefined,
   ): Promise<AuthorizedSpeaker | null> {
@@ -83,9 +122,7 @@ export class GatewaySpeaker {
         'Office speaking delegation requires the Gateway owner to opt in first.');
     }
 
-    const session = await new AliasService(
-      this.env, this.actor, this.address,
-    ).resolve(from);
+    const session = await this.resolveSender(from);
     const office = await this.env.DB.prepare(
       'SELECT c.recipient_agent_id AS agentID, c.recipient_session_id AS sessionID, ' +
       'c.recipient_canonical_address AS canonicalAddress, c.display_name AS displayName, ' +
