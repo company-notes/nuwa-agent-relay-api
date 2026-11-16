@@ -251,7 +251,15 @@ export class RelayAPI {
   private async officeGateway(
     request: Request, path: string, enrollment: OfficeGatewayEnrollment,
   ): Promise<Response | null> {
-    if (path !== '/v2/gateway-office-coworkers' || request.method !== 'POST') {
+    if (path !== '/v2/gateway-office-coworkers') {
+      return null;
+    }
+
+    if (request.method === 'GET') {
+      return HTTP.response(await enrollment.listOffice());
+    }
+
+    if (request.method !== 'POST') {
       return null;
     }
 
