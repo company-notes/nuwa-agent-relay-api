@@ -73,10 +73,10 @@ export class CoworkerPassphrases {
         'This coworker requires a passphrase for delegated speaking.');
     }
 
-    const supplied = CoworkerPassphrases.fromHex(
-      await CoworkerPassphrases.hash(submitted,
-        CoworkerPassphrases.fromHex(saved.passphraseSalt)),
+    const actualHash = await CoworkerPassphrases.hash(
+      submitted, CoworkerPassphrases.fromHex(saved.passphraseSalt),
     );
+    const supplied = CoworkerPassphrases.fromHex(actualHash);
     const expected = CoworkerPassphrases.fromHex(saved.passphraseHash);
     let difference = supplied.length ^ expected.length;
 
