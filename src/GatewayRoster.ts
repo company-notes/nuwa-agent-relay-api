@@ -238,8 +238,12 @@ export class GatewayRoster {
     // A pending proposal must never erase the recipient's unrelated route.
     await this.env.DB.batch([
       this.env.DB.prepare(
-        `DELETE FROM wake_events WHERE session_id = ? AND status = 'pending'`,
-      ).bind(recipientSessionID),
+        `DELETE FROM wake_events WHERE session_id = ? AND status = 'pending'
+          AND message_id IN (
+            SELECT m.id FROM messages m JOIN threads t ON t.id = m.thread_id
+             WHERE t.org_id = ? AND m.recipient_session_id = ?
+          )`,
+      ).bind(row.gatewaySessionID, this.identity.organizationID, recipientSessionID),
       this.env.DB.prepare(
         'DELETE FROM gateway_first_contacts WHERE org_id = ? AND recipient_session_id = ?',
       ).bind(this.identity.organizationID, recipientSessionID),
