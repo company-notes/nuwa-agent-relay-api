@@ -221,7 +221,8 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     const allowedWakeFields = new Set([
       'event', 'eventVersion', 'messageID', 'recipientSessionID',
       'relayThreadID', 'senderSessionID', 'senderCanonicalAddress',
-      'senderDisplayName', 'recipientAgentID', 'recipientCanonicalAddress', 'recipientBotID',
+      'senderDisplayName', 'senderAuthMode', 'recipientAgentID',
+      'recipientCanonicalAddress', 'recipientBotID',
       'body', 'recipientPlatformThreadID',
     ]);
     expect(Object.keys(scenario.client.wakeCallbacks[0].body)
