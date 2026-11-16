@@ -216,6 +216,25 @@ export class OfficeGatewayEnrollment {
     };
   }
 
+  async listOffice() {
+    const records = await this.env.DB.prepare(
+      `SELECT display_name AS displayName, recipient_bot_id AS recipientBotID,
+              recipient_session_id AS recipientSessionID,
+              recipient_canonical_address AS recipientCanonicalAddress,
+              activated_at AS activatedAt
+         FROM gateway_office_coworkers
+        WHERE org_id = ? AND gateway_session_id = ?
+        ORDER BY display_name, recipient_bot_id`,
+    ).bind(this.identity.organizationID, this.identity.sessionID).all<{
+      displayName: string; recipientBotID: string; recipientSessionID: string | null;
+      recipientCanonicalAddress: string | null; activatedAt: string | null;
+    }>();
+
+    return records.results.map(({ activatedAt, ...record }) => ({
+      ...record, enabled: activatedAt !== null,
+    }));
+  }
+
   async enrollOffice(coworkers: OfficeCoworker[]): Promise<Record<string, unknown>[]> {
     if (coworkers.length < 1 || coworkers.length > 25) {
       throw new APIError(400, 'invalid_office_roster',
