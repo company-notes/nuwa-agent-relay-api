@@ -1,7 +1,7 @@
 import { AuthorizedAgentDirectoryCache } from './AuthorizedAgentDirectoryCache';
 import { APIError } from './HTTP';
 import {
-  SessionIdentityClient, type ResolvedSession, type SessionIdentity,
+  SessionIdentityClient, type DirectoryAgent, type ResolvedSession, type SessionIdentity,
 } from './SessionIdentityClient';
 
 /** Deterministic name-to-recipient mapping inside Relay, never a Gateway LLM decision. */
@@ -27,9 +27,17 @@ export class RecipientDirectory {
         await this.address.directoryCacheScope(this.identity.organizationID),
         () => this.address.listAgents(),
       );
-    const matches = candidates.filter((agent) =>
+    const findMatches = (directory: DirectoryAgent[]) => directory.filter((agent) =>
       RecipientDirectory.normalize(agent.displayName ?? '') === requested ||
       RecipientDirectory.normalize(agent.handle) === requested);
+
+    let matches = findMatches(candidates);
+
+    // A newly enrolled office Agent may be absent from another isolate's
+    // 15-second OAuth-scoped snapshot. Refresh a miss before returning 404.
+    if (!requireFresh && matches.length === 0) {
+      matches = findMatches(await this.address.listAgents());
+    }
 
     if (matches.length === 0) {
       throw new APIError(404, 'recipient_name_not_found',
