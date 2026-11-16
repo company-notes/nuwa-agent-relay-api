@@ -1300,7 +1300,7 @@ describe('Gateway coworker speaking scenarios', () => {
     await WakeService.dispatchDue(env);
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === messageID)?.body)
       .toMatchObject({
-        body: '請確認 NUWA-GROK-01.', senderDisplayName: '小晴-辦公室',
+        body: '請確認 NUWA-GROK-01。', senderDisplayName: '小晴-辦公室',
         senderAuthMode: 'office-trust',
         recipientBotID: 'annie-native', relayThreadID: threadID,
       });
