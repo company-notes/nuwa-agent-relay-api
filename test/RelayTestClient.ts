@@ -113,14 +113,26 @@ export class RelayTestClient {
       });
     }
 
-    if (url.pathname === '/v2/account/agents' && init?.method === 'POST') {
+    const registration = url.pathname.match(
+      /^\/v2\/account\/agent-registrations\/(office-[a-f0-9]{32})$/,
+    );
+
+    if (registration && init?.method === 'PUT') {
       const input = JSON.parse(String(init.body)) as {
         agentName: string; agentDisplayName: string; sessionName: string;
       };
+      const existing = this.officeAgents.find((agent) => agent.handle === input.agentName);
 
-      if (this.officeAgents.some((agent) => agent.handle === input.agentName)) {
-        return Response.json({ ok: false, error: { code: 'identity_name_taken' } },
+      if (registration[1] !== input.agentName ||
+          (existing && (existing.displayName !== input.agentDisplayName ||
+            existing.canonical !== RelayTestClient.slug + '/' +
+            input.agentName + '/' + input.sessionName))) {
+        return Response.json({ ok: false, error: { code: 'agent_registration_conflict' } },
           { status: 409 });
+      }
+
+      if (existing) {
+        return Response.json({ ok: true, data: { session: existing } });
       }
 
       const registered = {
@@ -136,12 +148,7 @@ export class RelayTestClient {
         displayName: input.agentDisplayName, agentName: input.agentName,
       });
 
-      return Response.json({
-        ok: true, data: {
-          session: registered,
-          resumeToken: 'private-office-resume-must-not-reach-model',
-        },
-      });
+      return Response.json({ ok: true, data: { session: registered } });
     }
 
     if (url.pathname === '/v2/account/agents') {
