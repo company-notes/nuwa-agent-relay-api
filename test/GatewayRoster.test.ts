@@ -958,6 +958,39 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     await scenario.send('token-a', 'session-a', bear, 'After revocation.');
     expect(scenario.client.wakeCallbacks).toHaveLength(0);
   });
+  it('keeps office registration inside an authorized, verified Gateway and rejects name collisions', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const coworker = {
+      displayName: '大熊', recipientBotID: 'office-must-not-steal',
+      threadMode: 'platform',
+    };
+    const collision = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [coworker],
+      });
+
+    expect(collision.status).toBe(409);
+    expect(collision.body.error.code).toBe('office_coworker_name_conflict');
+    expect(scenario.client.officeRegistrations).toHaveLength(0);
+
+    const unverified = await scenario.client.call('token-h', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-h', {
+        coworkers: [{ ...coworker, displayName: '未登記' }],
+      });
+    expect(unverified.status).toBe(409);
+    expect(unverified.body.error.code).toBe('gateway_wake_required');
+
+    const duplicated = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [coworker, coworker],
+      });
+    expect(duplicated.status).toBe(409);
+    expect(duplicated.body.error.code).toBe('office_roster_duplicate');
+    expect(scenario.client.officeRegistrations).toHaveLength(0);
+  });
+
   it('connects a whole native office under one authorized Gateway Wake without coworker OAuth', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
@@ -995,8 +1028,9 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     const recipient = enrolled.body.data[0];
     const mailbox = await env.DB.prepare(
       'SELECT mailbox_email AS email FROM agent_mailboxes WHERE org_id = ? AND agent_id = ?',
-    ).bind('org-id', recipient.recipientCanonicalAddress === undefined
-      ? '' : roster.body.data[0].recipientAgentID)
+    ).bind('org-id', roster.body.data.find(
+      (member: { recipientBotID: string }) => member.recipientBotID === 'office-cloud-001',
+    ).recipientAgentID)
       .first<{ email: string }>();
     expect(mailbox?.email).toBeTruthy();
 
@@ -1035,37 +1069,5 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(scenario.client.officeRegistrations).toHaveLength(3);
   });
 
-  it('keeps office registration inside an authorized, verified Gateway and rejects name collisions', async () => {
-    const scenario = new GatewayRosterScenario();
-    await scenario.setup();
-
-    const coworker = {
-      displayName: '大熊', recipientBotID: 'office-must-not-steal',
-      threadMode: 'platform',
-    };
-    const collision = await scenario.client.call('token-g', 'POST',
-      '/v2/gateway-office-coworkers?session_id=session-g', {
-        coworkers: [coworker],
-      });
-
-    expect(collision.status).toBe(409);
-    expect(collision.body.error.code).toBe('office_coworker_name_conflict');
-    expect(scenario.client.officeRegistrations).toHaveLength(0);
-
-    const unverified = await scenario.client.call('token-h', 'POST',
-      '/v2/gateway-office-coworkers?session_id=session-h', {
-        coworkers: [{ ...coworker, displayName: '未登記' }],
-      });
-    expect(unverified.status).toBe(409);
-    expect(unverified.body.error.code).toBe('gateway_wake_required');
-
-    const duplicated = await scenario.client.call('token-g', 'POST',
-      '/v2/gateway-office-coworkers?session_id=session-g', {
-        coworkers: [coworker, coworker],
-      });
-    expect(duplicated.status).toBe(409);
-    expect(duplicated.body.error.code).toBe('office_roster_duplicate');
-    expect(scenario.client.officeRegistrations).toHaveLength(0);
-  });
 
 });
