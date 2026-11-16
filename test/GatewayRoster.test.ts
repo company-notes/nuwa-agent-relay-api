@@ -1379,6 +1379,21 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(secrets?.hash).toBeTruthy();
     expect(JSON.stringify(secrets)).not.toContain('xiaoqing-private-phrase-2026');
 
+
+    const aliasTime = new Date().toISOString();
+    await env.DB.prepare(
+      'INSERT INTO agent_aliases ' +
+      '(id, org_id, agent_id, session_id, provider, external_id, verified_at, created_at) ' +
+      'SELECT ?, org_id, recipient_agent_id, recipient_session_id, ?, ?, ?, ? ' +
+      'FROM gateway_office_coworkers WHERE org_id = ? AND gateway_session_id = ? ' +
+      'AND recipient_bot_id = ?',
+    ).bind(crypto.randomUUID(), 'email', 'xiaoqing-office@example.org',
+      aliasTime, aliasTime, 'org-id', 'session-g', 'xiaoqing-native').run();
+
+    const emailed = await send('xiaoqing-office@example.org',
+      'xiaoqing-private-phrase-2026');
+    expect(emailed.status).toBe(201);
+
     const replaced = await scenario.client.call('token-g', 'PUT',
       '/v2/gateway-office-coworkers/xiaoqing-native/passphrase?session_id=session-g', {
         passphrase: 'xiaoqing-new-private-phrase-2026',
