@@ -958,6 +958,57 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     await scenario.send('token-a', 'session-a', bear, 'After revocation.');
     expect(scenario.client.wakeCallbacks).toHaveLength(0);
   });
+  it('revoking one shared office coworker cancels only that coworker\'s pending Wake', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    expect((await scenario.invite('relay-test-org/beta/reviewer',
+      'bear-bot')).status).toBe(201);
+    expect((await scenario.invite('relay-test-org/gamma/main',
+      'analyst-bot')).status).toBe(201);
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+    expect((await scenario.approve('token-d', 'session-d')).status).toBe(200);
+
+    const bear = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: '大熊', body: 'Please call the bear.',
+      });
+    const analyst = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: 'relay-test-org/gamma/main', body: 'Please call the analyst.',
+      });
+    expect(bear.status).toBe(201);
+    expect(analyst.status).toBe(201);
+
+    await MailReceipt.confirmArrival(env, bear.body.data.id, 'webhook');
+    await MailReceipt.confirmArrival(env, analyst.body.data.id, 'webhook');
+
+    const queued = await env.DB.prepare(
+      'SELECT message_id AS messageID FROM wake_events WHERE message_id IN (?, ?) AND status = ?',
+    ).bind(bear.body.data.id, analyst.body.data.id, 'pending')
+      .all<{ messageID: string }>();
+    expect(queued.results.map((row) => row.messageID))
+      .toEqual(expect.arrayContaining([bear.body.data.id, analyst.body.data.id]));
+
+    const removed = await scenario.client.call('token-g', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-g&recipient_address=' +
+        encodeURIComponent('relay-test-org/beta/reviewer'));
+    expect(removed.status).toBe(200);
+
+    const remaining = await env.DB.prepare(
+      'SELECT message_id AS messageID FROM wake_events WHERE message_id IN (?, ?) AND status = ?',
+    ).bind(bear.body.data.id, analyst.body.data.id, 'pending')
+      .all<{ messageID: string }>();
+    expect(remaining.results.map((row) => row.messageID)).toEqual([analyst.body.data.id]);
+
+    await WakeService.dispatchDue(env);
+    expect(scenario.client.wakeCallbacks).toHaveLength(1);
+    expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
+      recipientBotID: 'analyst-bot',
+      messageID: analyst.body.data.id,
+    });
+  });
+
   it('keeps office registration inside an authorized, verified Gateway and rejects name collisions', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
