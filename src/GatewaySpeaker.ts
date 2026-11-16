@@ -131,6 +131,9 @@ export class GatewaySpeaker {
       'ON t.org_id = c.org_id AND t.gateway_session_id = c.gateway_session_id ' +
       'AND t.recipient_session_id = c.recipient_session_id ' +
       'AND t.recipient_bot_id = c.recipient_bot_id AND t.status = \'active\' ' +
+      'JOIN gateway_routes r ON r.org_id = c.org_id ' +
+      'AND r.recipient_session_id = c.recipient_session_id ' +
+      'AND r.recipient_bot_id = c.recipient_bot_id ' +
       'WHERE c.org_id = ? AND c.gateway_session_id = ? ' +
       'AND c.recipient_session_id = ? AND c.recipient_agent_id = ? ' +
       'AND c.recipient_canonical_address = ? AND c.activated_at IS NOT NULL',
