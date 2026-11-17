@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { AgentMailboxService } from '../src/AgentMailboxService';
 import { GatewayFirstContacts } from '../src/GatewayFirstContacts';
 import { MailReceipt } from '../src/MailReceipt';
 import { WakeService } from '../src/WakeService';
@@ -1263,12 +1264,19 @@ describe('Gateway coworker speaking scenarios', () => {
 
     // A normal call must use the mailbox and routes already configured at enrollment.
     scenario.client.failNextRouteLookup = true;
+    const senderLookup = vi.spyOn(AgentMailboxService.prototype, 'ready');
+    const recipientLookup = vi.spyOn(AgentMailboxService.prototype, 'require');
 
+    const sendStarted = performance.now();
     const sent = await scenario.client.call('token-g', 'POST',
       '/v2/messages?session_id=session-g', {
         from: '小晴-辦公室', to: '小安-辦公室', body: '請確認 NUWA-GROK-01。',
       });
+    const sendMS = performance.now() - sendStarted;
     expect(sent.status).toBe(201);
+    expect(senderLookup).toHaveBeenCalledTimes(1);
+    expect(recipientLookup).toHaveBeenCalledTimes(1);
+
     const messageID = sent.body.data.id as string;
     const threadID = sent.body.data.threadId as string;
 
@@ -1295,12 +1303,21 @@ describe('Gateway coworker speaking scenarios', () => {
         recipientBotID: 'annie-native', relayThreadID: threadID,
       });
 
+    senderLookup.mockClear();
+    recipientLookup.mockClear();
+
+    const replyStarted = performance.now();
     const replied = await scenario.client.call('token-g', 'POST',
       '/v2/threads/' + threadID + '/messages?session_id=session-g', {
         from: '小安-辦公室', body: '小晴，已收到。',
       });
+    const replyMS = performance.now() - replyStarted;
     expect(replied.status).toBe(201);
+    expect(senderLookup).toHaveBeenCalledTimes(1);
+    expect(recipientLookup).toHaveBeenCalledTimes(1);
     expect(scenario.client.failNextRouteLookup).toBe(true);
+
+    console.info('OFFICE_MESSAGE_TIMING ' + JSON.stringify({ sendMS, replyMS }));
 
     const replyID = replied.body.data.id as string;
     const reply = await env.DB.prepare(
