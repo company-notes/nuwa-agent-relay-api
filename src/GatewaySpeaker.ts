@@ -1,6 +1,7 @@
 import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
 import { APIError } from './HTTP';
+import { PlatformBotIdentity } from './PlatformBotIdentity';
 import {
   SessionIdentityClient, type SessionIdentity,
 } from './SessionIdentityClient';
@@ -35,7 +36,7 @@ export class GatewaySpeaker {
     private readonly address: SessionIdentityClient,
   ) {}
 
-  private async officeSenders(): Promise<OfficeSender[]> {
+  private async officeSenders(botID?: string): Promise<OfficeSender[]> {
     const rows = await this.env.DB.prepare(
       `SELECT c.recipient_agent_id AS agentID, c.recipient_session_id AS sessionID,
               c.recipient_canonical_address AS canonicalAddress, c.display_name AS displayName,
@@ -48,16 +49,21 @@ export class GatewaySpeaker {
                   AND t.recipient_bot_id = c.recipient_bot_id AND t.status = 'active'
               ) AS ready
          FROM gateway_office_coworkers c
-        WHERE c.org_id = ? AND c.gateway_session_id = ? AND c.activated_at IS NOT NULL`,
-    ).bind(this.actor.organizationID, this.actor.sessionID).all<OfficeSender>();
+        WHERE c.org_id = ? AND c.gateway_session_id = ? AND c.activated_at IS NOT NULL
+          ${botID === undefined ? '' : 'AND c.recipient_bot_id = ?'}`,
+    ).bind(this.actor.organizationID, this.actor.sessionID,
+      ...(botID === undefined ? [] : [botID])).all<OfficeSender>();
 
     return rows.results;
   }
 
   private async resolveSender(from: Recipient): Promise<OfficeSender> {
+    const botID = typeof from === 'string' ? PlatformBotIdentity.readSelector(from) : null;
     let matches: OfficeSender[];
 
-    if (typeof from !== 'string' || from.includes('/') ||
+    if (botID !== null) {
+      matches = await this.officeSenders(botID);
+    } else if (typeof from !== 'string' || from.includes('/') ||
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
       const session = await new AliasService(this.env, this.actor, this.address).resolve(from);
       matches = (await this.officeSenders()).filter((entry) =>

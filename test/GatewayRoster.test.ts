@@ -1441,4 +1441,90 @@ describe('Gateway coworker speaking scenarios', () => {
       });
     expect(anotherGateway.status).toBe(403);
   });
+
+  it('uses registered native Bot IDs for sending, replying and reading without name lookup', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const senderBotID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const recipientBotID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const registered = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [
+          { displayName: 'Brian | Administration', recipientBotID: senderBotID, threadMode: 'platform' },
+          { displayName: 'Nora | Human Resources', recipientBotID, threadMode: 'platform' },
+        ],
+      });
+    expect(registered.status).toBe(201);
+    const [sender, recipient] = registered.body.data;
+    const directoryLookups = scenario.client.nameDirectoryLookups;
+
+    const sent = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        from: senderBotID, to: recipientBotID, body: 'Could you confirm receipt?',
+      });
+    expect(sent.status, 'Native IDs must resolve the enrolled coworkers').toBe(201);
+    expect(scenario.client.nameDirectoryLookups).toBe(directoryLookups);
+    const threadID = sent.body.data.threadId as string;
+
+    await MailReceipt.confirmArrival(env, sent.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === sent.body.data.id)?.body)
+      .toMatchObject({ recipientBotID, relayThreadID: threadID, senderDisplayName: 'Brian | Administration' });
+
+    const reply = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + threadID + '/messages?session_id=session-g', {
+        from: 'bot:' + recipientBotID, body: 'Confirmed.',
+      });
+    expect(reply.status).toBe(201);
+    expect(reply.body.data.threadId).toBe(threadID);
+
+    const received = await scenario.client.call('token-g', 'GET',
+      '/v2/messages/' + reply.body.data.id + '?session_id=session-g&from=' + senderBotID);
+    expect(received.status).toBe(200);
+    expect(received.body.data.body).toBe('Confirmed.');
+
+    const rows = await env.DB.prepare(
+      `SELECT sender_session_id AS senderSessionID, recipient_session_id AS recipientSessionID,
+              actor_session_id AS actorSessionID FROM messages WHERE id IN (?, ?)`,
+    ).bind(sent.body.data.id, reply.body.data.id).all();
+    expect(rows.results).toEqual(expect.arrayContaining([
+      { senderSessionID: sender.recipientSessionID,
+        recipientSessionID: recipient.recipientSessionID, actorSessionID: 'session-g' },
+      { senderSessionID: recipient.recipientSessionID,
+        recipientSessionID: sender.recipientSessionID, actorSessionID: 'session-g' },
+    ]));
+
+    const otherOffice = await scenario.client.call('token-h', 'POST',
+      '/v2/messages?session_id=session-h', {
+        from: senderBotID, to: recipientBotID, body: 'Unapproved sender.',
+      });
+    expect(otherOffice.status).toBe(403);
+
+    const unknown = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        from: senderBotID, to: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        body: 'An unregistered group must not be treated as a Bot.',
+      });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.error.code).toBe('recipient_bot_not_found');
+
+    const duplicate = await scenario.client.call('token-b', 'PUT',
+      '/v2/gateway-route?session_id=session-b', { recipientBotID, threadMode: 'platform' });
+    expect(duplicate.status).toBe(200);
+
+    try {
+      const ambiguous = await scenario.client.call('token-g', 'POST',
+        '/v2/messages?session_id=session-g', {
+          from: senderBotID, to: recipientBotID, body: 'Ambiguous native ID.',
+        });
+      expect(ambiguous.status).toBe(409);
+      expect(ambiguous.body.error.code).toBe('recipient_bot_ambiguous');
+      expect(scenario.client.deliveries).toHaveLength(2);
+    } finally {
+      await scenario.client.call('token-b', 'DELETE', '/v2/gateway-route?session_id=session-b');
+    }
+  });
+
 });
