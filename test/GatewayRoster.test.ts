@@ -1261,6 +1261,9 @@ describe('Gateway coworker speaking scenarios', () => {
       });
     expect(office.status).toBe(201);
 
+    // A normal call must use the mailbox and routes already configured at enrollment.
+    scenario.client.failNextRouteLookup = true;
+
     const sent = await scenario.client.call('token-g', 'POST',
       '/v2/messages?session_id=session-g', {
         from: '小晴-辦公室', to: '小安-辦公室', body: '請確認 NUWA-GROK-01。',
@@ -1297,6 +1300,8 @@ describe('Gateway coworker speaking scenarios', () => {
         from: '小安-辦公室', body: '小晴，已收到。',
       });
     expect(replied.status).toBe(201);
+    expect(scenario.client.failNextRouteLookup).toBe(true);
+
     const replyID = replied.body.data.id as string;
     const reply = await env.DB.prepare(
       'SELECT sender_session_id AS senderSessionID, recipient_session_id AS recipientSessionID, ' +
