@@ -432,6 +432,15 @@ export class RelayAPI {
       this.env.ADDRESS_API_URL, authorization, transport.request.bind(transport),
     );
     const identity = await address.authorize(sessionID, runtimeToken);
+    const response = await this.authorized(request, path, identity, address);
+    response.headers.set('x-nuwa-lease-expires-at', identity.leaseExpiresAt);
+
+    return response;
+  }
+
+  private async authorized(
+    request: Request, path: string, identity: SessionIdentity, address: SessionIdentityClient,
+  ): Promise<Response> {
     const relay = new RelayV2Service(this.env, identity, address);
     const aliases = new AliasService(this.env, identity, address);
     const gatewayBindings = new GatewayBindings(this.env, identity, address);
