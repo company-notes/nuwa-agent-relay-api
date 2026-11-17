@@ -57,6 +57,7 @@ export class GatewaySpeaker {
     ).bind(this.actor.organizationID, this.actor.sessionID).all<{
       agentID: string; sessionID: string; canonicalAddress: string; displayName: string;
     }>();
+
     const matches = list.results.filter((entry) =>
       entry.displayName.trim().normalize('NFKC').toLowerCase() === name);
 
