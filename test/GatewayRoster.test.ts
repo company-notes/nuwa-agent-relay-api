@@ -19,9 +19,6 @@ class GatewayRosterScenario {
       WHERE org_id = ? AND gateway_session_id = ? AND recipient_session_id IS NOT NULL`;
 
     await env.DB.batch([
-      env.DB.prepare(
-        'DELETE FROM gateway_office_delegation WHERE org_id = ? AND gateway_session_id = ?',
-      ).bind(organizationID, gatewaySessionID),
       env.DB.prepare('DELETE FROM wake_events WHERE session_id = ?')
         .bind(gatewaySessionID),
 
