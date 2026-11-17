@@ -105,14 +105,18 @@ export class RelayAPI {
     const messageID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)$/);
 
     if (messageID && request.method === 'GET') {
-      const rawLimit = new URL(request.url).searchParams.get('context_limit');
+      const query = new URL(request.url).searchParams;
+      const rawLimit = query.get('context_limit');
       const contextLimit = rawLimit === null ? 0 : Number(rawLimit);
 
       if (rawLimit !== null && !/^(?:0|[1-9]|1[0-2])$/.test(rawLimit)) {
         throw new APIError(400, 'invalid_context_limit', 'Context limit must be 0–12.');
       }
 
-      return HTTP.response(await relay.message(messageID, contextLimit));
+      const from = query.get('from');
+
+      return HTTP.response(await relay.message(messageID, contextLimit,
+        RelayAPI.speaker(from === null ? {} : { from })));
     }
 
     const readID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)\/read-receipt$/);
