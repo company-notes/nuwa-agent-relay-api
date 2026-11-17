@@ -1267,6 +1267,9 @@ describe('Gateway coworker speaking scenarios', () => {
     const senderLookup = vi.spyOn(AgentMailboxService.prototype, 'ready');
     const recipientLookup = vi.spyOn(AgentMailboxService.prototype, 'require');
 
+    const beforeStatus = scenario.client.accountStatusLookups;
+    const beforeSessions = scenario.client.sessionLookups;
+    const beforeLeases = scenario.client.runtimeLeaseLookups;
     const sendStarted = performance.now();
     const sent = await scenario.client.call('token-g', 'POST',
       '/v2/messages?session_id=session-g', {
@@ -1276,6 +1279,9 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(sent.status).toBe(201);
     expect(senderLookup).toHaveBeenCalledTimes(1);
     expect(recipientLookup).toHaveBeenCalledTimes(1);
+    expect(scenario.client.accountStatusLookups - beforeStatus).toBe(0);
+    expect(scenario.client.sessionLookups - beforeSessions).toBe(0);
+    expect(scenario.client.runtimeLeaseLookups - beforeLeases).toBe(1);
 
     const messageID = sent.body.data.id as string;
     const threadID = sent.body.data.threadId as string;
