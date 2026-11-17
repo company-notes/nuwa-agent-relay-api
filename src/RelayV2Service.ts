@@ -195,7 +195,7 @@ export class RelayV2Service {
 
     const selected = await new GatewaySpeaker(
       this.env, this.identity, this.address,
-    ).resolve(request.from, request.passphrase);
+    ).resolve(request.from);
 
     if (selected) {
       return new RelayV2Service(
@@ -270,7 +270,7 @@ export class RelayV2Service {
   ) {
     const selected = await new GatewaySpeaker(
       this.env, this.identity, this.address,
-    ).resolve(speaker.from, speaker.passphrase);
+    ).resolve(speaker.from);
 
     if (selected) {
       return new RelayV2Service(
