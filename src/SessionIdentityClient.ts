@@ -18,9 +18,13 @@ export type ResolvedSession = {
   agentDisplayName?: string | null;
 };
 
+type AccountStatus = {
+  organization: { id: string; slug: string } | null;
+};
+
 type Lease = {
   expiresAt: string;
-  organization: { id: string; slug: string } | null;
+  organization: AccountStatus['organization'];
   session: ResolvedSession;
 };
 
@@ -146,6 +150,10 @@ export class SessionIdentityClient {
     );
 
     return SessionIdentityClient.requireSession(registered.session);
+  }
+
+  async status(): Promise<AccountStatus> {
+    return this.request<AccountStatus>('GET', '/v2/account/status');
   }
 
   async session(sessionID: string): Promise<ResolvedSession> {
