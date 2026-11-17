@@ -18,13 +18,9 @@ export type ResolvedSession = {
   agentDisplayName?: string | null;
 };
 
-type AccountStatus = {
-  organization: { id: string; slug: string } | null;
-};
-
 type Lease = {
   expiresAt: string;
-  organization: AccountStatus['organization'];
+  organization: { id: string; slug: string } | null;
   session: ResolvedSession;
 };
 
@@ -112,10 +108,6 @@ export class SessionIdentityClient {
     }
 
     return session;
-  }
-
-  async status(): Promise<{ organization: { id: string; slug: string } | null }> {
-    return this.request<AccountStatus>('GET', '/v2/account/status');
   }
 
   /** Cache identity is scoped to the OAuth bearer and verified Organization. */
