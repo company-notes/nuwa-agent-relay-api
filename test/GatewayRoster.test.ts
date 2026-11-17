@@ -1322,6 +1322,23 @@ describe('Gateway coworker speaking scenarios', () => {
         recipientBotID: 'xiaoqing-native',
         relayThreadID: threadID,
       });
+
+    const messagePath = '/v2/messages/' + replyID + '?session_id=session-g';
+    const unreadable = await scenario.client.call('token-g', 'GET', messagePath);
+    expect(unreadable.status).toBe(404);
+
+    const ownMessage = await scenario.client.call('token-g', 'GET',
+      messagePath + '&from=' + encodeURIComponent('小晴-辦公室') + '&context_limit=8');
+    expect(ownMessage.status).toBe(200);
+    expect(ownMessage.body.data).toMatchObject({
+      id: replyID, threadId: threadID, body: '小晴，已收到。',
+      recipientSessionID: office.body.data[0].recipientSessionID,
+      recentThreadMessages: [expect.objectContaining({ id: messageID })],
+    });
+
+    const unregistered = await scenario.client.call('token-g', 'GET',
+      messagePath + '&from=' + encodeURIComponent('未登記同事'));
+    expect(unregistered.status).toBe(403);
   });
 
   it('lets registered office coworkers send and reply without opt-in or passphrases', async () => {
