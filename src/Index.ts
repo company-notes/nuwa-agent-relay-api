@@ -1,9 +1,8 @@
 import { AliasService } from './AliasService';
 import { AgentAddressTransport } from './AgentAddressTransport';
-import { CoworkerPassphrases } from './CoworkerPassphrases';
 import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
-import { GatewaySpeaker, type SpeakerRequest } from './GatewaySpeaker';
+import type { SpeakerRequest } from './GatewaySpeaker';
 import { GatewayModeCodec } from './GatewayModeCodec';
 import { GatewayRoster } from './GatewayRoster';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
@@ -34,9 +33,6 @@ export class RelayAPI {
   private static speaker(data: JSONRecord): SpeakerRequest {
     return {
       ...(data.from === undefined ? {} : { from: AliasService.readRecipient(data.from) }),
-      ...(data.passphrase === undefined ? {} : {
-        passphrase: HTTP.requiredString(data, 'passphrase', 128),
-      }),
     };
   }
 
@@ -263,43 +259,7 @@ export class RelayAPI {
 
   private async officeGateway(
     request: Request, path: string, enrollment: OfficeGatewayEnrollment,
-    speaker: GatewaySpeaker, passphrases: CoworkerPassphrases,
   ): Promise<Response | null> {
-    if (path === '/v2/gateway-office-delegation') {
-      if (request.method === 'GET') {
-        return HTTP.response(await speaker.status());
-      }
-
-      if (request.method === 'PUT') {
-        const data = await HTTP.json(request);
-
-        if (typeof data.enabled !== 'boolean') {
-          throw new APIError(400, 'invalid_delegation_setting',
-            'Office speaking delegation requires an explicit Boolean enabled value.');
-        }
-
-        return HTTP.response(await speaker.configure(data.enabled));
-      }
-
-      return null;
-    }
-
-    const coworkerID = RelayAPI.match(
-      path, /^\/v2\/gateway-office-coworkers\/([^/]+)\/passphrase$/,
-    );
-
-    if (coworkerID && request.method === 'PUT') {
-      const data = await HTTP.json(request);
-
-      return HTTP.response(await passphrases.set(
-        coworkerID, HTTP.requiredString(data, 'passphrase', 128),
-      ));
-    }
-
-    if (coworkerID && request.method === 'DELETE') {
-      return HTTP.response(await passphrases.clear(coworkerID));
-    }
-
     if (path !== '/v2/gateway-office-coworkers') {
       return null;
     }
@@ -321,7 +281,6 @@ export class RelayAPI {
 
     const coworkers: OfficeCoworker[] = data.coworkers.map((record: JSONRecord) => ({
       displayName: HTTP.requiredString(record, 'displayName', 120),
-      passphrase: HTTP.optionalString(record, 'passphrase', 128) ?? undefined,
       recipientBotID: HTTP.requiredString(record, 'recipientBotID', 192),
       threadMode: GatewayModeCodec.readThreadMode(HTTP.requiredString(record, 'threadMode', 32)),
       firstContactMode: GatewayModeCodec.readFirstContactMode(
@@ -474,8 +433,6 @@ export class RelayAPI {
     const gatewayBindings = new GatewayBindings(this.env, identity, address);
     const gatewayRoster = new GatewayRoster(this.env, identity, address);
     const officeGateway = new OfficeGatewayEnrollment(this.env, identity, address);
-    const gatewaySpeaker = new GatewaySpeaker(this.env, identity, address);
-    const passphrases = new CoworkerPassphrases(this.env, identity);
 
     if (path === '/v2/agent-mailboxes' && request.method === 'POST') {
       return HTTP.response(await relay.provisionMailbox(), 201);
@@ -497,7 +454,7 @@ export class RelayAPI {
       () => this.threads(request, path, relay),
       () => this.gateway(request, path, gatewayBindings),
       () => this.gatewayTeammates(request, path, gatewayRoster),
-      () => this.officeGateway(request, path, officeGateway, gatewaySpeaker, passphrases),
+      () => this.officeGateway(request, path, officeGateway),
       () => this.wake(request, path, identity),
     ];
 
