@@ -1,4 +1,4 @@
-import { AgentMailboxService } from './AgentMailboxService';
+import { AgentMailboxService, type DeliveryMailboxes } from './AgentMailboxService';
 import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
 import { GatewaySpeaker, SenderAuthMode, type SpeakerRequest } from './GatewaySpeaker';
@@ -94,9 +94,9 @@ export class RelayV2Service {
     subject: string,
     body: string,
     artifactLinks: string[],
+    mailboxes: DeliveryMailboxes,
   ): Promise<{ id: string; threadId: string; messageId: string }> {
-    const sender = await this.mailboxes.ready(this.identity.organizationID, this.identity.agentID);
-    const recipient = await this.mailboxes.require(this.identity.organizationID, recipientAgentID);
+    const { sender, recipient } = mailboxes;
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
 
@@ -215,8 +215,9 @@ export class RelayV2Service {
       typeof request.to === 'string' && request.to.split('/').length === 2;
     const recipientSessionID = agentHandoff ? null : recipient.id;
 
-    await this.mailboxes.ready(this.identity.organizationID, this.identity.agentID);
-    await this.mailboxes.require(this.identity.organizationID, recipient.agentId);
+    const mailboxes = await this.mailboxes.forDelivery(
+      this.identity.organizationID, this.identity.agentID, recipient.agentId,
+    );
 
     const thread: ThreadRow = {
       id: crypto.randomUUID(),
@@ -243,7 +244,7 @@ export class RelayV2Service {
 
     return this.deliver(
       thread, recipient.agentId, recipientSessionID, kind,
-      request.subject, request.body, request.artifactLinks,
+      request.subject, request.body, request.artifactLinks, mailboxes,
     );
   }
 
@@ -298,8 +299,12 @@ export class RelayV2Service {
       throw new APIError(409, 'handoff_not_accepted', 'An Agent handoff must be accepted before replies.');
     }
 
+    const mailboxes = await this.mailboxes.forDelivery(
+      this.identity.organizationID, this.identity.agentID, toAgentID,
+    );
+
     return this.deliver(thread, toAgentID, toSessionID, 'reply',
-      subject ?? 'Re: Agent Relay thread', body, artifactLinks);
+      subject ?? 'Re: Agent Relay thread', body, artifactLinks, mailboxes);
   }
 
   async acceptHandoff(messageID: string) {

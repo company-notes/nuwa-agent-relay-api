@@ -7,6 +7,8 @@ type MailboxRow = {
   mailboxEmail: string;
 };
 
+export type DeliveryMailboxes = { sender: MailboxRow; recipient: MailboxRow };
+
 export class AgentMailboxService {
   private readonly mail: MailTriggerClient;
 
@@ -49,6 +51,15 @@ export class AgentMailboxService {
     const mailbox = await this.provision(organizationID, agentID);
 
     return { mailboxID: mailbox.mailboxId, mailboxEmail: mailbox.mailboxEmail };
+  }
+
+  async forDelivery(
+    organizationID: string, senderAgentID: string, recipientAgentID: string,
+  ): Promise<DeliveryMailboxes> {
+    const sender = await this.ready(organizationID, senderAgentID);
+    const recipient = await this.require(organizationID, recipientAgentID);
+
+    return { sender, recipient };
   }
 
   async provision(organizationID: string, agentID: string): Promise<ManagedMailbox> {
