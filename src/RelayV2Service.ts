@@ -95,7 +95,7 @@ export class RelayV2Service {
     body: string,
     artifactLinks: string[],
   ): Promise<{ id: string; threadId: string; messageId: string }> {
-    const sender = await this.provisionMailbox();
+    const sender = await this.mailboxes.ready(this.identity.organizationID, this.identity.agentID);
     const recipient = await this.mailboxes.require(this.identity.organizationID, recipientAgentID);
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
@@ -114,7 +114,7 @@ export class RelayV2Service {
       this.actorSessionID ?? this.identity.sessionID, this.senderAuthMode).run();
 
     return this.submitStoredMessage(id, thread, recipientAgentID, recipientSessionID,
-      kind, subject, body, artifactLinks, sender.mailboxId, recipient.mailboxEmail);
+      kind, subject, body, artifactLinks, sender.mailboxID, recipient.mailboxEmail);
   }
 
   private async submitStoredMessage(
@@ -215,7 +215,7 @@ export class RelayV2Service {
       typeof request.to === 'string' && request.to.split('/').length === 2;
     const recipientSessionID = agentHandoff ? null : recipient.id;
 
-    await this.provisionMailbox();
+    await this.mailboxes.ready(this.identity.organizationID, this.identity.agentID);
     await this.mailboxes.require(this.identity.organizationID, recipient.agentId);
 
     const thread: ThreadRow = {
