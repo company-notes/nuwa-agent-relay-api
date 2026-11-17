@@ -50,6 +50,9 @@ export class RelayTestClient {
   failNextWake = false;
   redirectNextWake = false;
   failAddressStatus = false;
+  accountStatusLookups = 0;
+  sessionLookups = 0;
+  runtimeLeaseLookups = 0;
   failPublicAddressRequests = false;
   failNextRouteCreation = false;
   failNextRouteLookup = false;
@@ -105,6 +108,8 @@ export class RelayTestClient {
     }
 
     if (url.pathname === '/v2/account/status') {
+      this.accountStatusLookups += 1;
+
       if (this.failAddressStatus) {
         return Response.json({ ok: false, error: { code: 'unavailable' } }, { status: 503 });
       }
@@ -202,6 +207,12 @@ export class RelayTestClient {
       }
 
       if (matched[2]) {
+        this.runtimeLeaseLookups += 1;
+
+        if (this.failAddressStatus) {
+          return Response.json({ ok: false, error: { code: 'unavailable' } }, { status: 503 });
+        }
+
         const provided = JSON.parse(String(init?.body)) as { runtimeToken: string };
         const expected = session.id.replace('session-', 'runtime-');
 
@@ -210,9 +221,19 @@ export class RelayTestClient {
         }
 
         return Response.json({
-          ok: true, data: { expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() },
+          ok: true, data: {
+            expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+            ...(url.searchParams.get('include_identity') === '1' ? {
+              session,
+              organization: token === 'Bearer token-foreign'
+                ? { id: 'org-other', slug: 'other-organization' }
+                : { id: 'org-id', slug: RelayTestClient.slug },
+            } : {}),
+          },
         });
       }
+
+      this.sessionLookups += 1;
 
       return Response.json({ ok: true, data: session });
     }
