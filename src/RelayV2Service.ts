@@ -398,7 +398,14 @@ export class RelayV2Service {
     'm.subject, m.body, m.artifacts_json AS artifactsJSON, ' +
     'm.delivery_status AS deliveryStatus, m.created_at AS createdAt';
 
-  async message(messageID: string, contextLimit = 0): Promise<JSONRecord> {
+  async message(
+    messageID: string, contextLimit = 0, speaker: SpeakerRequest = {},
+  ): Promise<JSONRecord> {
+    const selected = await new GatewaySpeaker(
+      this.env, this.identity, this.address,
+    ).resolve(speaker.from);
+    const reader = selected?.identity ?? this.identity;
+
     const row = await this.env.DB.prepare(
       `SELECT ${RelayV2Service.MESSAGE_COLUMNS}
          FROM messages m JOIN threads t ON t.id = m.thread_id
@@ -407,8 +414,8 @@ export class RelayV2Service {
                t.accepted_session_id = ? OR
                (t.recipient_agent_id = ? AND t.recipient_session_id IS NULL
                  AND t.accepted_session_id IS NULL))`,
-    ).bind(messageID, this.identity.organizationID, this.identity.sessionID,
-      this.identity.sessionID, this.identity.sessionID, this.identity.agentID)
+    ).bind(messageID, reader.organizationID, reader.sessionID,
+      reader.sessionID, reader.sessionID, reader.agentID)
       .first<MessageRow>();
 
     if (!row) {
@@ -433,7 +440,7 @@ export class RelayV2Service {
       'senderSessionID' | 'recipientSessionID' | 'acceptedSessionID'>>();
 
     if (!thread || (![thread.senderSessionID, thread.recipientSessionID,
-      thread.acceptedSessionID].includes(this.identity.sessionID))) {
+      thread.acceptedSessionID].includes(reader.sessionID))) {
       return { ...item, recentThreadMessages: [] };
     }
 
