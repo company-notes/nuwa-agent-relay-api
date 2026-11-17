@@ -36,7 +36,20 @@ describe('Agent mailboxes use the existing MailTrigger transport', () => {
     const right = await mailboxes.provision('org-v2', 'agent-0003');
 
     expect(left.mailboxId).not.toBe(right.mailboxId);
+    const delivery = await mailboxes.forDelivery('org-v2', 'agent-0002', 'agent-0003');
+    expect(delivery.sender.mailboxID).toBe(left.mailboxId);
+    expect(delivery.recipient.mailboxID).toBe(right.mailboxId);
+
+    const self = await mailboxes.forDelivery('org-v2', 'agent-0002', 'agent-0002');
+    expect(self.sender.mailboxID).toBe(self.recipient.mailboxID);
+
+    const firstSend = await mailboxes.forDelivery('org-v2', 'agent-0004', 'agent-0003');
+    expect(firstSend.sender.mailboxID).not.toBe(right.mailboxId);
+    expect(firstSend.recipient.mailboxID).toBe(right.mailboxId);
+
     await expect(mailboxes.require('org-other', 'agent-0002'))
+      .rejects.toMatchObject({ status: 409, code: 'agent_mailbox_not_ready' });
+    await expect(mailboxes.forDelivery('org-v2', 'agent-0002', 'agent-missing'))
       .rejects.toMatchObject({ status: 409, code: 'agent_mailbox_not_ready' });
   });
 });

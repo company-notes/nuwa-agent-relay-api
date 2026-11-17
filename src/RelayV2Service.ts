@@ -86,6 +86,19 @@ export class RelayV2Service {
     return this.mailboxes.provision(this.identity.organizationID, this.identity.agentID);
   }
 
+  private prepareThread(thread: ThreadRow, createdAt: string) {
+    return this.env.DB.prepare(
+      `INSERT INTO threads
+         (id, org_id, kind, sender_agent_id, sender_session_id,
+          recipient_agent_id, recipient_session_id, accepted_session_id,
+          notification_session_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+    ).bind(thread.id, thread.organizationID, thread.kind, thread.senderAgentID,
+      thread.senderSessionID, thread.recipientAgentID,
+      thread.recipientSessionID, thread.notificationSessionID,
+      createdAt);
+  }
+
   private async deliver(
     thread: ThreadRow,
     recipientAgentID: string,
@@ -95,12 +108,13 @@ export class RelayV2Service {
     body: string,
     artifactLinks: string[],
     mailboxes: DeliveryMailboxes,
+    createThread = false,
   ): Promise<{ id: string; threadId: string; messageId: string }> {
     const { sender, recipient } = mailboxes;
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
 
-    await this.env.DB.prepare(
+    const message = this.env.DB.prepare(
       `INSERT INTO messages
          (id, thread_id, kind, sender_agent_id, sender_session_id,
           sender_canonical_address, sender_display_name, recipient_agent_id,
@@ -111,7 +125,13 @@ export class RelayV2Service {
       this.identity.canonicalAddress, this.identity.agentDisplayName ?? null,
       recipientAgentID, recipientSessionID, subject, body,
       JSON.stringify(artifactLinks), createdAt,
-      this.actorSessionID ?? this.identity.sessionID, this.senderAuthMode).run();
+      this.actorSessionID ?? this.identity.sessionID, this.senderAuthMode);
+
+    if (createThread) {
+      await this.env.DB.batch([this.prepareThread(thread, createdAt), message]);
+    } else {
+      await message.run();
+    }
 
     return this.submitStoredMessage(id, thread, recipientAgentID, recipientSessionID,
       kind, subject, body, artifactLinks, sender.mailboxID, recipient.mailboxEmail);
@@ -231,20 +251,9 @@ export class RelayV2Service {
       notificationSessionID: agentHandoff ? recipient.id : null,
     };
 
-    await this.env.DB.prepare(
-      `INSERT INTO threads
-         (id, org_id, kind, sender_agent_id, sender_session_id,
-          recipient_agent_id, recipient_session_id, accepted_session_id,
-          notification_session_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-    ).bind(thread.id, thread.organizationID, kind, thread.senderAgentID,
-      thread.senderSessionID, thread.recipientAgentID,
-      thread.recipientSessionID, thread.notificationSessionID,
-      new Date().toISOString()).run();
-
     return this.deliver(
       thread, recipient.agentId, recipientSessionID, kind,
-      request.subject, request.body, request.artifactLinks, mailboxes,
+      request.subject, request.body, request.artifactLinks, mailboxes, true,
     );
   }
 

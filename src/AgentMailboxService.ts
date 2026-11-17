@@ -56,8 +56,15 @@ export class AgentMailboxService {
   async forDelivery(
     organizationID: string, senderAgentID: string, recipientAgentID: string,
   ): Promise<DeliveryMailboxes> {
-    const sender = await this.ready(organizationID, senderAgentID);
-    const recipient = await this.require(organizationID, recipientAgentID);
+    const { results } = await this.env.DB.prepare(
+      `SELECT agent_id AS agentID, mailbox_id AS mailboxID, mailbox_email AS mailboxEmail
+         FROM agent_mailboxes WHERE org_id = ? AND agent_id IN (?, ?)`,
+    ).bind(organizationID, senderAgentID, recipientAgentID).all<MailboxRow & { agentID: string }>();
+
+    const sender = results.find((row) => row.agentID === senderAgentID) ??
+      await this.ready(organizationID, senderAgentID);
+    const recipient = results.find((row) => row.agentID === recipientAgentID) ??
+      await this.require(organizationID, recipientAgentID);
 
     return { sender, recipient };
   }

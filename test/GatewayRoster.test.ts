@@ -1264,6 +1264,7 @@ describe('Gateway coworker speaking scenarios', () => {
 
     // A normal call must use the mailbox and routes already configured at enrollment.
     scenario.client.failNextRouteLookup = true;
+    const deliveryLookup = vi.spyOn(AgentMailboxService.prototype, 'forDelivery');
     const senderLookup = vi.spyOn(AgentMailboxService.prototype, 'ready');
     const recipientLookup = vi.spyOn(AgentMailboxService.prototype, 'require');
 
@@ -1277,8 +1278,9 @@ describe('Gateway coworker speaking scenarios', () => {
       });
     const sendMS = performance.now() - sendStarted;
     expect(sent.status).toBe(201);
-    expect(senderLookup).toHaveBeenCalledTimes(1);
-    expect(recipientLookup).toHaveBeenCalledTimes(1);
+    expect(deliveryLookup).toHaveBeenCalledTimes(1);
+    expect(senderLookup).not.toHaveBeenCalled();
+    expect(recipientLookup).not.toHaveBeenCalled();
     expect(scenario.client.accountStatusLookups - beforeStatus).toBe(0);
     expect(scenario.client.sessionLookups - beforeSessions).toBe(0);
     expect(scenario.client.runtimeLeaseLookups - beforeLeases).toBe(1);
@@ -1309,6 +1311,7 @@ describe('Gateway coworker speaking scenarios', () => {
         recipientBotID: 'annie-native', relayThreadID: threadID,
       });
 
+    deliveryLookup.mockClear();
     senderLookup.mockClear();
     recipientLookup.mockClear();
 
@@ -1319,8 +1322,9 @@ describe('Gateway coworker speaking scenarios', () => {
       });
     const replyMS = performance.now() - replyStarted;
     expect(replied.status).toBe(201);
-    expect(senderLookup).toHaveBeenCalledTimes(1);
-    expect(recipientLookup).toHaveBeenCalledTimes(1);
+    expect(deliveryLookup).toHaveBeenCalledTimes(1);
+    expect(senderLookup).not.toHaveBeenCalled();
+    expect(recipientLookup).not.toHaveBeenCalled();
     expect(scenario.client.failNextRouteLookup).toBe(true);
 
     console.info('OFFICE_MESSAGE_TIMING ' + JSON.stringify({ sendMS, replyMS }));
