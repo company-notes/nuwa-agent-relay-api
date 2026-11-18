@@ -55,7 +55,7 @@ export class OfficeConnectionService {
     const args = [organizationID, sessionID, gatewaySessionID, recipientBotID,
       threadMode, firstContactMode, createdAt, now];
 
-    const results = await this.env.DB.batch([
+    const [, , , , registry, membership] = await this.env.DB.batch([
       this.env.DB.prepare(
         `DELETE FROM wake_events WHERE session_id = ? AND status = 'pending' AND ${eligible}`,
       ).bind(sessionID, ...args),
@@ -89,7 +89,7 @@ export class OfficeConnectionService {
       ).bind(now, organizationID, sessionID, ...args),
     ]);
 
-    if (results[4].meta.changes !== 1 || results[5].meta.changes !== 1) {
+    if (registry.meta.changes !== 1 || membership.meta.changes !== 1) {
       throw new APIError(409, 'office_connection_conflict',
         'The invitation, existing native route or receiving activity prevents this connection change.');
     }
