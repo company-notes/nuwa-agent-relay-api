@@ -200,7 +200,7 @@ export class AliasService {
       return this.address.resolve(target);
     }
 
-    return new RecipientDirectory(this.identity, this.address).resolve(target);
+    return new RecipientDirectory(this.identity, this.address).resolve(target, { allowShortNames: true });
   }
 
   async resolve(target: Recipient): Promise<ResolvedSession> {

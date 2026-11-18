@@ -264,7 +264,7 @@ export class GatewayRoster {
     // short-lived snapshot that may still contain a previous display name.
     const recipient = recipientTarget.name
       ? await new RecipientDirectory(this.identity, this.address).resolve(
-        recipientTarget.name, true)
+        recipientTarget.name, { requireFresh: true })
       : await this.address.resolve(recipientTarget.address!);
 
     if (recipient.canonical.split('/')[0] !== this.identity.organizationSlug) {
