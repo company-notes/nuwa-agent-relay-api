@@ -45,6 +45,7 @@ export class RelayTestClient {
     registrationID: string; handle: string; displayName: string; createdAt: string;
   }> = [];
 
+  loseNextOfficeRegistrationResponse = false;
   failNextMail = false;
   loseNextMailAcknowledgement = false;
   failNextWake = false;
@@ -189,6 +190,11 @@ export class RelayTestClient {
       this.officeAgents.push(registered);
       this.officeRegistrations.push({ displayName: input.agentDisplayName, agentName: handle });
 
+      if (this.loseNextOfficeRegistrationResponse) {
+        this.loseNextOfficeRegistrationResponse = false;
+        return Response.json({ ok: false, error: { code: 'response_lost' } }, { status: 503 });
+      }
+
       return Response.json({ ok: true, data: { session: registered } });
     }
 
@@ -216,6 +222,7 @@ export class RelayTestClient {
         ...this.officeAgents.map((agent) => ({
           id: agent.agentId,
           handle: agent.handle,
+          registrationID: agent.registrationID,
           displayName: agent.displayName,
           defaultSessionID: agent.id,
           defaultSessionHandle: 'main',

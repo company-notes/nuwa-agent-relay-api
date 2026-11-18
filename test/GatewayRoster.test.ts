@@ -1619,6 +1619,33 @@ describe('Gateway coworker speaking scenarios', () => {
       .toMatchObject({ recipientBotID: first.recipientBotID });
   });
 
+  it('reuses an allocated Agent after losing its first registration response', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const members = [
+      { displayName: 'Nora', recipientBotID: 'retry-nora', threadMode: 'platform' },
+    ];
+    scenario.client.loseNextOfficeRegistrationResponse = true;
+    const lost = await scenario.enroll(members);
+    expect(lost.status).toBe(502);
+    expect(scenario.client.officeRegistrations).toHaveLength(1);
+
+    const retried = await scenario.enroll(members);
+    expect(retried.status).toBe(201);
+    expect(scenario.client.officeRegistrations).toHaveLength(1);
+    const recipient = retried.body.data[0];
+
+    const sent = await scenario.client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: recipient.recipientCanonicalAddress, body: 'Recovered registration.',
+    });
+    expect(sent.status).toBe(201);
+    await scenario.arrive(sent.body.data.id);
+
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === sent.body.data.id)?.body)
+      .toMatchObject({ recipientBotID: 'retry-nora', recipientSessionID: recipient.recipientSessionID });
+  });
+
   it('retains office speaking, mailbox and original Thread under Organization and coworker address changes', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();

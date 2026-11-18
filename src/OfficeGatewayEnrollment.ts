@@ -16,7 +16,7 @@ export type OfficeCoworker = {
 };
 
 type Reservation = OfficeReceivingState & {
-  agentHandle: string;
+  registrationID: string;
   displayName: string;
   recipientAgentID: string | null;
   recipientSessionID: string | null;
@@ -48,7 +48,7 @@ export class OfficeGatewayEnrollment {
   }
 
   private async reservation(coworker: OfficeCoworker): Promise<Reservation> {
-    const agentHandle = await OfficeCoworkerRegistry.handleFor(
+    const registrationID = await OfficeCoworkerRegistry.handleFor(
       this.identity.organizationID, this.identity.sessionID, coworker.recipientBotID,
     );
     const createdAt = new Date().toISOString();
@@ -58,10 +58,10 @@ export class OfficeGatewayEnrollment {
         (org_id, gateway_session_id, recipient_bot_id, agent_handle, display_name, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).bind(this.identity.organizationID, this.identity.sessionID,
-      coworker.recipientBotID, agentHandle, coworker.displayName, createdAt).run();
+      coworker.recipientBotID, registrationID, coworker.displayName, createdAt).run();
 
     const saved = await this.env.DB.prepare(
-      `SELECT c.agent_handle AS agentHandle, c.display_name AS displayName,
+      `SELECT c.agent_handle AS registrationID, c.display_name AS displayName,
               c.recipient_agent_id AS recipientAgentID, c.recipient_session_id AS recipientSessionID,
               c.recipient_canonical_address AS recipientCanonicalAddress,
               c.activated_at AS activatedAt, ${OfficeCoworkerRegistry.receivingColumns}
@@ -70,7 +70,7 @@ export class OfficeGatewayEnrollment {
     ).bind(this.identity.organizationID, this.identity.sessionID,
       coworker.recipientBotID).first<Reservation>();
 
-    if (!saved || saved.agentHandle !== agentHandle ||
+    if (!saved || saved.registrationID !== registrationID ||
         (!saved.recipientSessionID && saved.displayName !== coworker.displayName)) {
       throw new APIError(409, 'office_registration_conflict',
         'The platform Bot ID has a different registered identity.');
@@ -79,12 +79,12 @@ export class OfficeGatewayEnrollment {
     return saved;
   }
 
-  private async requireAvailableName(displayName: string, allowedHandle: string, allowedAgentID?: string) {
+  private async requireAvailableName(displayName: string, allowedRegistrationID: string, allowedAgentID?: string) {
     const normalized = displayName.normalize('NFKC').toLowerCase();
     const agents = await this.address.listAgents();
     const conflict = agents.some((entry) =>
       entry.displayName?.normalize('NFKC').toLowerCase() === normalized &&
-      entry.id !== allowedAgentID && entry.handle !== allowedHandle);
+      entry.id !== allowedAgentID && entry.registrationID !== allowedRegistrationID);
 
     if (conflict) {
       throw new APIError(409, 'office_coworker_name_conflict',
@@ -100,7 +100,7 @@ export class OfficeGatewayEnrollment {
       return;
     }
 
-    await this.requireAvailableName(coworker.displayName, reservation.agentHandle, recipient.agentId);
+    await this.requireAvailableName(coworker.displayName, reservation.registrationID, recipient.agentId);
     await this.address.renameAgent(recipient.agentId, coworker.displayName);
 
     const updated = await this.env.DB.prepare(
@@ -131,10 +131,10 @@ export class OfficeGatewayEnrollment {
       return restored;
     }
 
-    await this.requireAvailableName(coworker.displayName, reservation.agentHandle);
+    await this.requireAvailableName(coworker.displayName, reservation.registrationID);
 
     const recipient = await this.address.registerOfficeAgent(
-      reservation.agentHandle, coworker.displayName);
+      reservation.registrationID, coworker.displayName);
 
     if (recipient.canonical.split('/')[0] !== this.identity.organizationSlug) {
       throw new APIError(502, 'office_registration_invalid',

@@ -36,7 +36,7 @@ export type DirectoryAgent = {
   displayName: string | null;
   defaultSessionID: string | null;
   defaultSessionHandle: string | null;
-
+  registrationID?: string | null;
 };
 
 export class SessionIdentityClient {
@@ -131,6 +131,7 @@ export class SessionIdentityClient {
       !row || typeof row !== 'object' || typeof row.id !== 'string' ||
       typeof row.handle !== 'string' || !row.handle ||
       row.displayName != null && typeof row.displayName !== 'string' ||
+      row.registrationID != null && typeof row.registrationID !== 'string' ||
       row.defaultSessionID != null && typeof row.defaultSessionID !== 'string' ||
       row.defaultSessionHandle != null && typeof row.defaultSessionHandle !== 'string' ||
       Boolean(row.defaultSessionID) !== Boolean(row.defaultSessionHandle))) {
