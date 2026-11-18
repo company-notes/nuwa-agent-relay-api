@@ -50,6 +50,9 @@ export class RelayTestClient {
   failNextWake = false;
   redirectNextWake = false;
   failAddressStatus = false;
+  accountStatusLookups = 0;
+  sessionLookups = 0;
+  runtimeLeaseLookups = 0;
   failPublicAddressRequests = false;
   failNextRouteCreation = false;
   failNextRouteLookup = false;
@@ -58,6 +61,9 @@ export class RelayTestClient {
   failNextActionDeletion = false;
   failNextWebhookParameterUpdate = false;
   nameDirectoryLookups = 0;
+  domainLookups = 0;
+  actionTemplateLookups = 0;
+  domainVerified = true;
   corruptNameDirectory = false;
   autoReceiptDuringMailSend = false;
   mailboxCreationDelayMs = 0;
@@ -105,6 +111,8 @@ export class RelayTestClient {
     }
 
     if (url.pathname === '/v2/account/status') {
+      this.accountStatusLookups += 1;
+
       if (this.failAddressStatus) {
         return Response.json({ ok: false, error: { code: 'unavailable' } }, { status: 503 });
       }
@@ -148,6 +156,7 @@ export class RelayTestClient {
         canonical: RelayTestClient.slug + '/' + input.agentName + '/' + input.sessionName,
         handle: input.agentName,
         displayName: input.agentDisplayName,
+        agentDisplayName: input.agentDisplayName,
         createdAt: new Date().toISOString(),
       };
       this.officeAgents.push(registered);
@@ -190,6 +199,22 @@ export class RelayTestClient {
       ] });
     }
 
+    const agentUpdate = url.pathname.match(/^\/v2\/account\/agents\/([^/]+)$/);
+
+    if (agentUpdate && init?.method === 'PATCH') {
+      const agent = this.officeAgents.find((item) => item.agentId === agentUpdate[1]);
+
+      if (!agent) {
+        return Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
+      }
+
+      const data = JSON.parse(String(init.body)) as { agentDisplayName: string };
+      agent.displayName = data.agentDisplayName;
+      agent.agentDisplayName = data.agentDisplayName;
+
+      return Response.json({ ok: true, data: { id: agent.agentId, displayName: agent.displayName } });
+    }
+
     const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
 
     if (matched) {
@@ -202,6 +227,12 @@ export class RelayTestClient {
       }
 
       if (matched[2]) {
+        this.runtimeLeaseLookups += 1;
+
+        if (this.failAddressStatus) {
+          return Response.json({ ok: false, error: { code: 'unavailable' } }, { status: 503 });
+        }
+
         const provided = JSON.parse(String(init?.body)) as { runtimeToken: string };
         const expected = session.id.replace('session-', 'runtime-');
 
@@ -210,9 +241,19 @@ export class RelayTestClient {
         }
 
         return Response.json({
-          ok: true, data: { expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() },
+          ok: true, data: {
+            expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+            ...(url.searchParams.get('include_identity') === '1' ? {
+              session,
+              organization: token === 'Bearer token-foreign'
+                ? { id: 'org-other', slug: 'other-organization' }
+                : { id: 'org-id', slug: RelayTestClient.slug },
+            } : {}),
+          },
         });
       }
+
+      this.sessionLookups += 1;
 
       return Response.json({ ok: true, data: session });
     }
@@ -263,6 +304,8 @@ export class RelayTestClient {
     }
 
     if (url.pathname === '/api/v1/action-templates/' && !init?.method) {
+      this.actionTemplateLookups += 1;
+
       return Response.json(this.templates);
     }
 
@@ -405,7 +448,10 @@ export class RelayTestClient {
     }
 
     if (url.pathname === '/api/v1/domains/') {
-      return Response.json([{ id: 1, domainName: 'relay-test.example', isVerified: true, user: 31 }]);
+      this.domainLookups += 1;
+
+      return Response.json([{ id: 1, domainName: 'relay-test.example',
+        isVerified: this.domainVerified, user: 31 }]);
     }
 
     if (url.pathname === '/api/v1/mailbox/' && init?.method === 'POST') {
@@ -687,17 +733,28 @@ export class RelayTestClient {
     this.mailboxArchives.set(id, archive);
   }
 
+  async callAsSession(
+    sessionID: string, method: string, path: string, data?: object,
+  ): Promise<{ status: number; body: any }> {
+    const separator = path.includes('?') ? '&' : '?';
+
+    return this.callWithHeaders(method, path + separator + 'session_id=' + sessionID, data, {
+      authorization: 'Bearer token-a',
+      'x-nuwa-runtime-token': sessionID.replace('session-', 'runtime-'),
+    });
+  }
+
   async callWithHeaders(
     method: string,
     path: string,
-    data: object,
+    data: object | undefined,
     headers: Record<string, string>,
   ): Promise<{ status: number; body: any }> {
     const response = await exports.default.fetch(
       new Request(`${RelayTestClient.origin}${path}`, {
         method,
         headers: { 'content-type': 'application/json', ...headers },
-        body: JSON.stringify(data),
+        body: data === undefined ? undefined : JSON.stringify(data),
       }),
     );
 

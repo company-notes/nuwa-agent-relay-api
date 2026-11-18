@@ -326,27 +326,19 @@ export class GatewayBindings {
       return minimal;
     }
 
-    if (message.recipientSessionID !== message.recipientWakeSessionID) {
-      const membership = await env.DB.prepare(
-        `SELECT recipient_session_id FROM gateway_teammates
-         WHERE org_id = ? AND recipient_session_id = ? AND gateway_session_id = ?
-           AND status = 'active'`,
-      ).bind(message.organizationID, message.recipientSessionID, message.recipientWakeSessionID)
-        .first();
-
-      if (!membership) {
-        return minimal;
-      }
-    }
-
     const route = await env.DB.prepare(
-      `SELECT recipient_bot_id AS recipientBotID, thread_mode AS threadMode,
-              first_contact_mode AS firstContactMode,
-              recipient_canonical_address AS recipientCanonicalAddress
-         FROM gateway_routes
-        WHERE org_id = ? AND recipient_session_id = ? AND recipient_agent_id = ?`,
-    ).bind(message.organizationID, message.recipientSessionID,
-      message.recipientAgentID).first<GatewayRouteRow>();
+      `SELECT r.recipient_bot_id AS recipientBotID, r.thread_mode AS threadMode,
+              r.first_contact_mode AS firstContactMode,
+              r.recipient_canonical_address AS recipientCanonicalAddress
+         FROM gateway_routes r
+        WHERE r.org_id = ? AND r.recipient_session_id = ? AND r.recipient_agent_id = ?
+          AND (r.recipient_session_id = ? OR EXISTS (
+            SELECT 1 FROM gateway_teammates t
+             WHERE t.org_id = r.org_id AND t.recipient_session_id = r.recipient_session_id
+               AND t.gateway_session_id = ? AND t.status = 'active'
+          ))`,
+    ).bind(message.organizationID, message.recipientSessionID, message.recipientAgentID,
+      message.recipientWakeSessionID, message.recipientWakeSessionID).first<GatewayRouteRow>();
 
     if (!route) {
       return minimal;

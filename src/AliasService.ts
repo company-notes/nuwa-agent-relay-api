@@ -1,6 +1,7 @@
 import type { Env } from './Env';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { RecipientDirectory } from './RecipientDirectory';
+import { PlatformBotIdentity } from './PlatformBotIdentity';
 import {
   SessionIdentityClient, type ResolvedSession, type SessionIdentity,
 } from './SessionIdentityClient';
@@ -157,7 +158,44 @@ export class AliasService {
     return { id, revoked: true };
   }
 
+  private async resolveNativeBot(botID: string): Promise<ResolvedSession> {
+    const { results } = await this.env.DB.prepare(
+      `SELECT recipient_agent_id AS agentID, recipient_session_id AS sessionID,
+              recipient_canonical_address AS canonicalAddress
+         FROM gateway_routes WHERE org_id = ? AND recipient_bot_id = ? LIMIT 2`,
+    ).bind(this.identity.organizationID, botID).all<{
+      agentID: string; sessionID: string; canonicalAddress: string;
+    }>();
+
+    if (results.length === 0) {
+      throw new APIError(404, 'recipient_bot_not_found',
+        'No registered Bot matches this native ID in the Organization.');
+    }
+
+    if (results.length > 1) {
+      throw new APIError(409, 'recipient_bot_ambiguous',
+        'Several registered Bots share this native ID. Use a Nuwa address.');
+    }
+
+    const [route] = results;
+    const session = await this.address.session(route.sessionID);
+
+    if (session.id !== route.sessionID || session.agentId !== route.agentID ||
+        session.canonical !== route.canonicalAddress) {
+      throw new APIError(409, 'recipient_bot_identity_mismatch',
+        'The registered Bot route no longer matches its authorized Session.');
+    }
+
+    return session;
+  }
+
   private async resolveAddressOrName(target: string): Promise<ResolvedSession> {
+    const botID = PlatformBotIdentity.readSelector(target);
+
+    if (botID !== null) {
+      return this.resolveNativeBot(botID);
+    }
+
     if (target.includes('/')) {
       return this.address.resolve(target);
     }

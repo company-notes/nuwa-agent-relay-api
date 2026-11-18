@@ -1,9 +1,8 @@
 import { AliasService } from './AliasService';
 import { AgentAddressTransport } from './AgentAddressTransport';
-import { CoworkerPassphrases } from './CoworkerPassphrases';
 import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
-import { GatewaySpeaker, type SpeakerRequest } from './GatewaySpeaker';
+import type { SpeakerRequest } from './GatewaySpeaker';
 import { GatewayModeCodec } from './GatewayModeCodec';
 import { GatewayRoster } from './GatewayRoster';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
@@ -34,9 +33,6 @@ export class RelayAPI {
   private static speaker(data: JSONRecord): SpeakerRequest {
     return {
       ...(data.from === undefined ? {} : { from: AliasService.readRecipient(data.from) }),
-      ...(data.passphrase === undefined ? {} : {
-        passphrase: HTTP.requiredString(data, 'passphrase', 128),
-      }),
     };
   }
 
@@ -109,14 +105,18 @@ export class RelayAPI {
     const messageID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)$/);
 
     if (messageID && request.method === 'GET') {
-      const rawLimit = new URL(request.url).searchParams.get('context_limit');
+      const query = new URL(request.url).searchParams;
+      const rawLimit = query.get('context_limit');
       const contextLimit = rawLimit === null ? 0 : Number(rawLimit);
 
       if (rawLimit !== null && !/^(?:0|[1-9]|1[0-2])$/.test(rawLimit)) {
         throw new APIError(400, 'invalid_context_limit', 'Context limit must be 0–12.');
       }
 
-      return HTTP.response(await relay.message(messageID, contextLimit));
+      const from = query.get('from');
+
+      return HTTP.response(await relay.message(messageID, contextLimit,
+        RelayAPI.speaker(from === null ? {} : { from })));
     }
 
     const readID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)\/read-receipt$/);
@@ -263,43 +263,7 @@ export class RelayAPI {
 
   private async officeGateway(
     request: Request, path: string, enrollment: OfficeGatewayEnrollment,
-    speaker: GatewaySpeaker, passphrases: CoworkerPassphrases,
   ): Promise<Response | null> {
-    if (path === '/v2/gateway-office-delegation') {
-      if (request.method === 'GET') {
-        return HTTP.response(await speaker.status());
-      }
-
-      if (request.method === 'PUT') {
-        const data = await HTTP.json(request);
-
-        if (typeof data.enabled !== 'boolean') {
-          throw new APIError(400, 'invalid_delegation_setting',
-            'Office speaking delegation requires an explicit Boolean enabled value.');
-        }
-
-        return HTTP.response(await speaker.configure(data.enabled));
-      }
-
-      return null;
-    }
-
-    const coworkerID = RelayAPI.match(
-      path, /^\/v2\/gateway-office-coworkers\/([^/]+)\/passphrase$/,
-    );
-
-    if (coworkerID && request.method === 'PUT') {
-      const data = await HTTP.json(request);
-
-      return HTTP.response(await passphrases.set(
-        coworkerID, HTTP.requiredString(data, 'passphrase', 128),
-      ));
-    }
-
-    if (coworkerID && request.method === 'DELETE') {
-      return HTTP.response(await passphrases.clear(coworkerID));
-    }
-
     if (path !== '/v2/gateway-office-coworkers') {
       return null;
     }
@@ -321,7 +285,6 @@ export class RelayAPI {
 
     const coworkers: OfficeCoworker[] = data.coworkers.map((record: JSONRecord) => ({
       displayName: HTTP.requiredString(record, 'displayName', 120),
-      passphrase: HTTP.optionalString(record, 'passphrase', 128) ?? undefined,
       recipientBotID: HTTP.requiredString(record, 'recipientBotID', 192),
       threadMode: GatewayModeCodec.readThreadMode(HTTP.requiredString(record, 'threadMode', 32)),
       firstContactMode: GatewayModeCodec.readFirstContactMode(
@@ -364,15 +327,17 @@ export class RelayAPI {
         const query = new URL(request.url).searchParams;
         const address = query.get('recipient_address');
         const name = query.get('recipient_name');
+        const botID = query.get('recipient_bot_id');
 
-        if (Boolean(address) === Boolean(name) ||
-            address && address.length > 255 || name && name.length > 120) {
+        if ([address, name, botID].filter(Boolean).length !== 1 ||
+            address && address.length > 255 || name && name.length > 120 ||
+            botID && botID.length > 192) {
           throw new APIError(400, 'gateway_recipient_required',
-            'Specify exactly one valid recipient_name or recipient_address.');
+            'Specify exactly one recipient_name, recipient_address or recipient_bot_id.');
         }
 
         return HTTP.response(await roster.removeTeammate(
-          address ? { address } : { name: name! },
+          botID ? { botID } : address ? { address } : { name: name! },
         ));
       }
     }
@@ -383,7 +348,13 @@ export class RelayAPI {
       }
 
       if (request.method === 'PUT') {
-        return HTTP.response(await roster.approve());
+        const data = request.body ? await HTTP.json(request) : {};
+
+        if (data.shareConnection !== undefined && typeof data.shareConnection !== 'boolean') {
+          throw new APIError(400, 'invalid_office_connection', 'shareConnection must be a boolean.');
+        }
+
+        return HTTP.response(await roster.approve(data.shareConnection === true));
       }
 
       if (request.method === 'DELETE') {
@@ -469,13 +440,20 @@ export class RelayAPI {
       this.env.ADDRESS_API_URL, authorization, transport.request.bind(transport),
     );
     const identity = await address.authorize(sessionID, runtimeToken);
+    const response = await this.authorized(request, path, identity, address);
+    response.headers.set('x-nuwa-lease-expires-at', identity.leaseExpiresAt);
+
+    return response;
+  }
+
+  private async authorized(
+    request: Request, path: string, identity: SessionIdentity, address: SessionIdentityClient,
+  ): Promise<Response> {
     const relay = new RelayV2Service(this.env, identity, address);
     const aliases = new AliasService(this.env, identity, address);
     const gatewayBindings = new GatewayBindings(this.env, identity, address);
     const gatewayRoster = new GatewayRoster(this.env, identity, address);
     const officeGateway = new OfficeGatewayEnrollment(this.env, identity, address);
-    const gatewaySpeaker = new GatewaySpeaker(this.env, identity, address);
-    const passphrases = new CoworkerPassphrases(this.env, identity);
 
     if (path === '/v2/agent-mailboxes' && request.method === 'POST') {
       return HTTP.response(await relay.provisionMailbox(), 201);
@@ -497,7 +475,7 @@ export class RelayAPI {
       () => this.threads(request, path, relay),
       () => this.gateway(request, path, gatewayBindings),
       () => this.gatewayTeammates(request, path, gatewayRoster),
-      () => this.officeGateway(request, path, officeGateway, gatewaySpeaker, passphrases),
+      () => this.officeGateway(request, path, officeGateway),
       () => this.wake(request, path, identity),
     ];
 

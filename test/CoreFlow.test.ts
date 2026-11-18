@@ -52,4 +52,35 @@ describe('Nuwa Agent Relay core messaging flow', () => {
     expect(client.deliveries, 'MailTrigger must receive both transport calls').toHaveLength(2);
     expect(client.deliveries[0].subject).toMatch(/^\[NAR:/);
   });
+
+  it('rolls back a new Thread when its first message cannot be stored', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionAgentMailboxes();
+
+    const before = await env.DB.prepare('SELECT count(*) AS count FROM threads')
+      .first<{ count: number }>();
+    await env.DB.prepare(`
+      CREATE TRIGGER reject_first_message BEFORE INSERT ON messages
+      WHEN NEW.body = 'Test message persistence failure'
+      BEGIN SELECT RAISE(ABORT, 'Test message persistence failure'); END
+    `).run();
+
+    try {
+      const failed = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+        to: 'relay-test-org/beta/reviewer',
+        body: 'Test message persistence failure',
+      });
+
+      expect(failed.status).toBe(500);
+      expect(failed.body.error.code).toBe('internal_error');
+
+      const after = await env.DB.prepare('SELECT count(*) AS count FROM threads')
+        .first<{ count: number }>();
+      expect(after?.count, 'A failed first Message must not leave an orphan Thread').toBe(before?.count);
+      expect(client.deliveries, 'Transport must not run before both records commit').toHaveLength(0);
+    } finally {
+      await env.DB.prepare('DROP TRIGGER reject_first_message').run();
+    }
+  });
 });

@@ -4,6 +4,16 @@
   "main": "src/Index.ts",
   "compatibility_date": "2026-09-09",
   "workers_dev": true,
+  "placement": {
+    "mode": "smart"
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    },
+    "redact_query_string": true
+  },
   "services": [
     {
       "binding": "ADDRESS_WORKER",

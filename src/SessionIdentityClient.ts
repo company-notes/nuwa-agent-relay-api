@@ -22,7 +22,13 @@ type AccountStatus = {
   organization: { id: string; slug: string } | null;
 };
 
-type Lease = { expiresAt: string };
+type Lease = {
+  expiresAt: string;
+  organization: AccountStatus['organization'];
+  session: ResolvedSession;
+};
+
+export type AuthorizedSession = SessionIdentity & { leaseExpiresAt: string };
 
 export type DirectoryAgent = {
   id: string;
@@ -108,10 +114,6 @@ export class SessionIdentityClient {
     return session;
   }
 
-  async status(): Promise<{ organization: { id: string; slug: string } | null }> {
-    return this.request<AccountStatus>('GET', '/v2/account/status');
-  }
-
   /** Cache identity is scoped to the OAuth bearer and verified Organization. */
   async directoryCacheScope(organizationID: string): Promise<string> {
     const credential = new TextEncoder().encode(this.authorization);
@@ -150,6 +152,21 @@ export class SessionIdentityClient {
     return SessionIdentityClient.requireSession(registered.session);
   }
 
+  async renameAgent(agentID: string, displayName: string): Promise<void> {
+    const updated = await this.request<{ id: string; displayName: string }>(
+      'PATCH', '/v2/account/agents/' + encodeURIComponent(agentID),
+      { agentDisplayName: displayName },
+    );
+
+    if (updated.id !== agentID || updated.displayName !== displayName) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address did not confirm the display name.');
+    }
+  }
+
+  async status(): Promise<AccountStatus> {
+    return this.request<AccountStatus>('GET', '/v2/account/status');
+  }
+
   async session(sessionID: string): Promise<ResolvedSession> {
     return SessionIdentityClient.requireSession(await this.request<ResolvedSession>(
       'GET', '/v2/account/sessions/' + encodeURIComponent(sessionID),
@@ -165,18 +182,18 @@ export class SessionIdentityClient {
     return SessionIdentityClient.requireSession(session);
   }
 
-  async authorize(sessionID: string, runtimeToken: string): Promise<SessionIdentity> {
+  async authorize(sessionID: string, runtimeToken: string): Promise<AuthorizedSession> {
     if (!sessionID || !runtimeToken) {
       throw new APIError(400, 'session_capability_required', 'Session ID and Runtime capability are required.');
     }
 
-    // The two independent identity reads can run in parallel. Runtime
-    // ownership is still checked after both authoritative results agree.
-    const [status, verifiedSession] = await Promise.all([
-      this.status(),
-      this.session(sessionID),
-    ]);
-    const organization = status?.organization;
+    const lease = await this.request<Lease>(
+      'PATCH',
+      '/v2/account/sessions/' + encodeURIComponent(sessionID) + '/runtime-lease?include_identity=1',
+      { runtimeToken },
+    );
+    const organization = lease?.organization;
+    const verifiedSession = SessionIdentityClient.requireSession(lease?.session);
 
     if (!organization || typeof organization.id !== 'string' ||
         typeof organization.slug !== 'string') {
@@ -187,14 +204,6 @@ export class SessionIdentityClient {
         verifiedSession.canonical.split('/')[0] !== organization.slug) {
       throw new APIError(502, 'address_response_invalid', 'Session identity does not match its Organization.');
     }
-
-    // Heartbeat atomically proves current Runtime ownership and renews its lease.
-    // OAuth membership and knowledge of a Session ID alone never grant execution rights.
-    const lease = await this.request<Lease>(
-      'PATCH',
-      '/v2/account/sessions/' + encodeURIComponent(sessionID) + '/runtime-lease',
-      { runtimeToken },
-    );
 
     if (!lease || typeof lease.expiresAt !== 'string' ||
         !Number.isFinite(Date.parse(lease.expiresAt)) ||
@@ -209,6 +218,7 @@ export class SessionIdentityClient {
       sessionID: verifiedSession.id,
       canonicalAddress: verifiedSession.canonical,
       agentDisplayName: verifiedSession.agentDisplayName ?? null,
+      leaseExpiresAt: lease.expiresAt,
     };
   }
 }

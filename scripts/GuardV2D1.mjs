@@ -125,11 +125,13 @@ export function validateProductionBindings(config) {
   }
 }
 
-export function guardRemoteDatabase(requireMigrated = false) {
-  const config = JSON.parse(readFileSync('.wrangler.deploy.jsonc', 'utf8'));
-  validateProductionBindings(config);
+export function requireOfficeConnectionColumn(names) {
+  if (!names.includes('independent_at')) {
+    throw new Error('Office independent connection migration (0008) is not applied.');
+  }
+}
 
-  const query = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name";
+function inspectNames(query) {
   const output = WranglerRunner.execute([
     'd1', 'execute', 'DB', '--remote',
     '--config', '.wrangler.deploy.jsonc', '--command', query, '--json',
@@ -138,7 +140,22 @@ export function guardRemoteDatabase(requireMigrated = false) {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
 
-  const classification = classifyDatabase(readTableNames(output), requireMigrated);
+  return readTableNames(output);
+}
+
+export function guardRemoteDatabase(requireMigrated = false) {
+  const config = JSON.parse(readFileSync('.wrangler.deploy.jsonc', 'utf8'));
+  validateProductionBindings(config);
+
+  const tables = inspectNames("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name");
+  const classification = classifyDatabase(tables, requireMigrated);
+
+  if (requireMigrated) {
+    requireOfficeConnectionColumn(inspectNames(
+      "SELECT name FROM pragma_table_info('gateway_office_coworkers') ORDER BY name",
+    ));
+  }
+
   process.stdout.write('Verified isolated Relay V2 D1: ' + classification + '\n');
 }
 

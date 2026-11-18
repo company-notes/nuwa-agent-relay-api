@@ -39,6 +39,14 @@ class GatewayMigrationScenario {
   }
 
   verify() {
+    const member = this.db.prepare(
+      `SELECT recipient_session_id AS sessionID, activated_at AS activatedAt,
+         independent_at AS independentAt FROM gateway_office_coworkers WHERE recipient_bot_id = ?`,
+    ).get('bot-live');
+    assert.equal(member.sessionID, 'session-b');
+    assert.equal(member.activatedAt, '2026-11-12T00:00:00.000Z');
+    assert.equal(member.independentAt, null);
+
     const message = this.db.prepare(
       'SELECT body, delivery_status AS deliveryStatus, sender_canonical_address AS senderAddress ' +
       'FROM messages WHERE id = ?',
@@ -107,6 +115,15 @@ test('upgrade deployed V2 with existing message and pending Wake without data lo
     scenario.apply('0005_office_gateway_coworkers.sql');
     scenario.apply('0006_sender_display_name.sql');
     scenario.apply('0007_gateway_delegated_speaking.sql');
+    scenario.db.prepare(
+      `INSERT INTO gateway_office_coworkers
+        (org_id, gateway_session_id, recipient_bot_id, display_name, agent_handle,
+         recipient_agent_id, recipient_session_id, recipient_canonical_address, created_at, activated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('org-live', 'gateway-live', 'bot-live', 'Coworker', 'office-live', 'agent-b',
+      'session-b', 'nuwa/coworker/main', '2026-11-12T00:00:00.000Z', '2026-11-12T00:00:00.000Z');
+
+    scenario.apply('0008_office_independent_connection.sql');
     scenario.verify();
   } finally {
     scenario.close();

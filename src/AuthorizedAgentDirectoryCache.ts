@@ -16,17 +16,16 @@ export class AuthorizedAgentDirectoryCache {
     expiresAt: number;
     agents: DirectoryAgent[];
   }>();
-  private readonly pending = new Map<string, Promise<DirectoryAgent[]>>();
 
   constructor(private readonly clock: () => number = () => Date.now()) {}
 
   async read(
-    scope: string, load: () => Promise<DirectoryAgent[]>,
+    scope: string, load: () => Promise<DirectoryAgent[]>, refresh = false,
   ): Promise<DirectoryAgent[]> {
     const now = this.clock();
     const cached = this.entries.get(scope);
 
-    if (cached && cached.expiresAt > now) {
+    if (!refresh && cached && cached.expiresAt > now) {
       // Reinsert on a hit so the oldest entry is evicted first.
       this.entries.delete(scope);
       this.entries.set(scope, cached);
@@ -34,42 +33,30 @@ export class AuthorizedAgentDirectoryCache {
       return cached.agents;
     }
 
-    const inFlight = this.pending.get(scope);
+    // Share completed values only, not Worker I/O promises across invocations.
+    const agents = await load();
 
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const request = load().then((agents) => {
-      this.entries.delete(scope);
-      this.entries.set(scope, {
-        expiresAt: this.clock() + AuthorizedAgentDirectoryCache.ttlMS,
-        agents,
-      });
-
-      while (this.entries.size > AuthorizedAgentDirectoryCache.maxEntries) {
-        const oldest = this.entries.keys().next().value;
-
-        if (oldest === undefined) {
-          break;
-        }
-
-        this.entries.delete(oldest);
-      }
-
-      return agents;
-    }).finally(() => {
-      this.pending.delete(scope);
+    this.entries.delete(scope);
+    this.entries.set(scope, {
+      expiresAt: this.clock() + AuthorizedAgentDirectoryCache.ttlMS,
+      agents,
     });
 
-    this.pending.set(scope, request);
+    while (this.entries.size > AuthorizedAgentDirectoryCache.maxEntries) {
+      const oldest = this.entries.keys().next().value;
 
-    return request;
+      if (oldest === undefined) {
+        break;
+      }
+
+      this.entries.delete(oldest);
+    }
+
+    return agents;
   }
 
   /** Clear the isolated in-memory cache between Worker/D1 test scenarios. */
   clear(): void {
     this.entries.clear();
-    this.pending.clear();
   }
 }

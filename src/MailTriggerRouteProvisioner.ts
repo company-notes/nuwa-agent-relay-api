@@ -22,6 +22,8 @@ export type MailTriggerResources = {
  * The RelaySMTP action-template ID is discovered in each environment.
  */
 export class MailTriggerRouteProvisioner {
+  private templateSnapshot?: Promise<Resource[]>;
+
   constructor(
     private readonly resources: MailTriggerResources,
     private readonly receipt?: { url: string; key: string },
@@ -90,11 +92,15 @@ export class MailTriggerRouteProvisioner {
     return MailTriggerRouteProvisioner.positiveId(rule.id);
   }
 
-  private async relaySMTPTemplate(): Promise<number> {
-    const rows = await this.resources.list(
+  private actionTemplates(): Promise<Resource[]> {
+    return this.templateSnapshot ??= this.resources.list(
       '/api/v1/action-templates/?page_size=1000',
       'mailtrigger_action_template_lookup_failed',
     );
+  }
+
+  private async relaySMTPTemplate(): Promise<number> {
+    const rows = await this.actionTemplates();
     const templates = rows.filter((row) => row.actionName === 'RelaySMTP' &&
       row.isActive === true);
 
@@ -163,10 +169,7 @@ export class MailTriggerRouteProvisioner {
   }
 
   private async webhookTemplate(): Promise<number> {
-    const templates = await this.resources.list(
-      '/api/v1/action-templates/?page_size=1000',
-      'mailtrigger_action_template_lookup_failed',
-    );
+    const templates = await this.actionTemplates();
     // Do not assume an environment-specific template numeric ID.
     const matched = templates.filter((row) => row.isActive === true &&
       (row.displayName === 'Webhook (API)' ||

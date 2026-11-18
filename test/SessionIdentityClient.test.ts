@@ -4,12 +4,18 @@ import { SessionIdentityClient } from '../src/SessionIdentityClient';
 
 class AddressScenario {
   readonly requests: Array<{ path: string; method: string; runtimeToken?: string }> = [];
+  readonly expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+  private readonly organization = { id: 'org-a', slug: 'nuwa' };
 
   constructor(
     private readonly sessionID = 'session-a',
     private readonly authorizedToken = 'runtime-a',
     private readonly sessionAddress = 'nuwa/reviewer/main',
   ) {}
+
+  private session() {
+    return { id: this.sessionID, agentId: 'agent-a', canonical: this.sessionAddress };
+  }
 
   readonly fetch: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -27,7 +33,7 @@ class AddressScenario {
     if (url.pathname === '/v2/account/status') {
       return Response.json({
         ok: true,
-        data: { organization: { id: 'org-a', slug: 'nuwa' } },
+        data: { organization: this.organization },
       });
     }
 
@@ -39,18 +45,18 @@ class AddressScenario {
 
       return Response.json({
         ok: true,
-        data: { expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() },
+        data: {
+          expiresAt: this.expiresAt,
+          ...(url.searchParams.get('include_identity') === '1'
+            ? { session: this.session(), organization: this.organization } : {}),
+        },
       });
     }
 
     if (url.pathname === '/v2/account/sessions/' + this.sessionID) {
       return Response.json({
         ok: true,
-        data: {
-          id: this.sessionID,
-          agentId: 'agent-a',
-          canonical: this.sessionAddress,
-        },
+        data: this.session(),
       });
     }
 
@@ -98,14 +104,13 @@ describe('Relay V2 Session authorization', () => {
       sessionID: 'session-a',
       canonicalAddress: 'nuwa/reviewer/main',
       agentDisplayName: null,
+      leaseExpiresAt: scenario.expiresAt,
     });
-    expect(scenario.requests.map(({ path }) => path)).toEqual([
-      '/v2/account/status',
-      '/v2/account/sessions/session-a',
-      '/v2/account/sessions/session-a/runtime-lease',
-    ]);
-    expect(scenario.requests[2].runtimeToken).toBe('runtime-a');
-    expect(scenario.requests[2].path).not.toContain('runtime-a');
+    expect(scenario.requests).toEqual([{
+      path: '/v2/account/sessions/session-a/runtime-lease?include_identity=1',
+      method: 'PATCH', runtimeToken: 'runtime-a',
+    }]);
+    expect(scenario.requests[0].path).not.toContain('runtime-a');
   });
 
   it('rejects an OAuth member impersonating a Session without its Runtime capability', async () => {
@@ -119,7 +124,7 @@ describe('Relay V2 Session authorization', () => {
     await expect(client.authorize('session-a', 'stolen-session-id-is-not-a-capability'))
       .rejects.toMatchObject({ status: 409, code: 'address_authorization_failed' });
 
-    expect(scenario.requests).toHaveLength(3);
+    expect(scenario.requests).toHaveLength(1);
     expect(scenario.requests.every(({ path }) => !path.includes('stolen-session-id-is-not-a-capability')))
       .toBe(true);
   });
@@ -135,8 +140,8 @@ describe('Relay V2 Session authorization', () => {
     await expect(client.authorize('session-a', 'runtime-a'))
       .rejects.toMatchObject({ status: 502, code: 'address_response_invalid' });
 
-    expect(scenario.requests, 'A mismatched identity must never reach the Runtime capability exchange')
-      .toHaveLength(2);
+    expect(scenario.requests, 'Reject the inconsistent identity returned by the single renewal request')
+      .toHaveLength(1);
   });
 
   it('resolves an Agent short address to its immutable default Session', async () => {

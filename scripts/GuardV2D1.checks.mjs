@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { classifyDatabase, readTableNames, validateProductionBindings } from './GuardV2D1.mjs';
+import { classifyDatabase, readTableNames, requireOfficeConnectionColumn, validateProductionBindings } from './GuardV2D1.mjs';
 
 const v2 = [
   'agent_mailboxes', 'agent_aliases', 'threads', 'messages',
@@ -93,4 +93,9 @@ test('requires canonical Agent Address binding before remote schema inspection o
     assert.throws(() => validateProductionBindings(missing),
       /canonical Agent Address service binding/);
   }
+});
+
+test('requires the independent connection column before deployment', () => {
+  assert.throws(() => requireOfficeConnectionColumn(['activated_at']), /migration \(0008\)/);
+  assert.doesNotThrow(() => requireOfficeConnectionColumn(['activated_at', 'independent_at']));
 });

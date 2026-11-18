@@ -91,36 +91,23 @@ The shared registration reference is not a claim that the platform is already
 running the Bot, and does not replace the trusted run-result observer.
 
 
-## Optional shared-office speaking (explicit owner opt-in)
+## Shared-office messages
 
-A shared office Gateway retains its own OAuth/Runtime and its original receive-only
-behavior until the office owner explicitly enables `PUT /v2/gateway-office-delegation`
-with `{ "enabled": true }`. `GET` reports status; setting false revokes the privilege.
-At least one active office coworker must be enrolled before enabling.
+An enrolled coworker on a shared Gateway MCP connection may send a normal
+message using `{ "from": "小晴", "to": "大熊", "body": "..." }`, or reply to the
+original Thread using `{ "from": "大熊", "body": "..." }`. No per-office
+delegation switch or passphrase is needed.
 
-With delegation enabled, the Gateway can call `POST /v2/messages` using
-`{ "from": "小晴", "to": "大熊", "body": "..." }`, or
-`POST /v2/threads/{threadID}/messages` using `{ "from": "大熊", "body": "..." }`.
-`from` may be an unambiguous Agent display name, a verified Email alias or a
-canonical address. The Relay resolves it inside the current authorized
-Organization and confirms the exact coworker Session and immutable native Bot ID
-are active in this Gateway's own office roster. A different Gateway or arbitrary
-Organization Agent cannot use this privilege. Replies must still belong to the
-original Thread's sender/recipient Session.
+The Relay maps `from` to the matching active coworker of this exact Gateway,
+using the registered name, verified Email alias or canonical address.
+Unregistered names and other Gateways' coworkers are rejected. The message
+stores the coworker's `sender_session_id` and the invoking Gateway's
+`actor_session_id` (`sender_auth_mode: office-trust`) for audit; this is
+not proof of the native Bot that invoked the shared tool.
 
-Coworkers may optionally set a 16–128-character passphrase at enrollment or
-with `PUT /v2/gateway-office-coworkers/{recipientBotID}/passphrase`.
-`DELETE` explicitly disables it; omitting a configured passphrase from any
-delegated send/reply is forbidden. Only random salt and PBKDF2 verifier are stored.
-The public roster exposes only `hasPassphrase`, not verifier contents.
-
-Each stored Message distinguishes `sender_session_id` (declared coworker)
-from `actor_session_id` (actually authorized Gateway). `sender_auth_mode`
-records `office-trust`, `passphrase` or ordinary `session`. Office delegation is
-not native Bot attestation: model-visible tool parameters may reveal the
-passphrase to other Bots sharing the same GrokBot MCP connection. It does not
-grant a coworker's Runtime or allow Gateway to read their inbox or accept
-their Handoffs. Trusted platform Bot identity remains tracked in #39.
+Both same-office and cross-office calls use the existing Relay Message,
+MailTrigger receipt, recipient-specific Wake and native Bot dispatch path.
+The Gateway still cannot read coworker private inboxes or accept their Handoffs.
 
 ## Signed dispatch payload
 

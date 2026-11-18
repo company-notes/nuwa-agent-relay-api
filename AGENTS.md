@@ -32,4 +32,4 @@ node --check scripts/prepare-deploy.mjs
 
 ## Deployment
 
-Create a PR for refactors, run CI, then merge only when tests pass and production rollout is authorized. A verified push to `main` triggers the production deployment workflow; draft PR branches do not deploy. Never print secrets, reuse the Agent Address database, or treat a successful Wrangler deploy as proof that a real message was delivered.
+Create a PR for refactors, run CI, then merge only when tests pass and production rollout is authorized. A verified push to `main` triggers the production deployment workflow; draft PR branches do not deploy. When GitHub Actions is unavailable, test the proposed merge and deploy only the verified, merged `main` commit from the local environment after rollout authorization. Never print secrets, reuse the Agent Address database, or treat a successful Wrangler deploy as proof that a real message was delivered.

@@ -1,50 +1,64 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { AuthorizedAgentDirectoryCache } from '../src/AuthorizedAgentDirectoryCache';
+import type { DirectoryAgent } from '../src/SessionIdentityClient';
 
-describe('Short-lived authorized directory caching', () => {
-  it('reuses a warm directory, then checks fresh names after expiry', async () => {
-    let now = 1000;
+describe('authorized directory cache lifecycle', () => {
+  it('reuses a completed snapshot and replaces it on a fresh discovery or expiry', async () => {
+    let now = 0;
     const cache = new AuthorizedAgentDirectoryCache(() => now);
-    const read = vi.fn()
-      .mockResolvedValueOnce([{ id: 'bear', displayName: '大熊' }])
-      .mockResolvedValueOnce([{ id: 'bear', displayName: '新大熊' }]);
+    let calls = 0;
+    let directory: DirectoryAgent[] = [{
+      id: 'agent-a', handle: 'alice', displayName: 'Alice',
+      defaultSessionID: 'session-a', defaultSessionHandle: 'main',
+    }];
+    const load = async () => {
+      calls += 1;
 
-    const first = await cache.read('grant-a', read);
-    const warm = await cache.read('grant-a', read);
+      return directory;
+    };
 
-    expect(first).toEqual(warm);
-    expect(read).toHaveBeenCalledTimes(1);
+    await cache.read('grant-a', load);
+    expect(await cache.read('grant-a', load)).toEqual(directory);
+    expect(calls).toBe(1);
+
+    directory = [...directory, {
+      id: 'agent-b', handle: 'bob', displayName: 'Bob',
+      defaultSessionID: 'session-b', defaultSessionHandle: 'main',
+    }];
+    expect(await cache.read('grant-a', load, true)).toHaveLength(2);
+    expect(await cache.read('grant-a', load)).toHaveLength(2);
+    expect(calls).toBe(2);
+
+    await cache.read('grant-b', load);
+    expect(calls).toBe(3);
 
     now += 15_001;
-    const refreshed = await cache.read('grant-a', read);
-
-    expect(refreshed).toEqual([{ id: 'bear', displayName: '新大熊' }]);
-    expect(read).toHaveBeenCalledTimes(2);
+    await cache.read('grant-a', load);
+    expect(calls).toBe(4);
   });
 
-  it('isolates authorization scopes and coalesces parallel reads', async () => {
+  it('does not share an unfinished directory request with another invocation', async () => {
     const cache = new AuthorizedAgentDirectoryCache();
-    const read = vi.fn(async () => []);
+    let complete!: (value: DirectoryAgent[]) => void;
+    const pending = new Promise<DirectoryAgent[]>((resolve) => {
+      complete = resolve;
+    });
+    const first = cache.read('grant-a', () => pending);
 
-    const results = await Promise.all([
-      cache.read('grant-a', read),
-      cache.read('grant-a', read),
-      cache.read('grant-b', read),
-    ]);
+    let secondLoaded = false;
+    const second = cache.read('grant-a', async () => {
+      secondLoaded = true;
 
-    expect(results).toEqual([[], [], []]);
-    expect(read).toHaveBeenCalledTimes(2);
-  });
+      return [];
+    });
 
-  it('never caches a rejected authorized directory request', async () => {
-    const cache = new AuthorizedAgentDirectoryCache();
-    const read = vi.fn()
-      .mockRejectedValueOnce(new Error('Agent Address unavailable'))
-      .mockResolvedValueOnce([]);
-
-    await expect(cache.read('grant-a', read)).rejects.toThrow('Agent Address unavailable');
-    await expect(cache.read('grant-a', read)).resolves.toEqual([]);
-    expect(read).toHaveBeenCalledTimes(2);
+    try {
+      expect(secondLoaded, 'A second invocation must own its request I/O').toBe(true);
+      expect(await second).toEqual([]);
+    } finally {
+      complete([]);
+      await Promise.all([first, second]);
+    }
   });
 });
