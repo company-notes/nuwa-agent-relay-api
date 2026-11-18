@@ -152,6 +152,17 @@ export class SessionIdentityClient {
     return SessionIdentityClient.requireSession(registered.session);
   }
 
+  async renameAgent(agentID: string, displayName: string): Promise<void> {
+    const updated = await this.request<{ id: string; displayName: string }>(
+      'PATCH', '/v2/account/agents/' + encodeURIComponent(agentID),
+      { agentDisplayName: displayName },
+    );
+
+    if (updated.id !== agentID || updated.displayName !== displayName) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address did not confirm the display name.');
+    }
+  }
+
   async status(): Promise<AccountStatus> {
     return this.request<AccountStatus>('GET', '/v2/account/status');
   }
