@@ -1459,6 +1459,81 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(anotherGateway.status).toBe(403);
   });
 
+  it('lets an independent MCP Session call and receive replies from an office without its own Gateway', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const independent = 'relay-test-org/alpha/author';
+    const recipientBotID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const removed = await scenario.client.call('token-a', 'DELETE',
+      '/v2/wake-subscription?session_id=session-a');
+    expect(removed.status).toBe(200);
+    const enrolled = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [{ displayName: 'Nora | Human Resources', recipientBotID, threadMode: 'platform' }],
+      });
+    expect(enrolled.status).toBe(201);
+
+    const sent = await scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', {
+        to: recipientBotID, body: 'Please confirm from your office.',
+      });
+    expect(sent.status).toBe(201);
+    const threadID = sent.body.data.threadId as string;
+    await MailReceipt.confirmArrival(env, sent.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === sent.body.data.id)?.body)
+      .toMatchObject({ recipientBotID, relayThreadID: threadID, body: 'Please confirm from your office.' });
+
+    const replied = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + threadID + '/messages?session_id=session-g', {
+        from: recipientBotID, body: 'Confirmed from the office.',
+      });
+    expect(replied.status).toBe(201);
+    expect(replied.body.data.threadId).toBe(threadID);
+    await MailReceipt.confirmArrival(env, replied.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    const inbox = await scenario.client.call('token-a', 'GET', '/v2/inbox?session_id=session-a');
+    expect(inbox.status).toBe(200);
+    expect(inbox.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: replied.body.data.id, threadId: threadID, body: 'Confirmed from the office.',
+      }),
+    ]));
+    expect(scenario.client.wakeCallbacks.some((entry) => entry.body.messageID === replied.body.data.id))
+      .toBe(false);
+
+    const reverse = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        from: recipientBotID, to: independent, body: 'A new call from the office.',
+      });
+    expect(reverse.status).toBe(201);
+    expect(reverse.body.data.threadId).not.toBe(threadID);
+    await MailReceipt.confirmArrival(env, reverse.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    const incoming = await scenario.client.call('token-a', 'GET', '/v2/inbox?session_id=session-a');
+    expect(incoming.status).toBe(200);
+    expect(incoming.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: reverse.body.data.id, body: 'A new call from the office.' }),
+    ]));
+
+    const answer = await scenario.client.call('token-a', 'POST',
+      '/v2/threads/' + reverse.body.data.threadId + '/messages?session_id=session-a', {
+        body: 'Independent Session received.',
+      });
+    expect(answer.status).toBe(201);
+    expect(answer.body.data.threadId).toBe(reverse.body.data.threadId);
+    await MailReceipt.confirmArrival(env, answer.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === answer.body.data.id)?.body)
+      .toMatchObject({ recipientBotID, relayThreadID: reverse.body.data.threadId });
+    expect(scenario.client.deliveries).toHaveLength(4);
+  });
+
   it('uses registered native Bot IDs for sending, replying and reading without name lookup', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
