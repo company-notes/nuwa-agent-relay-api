@@ -23,6 +23,7 @@ type MailboxRow = {
 
 export class MailTriggerClient {
   private readonly routes: MailTriggerRouteProvisioner;
+  private domainSnapshot?: Promise<DomainRow>;
 
   constructor(private readonly env: Env) {
     this.routes = new MailTriggerRouteProvisioner({
@@ -122,7 +123,12 @@ export class MailTriggerClient {
     await this.routes.ensureForMailbox(mailbox, domain.user!);
   }
 
-  private async verifiedDomain(): Promise<DomainRow> {
+  private verifiedDomain(): Promise<DomainRow> {
+    // Each provisioning request retains its own verified provider configuration.
+    return this.domainSnapshot ??= this.loadVerifiedDomain();
+  }
+
+  private async loadVerifiedDomain(): Promise<DomainRow> {
     const name = this.env.MAILTRIGGER_MANAGED_DOMAIN?.trim().toLowerCase();
 
     if (!name) {

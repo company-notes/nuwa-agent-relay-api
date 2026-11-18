@@ -21,12 +21,9 @@ export class RecipientDirectory {
     }
 
     const requested = RecipientDirectory.normalize(name);
-    const candidates = requireFresh
-      ? await this.address.listAgents()
-      : await AuthorizedAgentDirectoryCache.shared.read(
-        await this.address.directoryCacheScope(this.identity.organizationID),
-        () => this.address.listAgents(),
-      );
+    const scope = await this.address.directoryCacheScope(this.identity.organizationID);
+    const load = () => this.address.listAgents();
+    const candidates = await AuthorizedAgentDirectoryCache.shared.read(scope, load, requireFresh);
     const findMatches = (directory: DirectoryAgent[]) => directory.filter((agent) =>
       RecipientDirectory.normalize(agent.displayName ?? '') === requested ||
       RecipientDirectory.normalize(agent.handle) === requested);
@@ -36,7 +33,7 @@ export class RecipientDirectory {
     // A newly enrolled office Agent may be absent from another isolate's
     // 15-second OAuth-scoped snapshot. Refresh a miss before returning 404.
     if (!requireFresh && matches.length === 0) {
-      matches = findMatches(await this.address.listAgents());
+      matches = findMatches(await AuthorizedAgentDirectoryCache.shared.read(scope, load, true));
     }
 
     if (matches.length === 0) {

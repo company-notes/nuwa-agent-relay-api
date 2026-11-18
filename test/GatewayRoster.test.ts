@@ -1216,6 +1216,8 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(staleOfficeMailboxes?.count,
       'Each simulated office starts with no mailboxes from the previous scenario').toBe(0);
 
+    const beforeDomains = scenario.client.domainLookups;
+    const beforeTemplates = scenario.client.actionTemplateLookups;
     scenario.client.mailboxCreationDelayMs = 80;
     const coworkers = Array.from({ length: 4 }, (_, index) => ({
       displayName: 'Office parallel coworker ' + index,
@@ -1230,6 +1232,8 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(enrolled.body.data).toHaveLength(coworkers.length);
     expect(scenario.client.maxConcurrentMailboxCreations,
       'Independent coworkers should not wait for each prior MailTrigger mailbox').toBeGreaterThan(1);
+    expect(scenario.client.domainLookups - beforeDomains).toBe(1);
+    expect(scenario.client.actionTemplateLookups - beforeTemplates).toBe(1);
 
     const office = await scenario.client.call('token-g', 'GET',
       '/v2/gateway-office-coworkers?session_id=session-g');
@@ -1244,6 +1248,19 @@ describe('Office Gateway registration and shared Wake use cases', () => {
           enabled: true,
         })]));
     }
+
+    scenario.client.domainVerified = false;
+    const changedDomain = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', { coworkers: [coworkers[0]] });
+    expect(changedDomain.status).toBe(503);
+    expect(changedDomain.body.error.code).toBe('managed_domain_unverified');
+    expect(scenario.client.domainLookups - beforeDomains).toBe(2);
+
+    scenario.client.domainVerified = true;
+    const retry = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', { coworkers: [coworkers[0]] });
+    expect(retry.status).toBe(201);
+    expect(retry.body.data[0].recipientSessionID).toBe(enrolled.body.data[0].recipientSessionID);
   });
 });
 

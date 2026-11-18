@@ -61,6 +61,9 @@ export class RelayTestClient {
   failNextActionDeletion = false;
   failNextWebhookParameterUpdate = false;
   nameDirectoryLookups = 0;
+  domainLookups = 0;
+  actionTemplateLookups = 0;
+  domainVerified = true;
   corruptNameDirectory = false;
   autoReceiptDuringMailSend = false;
   mailboxCreationDelayMs = 0;
@@ -284,6 +287,8 @@ export class RelayTestClient {
     }
 
     if (url.pathname === '/api/v1/action-templates/' && !init?.method) {
+      this.actionTemplateLookups += 1;
+
       return Response.json(this.templates);
     }
 
@@ -426,7 +431,10 @@ export class RelayTestClient {
     }
 
     if (url.pathname === '/api/v1/domains/') {
-      return Response.json([{ id: 1, domainName: 'relay-test.example', isVerified: true, user: 31 }]);
+      this.domainLookups += 1;
+
+      return Response.json([{ id: 1, domainName: 'relay-test.example',
+        isVerified: this.domainVerified, user: 31 }]);
     }
 
     if (url.pathname === '/api/v1/mailbox/' && init?.method === 'POST') {
