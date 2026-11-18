@@ -116,6 +116,14 @@ class GatewayRosterScenario {
     await WakeService.dispatchDue(env);
   }
 
+  async mailboxForSession(sessionID: string) {
+    return env.DB.prepare(
+      `SELECT m.mailbox_id FROM agent_mailboxes m JOIN gateway_office_coworkers c
+         ON c.org_id = m.org_id AND c.recipient_agent_id = m.agent_id
+        WHERE c.recipient_session_id = ?`,
+    ).bind(sessionID).first();
+  }
+
   async directWake(sessionID: string) {
     const registered = await this.client.callAsSession(sessionID, 'POST', '/v2/wake-subscription', {
       callbackUrl: 'https://agent-hook.example.com/individual',
@@ -1577,11 +1585,7 @@ describe('Gateway coworker speaking scenarios', () => {
     const [member, colleague] = enrolled.body.data;
     const sessionID = member.recipientSessionID as string;
     const address = member.recipientCanonicalAddress as string;
-    const mailboxBefore = await env.DB.prepare(
-      `SELECT m.mailbox_id FROM agent_mailboxes m JOIN gateway_office_coworkers c
-         ON c.org_id = m.org_id AND c.recipient_agent_id = m.agent_id
-        WHERE c.recipient_session_id = ?`,
-    ).bind(sessionID).first();
+    const mailboxBefore = await scenario.mailboxForSession(sessionID);
     expect(mailboxBefore).toBeTruthy();
 
     const first = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
@@ -1709,11 +1713,7 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(rejoined.body.data[0]).toMatchObject({ recipientSessionID: sessionID, route: 'gateway' });
     expect(scenario.client.officeRegistrations).toHaveLength(3);
 
-    const mailboxAfter = await env.DB.prepare(
-      `SELECT m.mailbox_id FROM agent_mailboxes m JOIN gateway_office_coworkers c
-         ON c.org_id = m.org_id AND c.recipient_agent_id = m.agent_id
-        WHERE c.recipient_session_id = ?`,
-    ).bind(sessionID).first();
+    const mailboxAfter = await scenario.mailboxForSession(sessionID);
     expect(mailboxAfter).toEqual(mailboxBefore);
 
     const finalRoster = await scenario.office();
