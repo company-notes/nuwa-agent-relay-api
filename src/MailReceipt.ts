@@ -150,7 +150,8 @@ export class MailReceipt {
           AND s.session_id = COALESCE(g.gateway_session_id, m.recipient_session_id,
             t.accepted_session_id, t.notification_session_id)
           WHERE m.id = ? AND m.received_at IS NOT NULL
-            AND s.created_at <= m.received_at`,
+            AND s.created_at <= m.received_at
+            AND (g.gateway_session_id IS NULL OR g.approved_at <= m.received_at)`,
       ).bind(now, messageId),
     ]);
 
