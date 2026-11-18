@@ -1510,13 +1510,13 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(removed.status).toBe(200);
     const enrolled = await scenario.client.call('token-g', 'POST',
       '/v2/gateway-office-coworkers?session_id=session-g', {
-        coworkers: [{ displayName: 'Nora | Human Resources', recipientBotID, threadMode: 'platform' }],
+        coworkers: [{ displayName: '若寧 (Nora Chen) | Human Resources', recipientBotID, threadMode: 'platform' }],
       });
     expect(enrolled.status).toBe(201);
 
     const sent = await scenario.client.call('token-a', 'POST',
       '/v2/messages?session_id=session-a', {
-        to: recipientBotID, body: 'Please confirm from your office.',
+        to: '若寧', body: 'Please confirm from your office.',
       });
     expect(sent.status).toBe(201);
     const threadID = sent.body.data.threadId as string;
@@ -1572,6 +1572,51 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === answer.body.data.id)?.body)
       .toMatchObject({ recipientBotID, relayThreadID: reverse.body.data.threadId });
     expect(scenario.client.deliveries).toHaveLength(4);
+  });
+
+  it('resolves bounded short recipient names but rejects a newly ambiguous name before delivery', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const first = {
+      displayName: '若寧 (Nora Chen) | Human Resources',
+      recipientBotID: 'nora-chen-native', threadMode: 'platform',
+    };
+    const registered = await scenario.enroll([first]);
+    expect(registered.status).toBe(201);
+
+    const send = (to: string) => scenario.client.call('token-a', 'POST',
+      '/v2/messages?session_id=session-a', { to, body: 'Name resolution test.' });
+
+    const english = await send('NORA');
+    expect(english.status).toBe(201);
+    await scenario.arrive(english.body.data.id);
+
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === english.body.data.id)?.body)
+      .toMatchObject({ recipientBotID: first.recipientBotID });
+
+    const partial = await send('若');
+    expect(partial.status).toBe(404);
+    expect(partial.body.error.code).toBe('recipient_name_not_found');
+
+    const another = await scenario.enroll([{
+      displayName: '若寧 (Nora Lin) | Finance',
+      recipientBotID: 'nora-lin-native', threadMode: 'platform',
+    }]);
+    expect(another.status).toBe(201);
+
+    const before = scenario.client.deliveries.length;
+    const ambiguous = await send('若寧');
+    expect(ambiguous.status).toBe(409);
+    expect(ambiguous.body.error.code).toBe('recipient_name_ambiguous');
+    expect(scenario.client.deliveries).toHaveLength(before);
+
+    const exact = await send(first.displayName);
+    expect(exact.status).toBe(201);
+    await scenario.arrive(exact.body.data.id);
+
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === exact.body.data.id)?.body)
+      .toMatchObject({ recipientBotID: first.recipientBotID });
   });
 
   it('keeps a coworker identity when changing modes and incrementally synchronizing the office', async () => {
