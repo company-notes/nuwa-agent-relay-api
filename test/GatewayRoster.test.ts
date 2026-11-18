@@ -1670,6 +1670,14 @@ describe('Gateway coworker speaking scenarios', () => {
 
     const shared = await scenario.client.callAsSession(sessionID, 'GET', '/v2/wake-subscription');
     expect(shared.body.data).toMatchObject({ enabled: true, receiverMode: 'gateway', gatewaySessionID: 'session-g' });
+
+    // Retried receipts from the previous connection must not replay old
+    // Inbox messages or a notification withdrawn during the transition.
+    await scenario.arrive(pending.body.data.id);
+    await scenario.arrive(inboxReply.body.data.id);
+    expect(scenario.client.wakeCallbacks.some((entry) =>
+      [pending.body.data.id, inboxReply.body.data.id].includes(entry.body.messageID))).toBe(false);
+
     const resumed = await scenario.client.call('token-g', 'POST',
       '/v2/threads/' + threadID + '/messages?session_id=session-g', {
         from: 'bot:office-brian', body: 'Back on the same shared office connection.',
