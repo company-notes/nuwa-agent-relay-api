@@ -235,7 +235,7 @@ export class RelayTestClient {
           defaultSessionID: 'session-g', defaultSessionHandle: 'main' },
         { id: 'agent-000h', handle: 'gateway-2', displayName: '未啟用',
           defaultSessionID: null, defaultSessionHandle: null },
-        ...this.officeAgents.map((agent) => ({
+        ...this.officeAgents.filter((agent) => !this.archivedSessions.has(agent.id)).map((agent) => ({
           id: agent.agentId,
           handle: agent.handle,
           registrationID: agent.registrationID,
@@ -269,8 +269,10 @@ export class RelayTestClient {
       const selected = new Set(url.searchParams.getAll('session_id'));
 
       return Response.json({ ok: true, data: {
-        organization: { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
-        sessions: this.sessions().filter((session) =>
+        organization: token === 'Bearer token-foreign'
+          ? { id: 'org-other', slug: 'other-organization', identityRevision: 0 }
+          : { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
+        sessions: token === 'Bearer token-foreign' ? [] : this.sessions().filter((session) =>
           selected.has(session.id) && !this.archivedSessions.has(session.id)),
       } });
     }
@@ -323,7 +325,7 @@ export class RelayTestClient {
         input === item.canonical.split('/').slice(0, 2).join('/') &&
           item.id !== this.sessionC.id) ?? this.previousAddresses.get(input ?? '');
 
-      return session
+      return session && !this.archivedSessions.has(session.id)
         ? Response.json({ ok: true, data: session })
         : Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
     }

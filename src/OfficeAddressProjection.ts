@@ -116,6 +116,7 @@ export class OfficeAddressProjection {
     });
 
     const results = await this.env.DB.batch([...writes, ...updates]);
+
     if (results.slice(0, writes.length).some((result) => result.meta.changes !== 1)) {
       throw new APIError(409, 'office_identity_changed', 'Office identity changed during refresh.');
     }

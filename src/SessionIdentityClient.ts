@@ -22,7 +22,7 @@ export type ResolvedSession = {
 type OrganizationIdentity = { id: string; slug: string; identityRevision: number };
 
 type AccountStatus = {
-  organization: OrganizationIdentity | null;
+  organization: { id: string; slug: string } | null;
 };
 
 export type SessionSelection = {
@@ -32,7 +32,7 @@ export type SessionSelection = {
 
 type Lease = {
   expiresAt: string;
-  organization: AccountStatus['organization'];
+  organization: OrganizationIdentity | null;
   session: ResolvedSession;
 };
 

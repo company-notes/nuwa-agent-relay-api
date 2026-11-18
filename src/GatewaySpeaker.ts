@@ -80,12 +80,14 @@ export class GatewaySpeaker {
         entry.identityAvailable && entry.displayName.trim().normalize('NFKC').toLowerCase() === name);
     }
 
-    if (matches.length !== 1 || !matches[0].ready || !resolved && !matches[0].identityAvailable) {
+    if (matches.length !== 1 || !matches[0].ready ||
+        (!resolved && !matches[0].identityAvailable)) {
       throw new APIError(403, 'gateway_sender_not_enrolled',
         'This sender is not a unique active coworker of the authenticated Gateway.');
     }
 
     const selected = matches[0];
+
     if (!resolved) {
       return selected;
     }

@@ -1590,8 +1590,10 @@ describe('Gateway coworker speaking scenarios', () => {
     const send = (to: string) => scenario.client.call('token-a', 'POST',
       '/v2/messages?session_id=session-a', { to, body: 'Name resolution test.' });
 
+    const coldLookups = scenario.client.nameDirectoryLookups;
     const english = await send('NORA');
     expect(english.status).toBe(201);
+    expect(scenario.client.nameDirectoryLookups - coldLookups).toBe(1);
     await scenario.arrive(english.body.data.id);
 
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === english.body.data.id)?.body)
@@ -1600,6 +1602,7 @@ describe('Gateway coworker speaking scenarios', () => {
     const partial = await send('若');
     expect(partial.status).toBe(404);
     expect(partial.body.error.code).toBe('recipient_name_not_found');
+    expect(scenario.client.nameDirectoryLookups - coldLookups).toBe(1);
 
     const another = await scenario.enroll([{
       displayName: '若寧 (Nora Lin) | Finance',
@@ -1608,13 +1611,16 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(another.status).toBe(201);
 
     const before = scenario.client.deliveries.length;
+    const beforeAmbiguous = scenario.client.nameDirectoryLookups;
     const ambiguous = await send('若寧');
     expect(ambiguous.status).toBe(409);
     expect(ambiguous.body.error.code).toBe('recipient_name_ambiguous');
     expect(scenario.client.deliveries).toHaveLength(before);
+    expect(scenario.client.nameDirectoryLookups - beforeAmbiguous).toBe(1);
 
     const exact = await send(first.displayName);
     expect(exact.status).toBe(201);
+    expect(scenario.client.nameDirectoryLookups - beforeAmbiguous).toBe(1);
     await scenario.arrive(exact.body.data.id);
 
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === exact.body.data.id)?.body)
@@ -1685,6 +1691,7 @@ describe('Gateway coworker speaking scenarios', () => {
     const beforeSessions = scenario.client.sessionLookups;
     const beforeSelections = scenario.client.officeSelectionLookups;
     const beforeDirectories = scenario.client.nameDirectoryLookups;
+    const beforeLeases = scenario.client.runtimeLeaseLookups;
     const next = await scenario.client.call('token-g', 'POST',
       '/v2/threads/' + sent.body.data.threadId + '/messages?session_id=session-g', {
         from: 'bot:renamed-brian', body: 'Continue without another identity lookup.',
@@ -1698,6 +1705,16 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(scenario.client.sessionLookups - beforeSessions).toBe(0);
     expect(scenario.client.officeSelectionLookups - beforeSelections).toBe(0);
     expect(scenario.client.nameDirectoryLookups - beforeDirectories).toBe(0);
+    expect(scenario.client.runtimeLeaseLookups - beforeLeases).toBe(2);
+
+    const deliveriesBeforeOldName = scenario.client.deliveries.length;
+    const oldName = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + sent.body.data.threadId + '/messages?session_id=session-g', {
+        from: 'Nora', body: 'The old display name must not authorize a sender.',
+      });
+    expect(oldName.status).toBe(403);
+    expect(scenario.client.deliveries).toHaveLength(deliveriesBeforeOldName);
+    expect(scenario.client.officeSelectionLookups - beforeSelections).toBe(0);
 
     const repeated = await scenario.enroll([
       { ...members[0], displayName: 'Nora Chen' }, members[1],
@@ -1709,6 +1726,15 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(repeated.body.data[1].recipientSessionID).toBe(brian.recipientSessionID);
     expect(scenario.client.officeRegistrations).toHaveLength(2);
     expect(await scenario.mailboxForSession(nora.recipientSessionID)).toEqual(mailbox);
+
+    const adminLookups = scenario.client.officeSelectionLookups;
+    const roster = await scenario.client.call('token-g', 'GET',
+      '/v2/gateway-office-coworkers?session_id=session-g');
+    expect(roster.status).toBe(200);
+    expect(roster.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ displayName: 'Nora Chen', recipientSessionID: nora.recipientSessionID }),
+    ]));
+    expect(scenario.client.officeSelectionLookups).toBe(adminLookups);
 
     const previousAddress = await scenario.client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
       to: originalAddress, body: 'An address copied from old history.',

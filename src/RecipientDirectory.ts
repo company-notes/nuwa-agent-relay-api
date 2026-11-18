@@ -47,22 +47,16 @@ export class RecipientDirectory {
       this.identity.organizationID, this.identity.organizationIdentityRevision,
     );
     const load = () => this.address.listAgents();
-    let candidates = await AuthorizedAgentDirectoryCache.shared.read(scope, load, requireFresh);
+    const candidates = await AuthorizedAgentDirectoryCache.shared.read(scope, load, requireFresh);
     const findMatches = (directory: DirectoryAgent[]) => directory.filter((agent) =>
       RecipientDirectory.normalize(agent.displayName ?? '') === requested ||
       RecipientDirectory.normalize(agent.handle) === requested);
 
     let matches = findMatches(candidates);
 
-    // A newly enrolled office Agent may be absent from another isolate's
-    // 15-second OAuth-scoped snapshot. Refresh a miss before returning 404.
-    if (!requireFresh && matches.length === 0) {
-      candidates = await AuthorizedAgentDirectoryCache.shared.read(scope, load, true);
-      matches = findMatches(candidates);
-    }
-
-    // Exact names/handles take precedence. Short names must be unique in the
-    // freshly loaded Organization directory, including unavailable Agents.
+    // The existing authorization carries the authoritative revision. A rename,
+    // registration, archive or default change invalidates the directory key.
+    // Exact and short names use the same complete snapshot, including unavailable Agents.
     if (allowShortNames && matches.length === 0) {
       matches = candidates.filter((agent) =>
         RecipientDirectory.shortNames(agent.displayName ?? '').includes(requested));
