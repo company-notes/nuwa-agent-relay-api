@@ -1576,6 +1576,12 @@ describe('Gateway coworker speaking scenarios', () => {
     const [member, colleague] = enrolled.body.data;
     const sessionID = member.recipientSessionID as string;
     const address = member.recipientCanonicalAddress as string;
+    const mailboxBefore = await env.DB.prepare(
+      `SELECT m.mailbox_id FROM agent_mailboxes m JOIN gateway_office_coworkers c
+         ON c.org_id = m.org_id AND c.recipient_agent_id = m.agent_id
+        WHERE c.recipient_session_id = ?`,
+    ).bind(sessionID).first();
+    expect(mailboxBefore).toBeTruthy();
 
     const first = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
       from: 'bot:office-brian', to: 'bot:office-nora', body: 'Please confirm the original conversation.',
@@ -1667,12 +1673,23 @@ describe('Gateway coworker speaking scenarios', () => {
       .map((entry) => new URL(entry.url).pathname)).toEqual(['/gateway']);
 
     const removed = await scenario.client.call('token-g', 'DELETE',
-      '/v2/gateway-teammates?session_id=session-g&recipient_address=' + encodeURIComponent(address));
+      '/v2/gateway-teammates?session_id=session-g&recipient_bot_id=' + encodeURIComponent(brian.recipientBotID));
     expect(removed.status).toBe(200);
     const rejoined = await scenario.enroll([{ ...brian, displayName: 'Brian Chen' }]);
     expect(rejoined.status).toBe(201);
     expect(rejoined.body.data[0]).toMatchObject({ recipientSessionID: sessionID, route: 'gateway' });
     expect(scenario.client.officeRegistrations).toHaveLength(3);
+
+    const mailboxAfter = await env.DB.prepare(
+      `SELECT m.mailbox_id FROM agent_mailboxes m JOIN gateway_office_coworkers c
+         ON c.org_id = m.org_id AND c.recipient_agent_id = m.agent_id
+        WHERE c.recipient_session_id = ?`,
+    ).bind(sessionID).first();
+    expect(mailboxAfter).toEqual(mailboxBefore);
+    const finalRoster = await scenario.office();
+    expect(finalRoster.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientSessionID: colleague.recipientSessionID, route: 'gateway' }),
+    ]));
   });
 
   it('lets an existing independent colleague explicitly join a shared office without creating another identity', async () => {

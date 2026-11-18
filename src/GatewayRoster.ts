@@ -147,33 +147,7 @@ export class GatewayRoster {
     return this.teammate(this.identity.sessionID);
   }
 
-  async approve(shareConnection = false) {
-    const teammate = await this.teammate(this.identity.sessionID);
-
-    if (!teammate || GatewayRoster.status(teammate) !== GatewayTeammateStatus.Pending) {
-      throw new APIError(404, 'gateway_invitation_missing',
-        'This recipient has no pending Gateway invitation.');
-    }
-
-    if (teammate.recipientAgentID !== this.identity.agentID ||
-        teammate.recipientCanonicalAddress !== this.identity.canonicalAddress) {
-      throw new APIError(409, 'gateway_recipient_changed',
-        'Recipient identity changed since the invitation was created.');
-    }
-
-    await this.verifiedGateway(teammate.gatewaySessionID);
-
-    if (shareConnection) {
-      await new OfficeConnectionService(this.env, this.identity).joinShared(teammate);
-
-      return {
-        recipientSessionID: this.identity.sessionID,
-        gatewaySessionID: teammate.gatewaySessionID,
-        recipientBotID: teammate.recipientBotID,
-        status: 'active',
-      };
-    }
-
+  private async approveReceivingRoute(): Promise<void> {
     const existing = await this.env.DB.prepare(
       'SELECT recipient_session_id FROM gateway_routes WHERE org_id = ? AND recipient_session_id = ?',
     ).bind(this.identity.organizationID, this.identity.sessionID)
@@ -209,6 +183,29 @@ export class GatewayRoster {
     if (activation.meta.changes !== 1 || route.meta.changes !== 1) {
       throw new APIError(409, 'gateway_invitation_conflict',
         'Gateway teammate approval did not activate exactly one recipient route.');
+    }
+  }
+
+  async approve(shareConnection = false) {
+    const teammate = await this.teammate(this.identity.sessionID);
+
+    if (!teammate || GatewayRoster.status(teammate) !== GatewayTeammateStatus.Pending) {
+      throw new APIError(404, 'gateway_invitation_missing',
+        'This recipient has no pending Gateway invitation.');
+    }
+
+    if (teammate.recipientAgentID !== this.identity.agentID ||
+        teammate.recipientCanonicalAddress !== this.identity.canonicalAddress) {
+      throw new APIError(409, 'gateway_recipient_changed',
+        'Recipient identity changed since the invitation was created.');
+    }
+
+    await this.verifiedGateway(teammate.gatewaySessionID);
+
+    if (shareConnection) {
+      await new OfficeConnectionService(this.env, this.identity).joinShared(teammate);
+    } else {
+      await this.approveReceivingRoute();
     }
 
     return {
