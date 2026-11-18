@@ -2,8 +2,9 @@ import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
 import { APIError } from './HTTP';
 import { PlatformBotIdentity } from './PlatformBotIdentity';
+import { OfficeAddressProjection } from './OfficeAddressProjection';
 import {
-  SessionIdentityClient, type SessionIdentity,
+  SessionIdentityClient, type ResolvedSession, type SessionIdentity,
 } from './SessionIdentityClient';
 
 export enum SenderAuthMode {
@@ -60,15 +61,16 @@ export class GatewaySpeaker {
   private async resolveSender(from: Recipient): Promise<OfficeSender> {
     const botID = typeof from === 'string' ? PlatformBotIdentity.readSelector(from) : null;
     let matches: OfficeSender[];
+    let resolved: ResolvedSession | undefined;
 
     if (botID !== null) {
       matches = await this.officeSenders(botID);
     } else if (typeof from !== 'string' || from.includes('/') ||
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
-      const session = await new AliasService(this.env, this.actor, this.address).resolve(from);
+      resolved = await new AliasService(this.env, this.actor, this.address).resolve(from);
+      const session = resolved;
       matches = (await this.officeSenders()).filter((entry) =>
-        entry.sessionID === session.id && entry.agentID === session.agentId &&
-        entry.canonicalAddress === session.canonical);
+        entry.sessionID === session.id && entry.agentID === session.agentId);
     } else {
       const name = from.trim().normalize('NFKC').toLowerCase();
 
@@ -86,7 +88,15 @@ export class GatewaySpeaker {
         'This sender is not a unique active coworker of the authenticated Gateway.');
     }
 
-    return matches[0];
+    const selected = matches[0];
+    const projection = new OfficeAddressProjection(this.env, this.actor, this.address);
+    const session = resolved ?? await projection.resolve(selected.sessionID, selected.agentID);
+    await projection.refresh(session, selected.canonicalAddress);
+
+    return {
+      ...selected, canonicalAddress: session.canonical,
+      displayName: session.agentDisplayName ?? selected.displayName,
+    };
   }
 
   async resolve(from: Recipient | undefined): Promise<AuthorizedSpeaker | null> {

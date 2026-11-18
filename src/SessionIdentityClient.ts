@@ -141,12 +141,12 @@ export class SessionIdentityClient {
     return records as DirectoryAgent[];
   }
 
-  async registerOfficeAgent(agentName: string, agentDisplayName: string): Promise<ResolvedSession> {
+  async registerOfficeAgent(registrationID: string, agentDisplayName: string): Promise<ResolvedSession> {
     // A stable request ID is scoped by the OAuth Organization in Agent Address.
     // Its idempotent response contains only the public Session, never a Runtime credential.
     const registered = await this.request<{ session: unknown }>(
-      'PUT', '/v2/account/agent-registrations/' + encodeURIComponent(agentName),
-      { agentName, agentDisplayName, sessionName: 'main' },
+      'PUT', '/v2/account/agent-registrations/' + encodeURIComponent(registrationID),
+      { agentDisplayName, sessionName: 'main' },
     );
 
     return SessionIdentityClient.requireSession(registered.session);

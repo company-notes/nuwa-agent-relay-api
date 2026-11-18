@@ -42,15 +42,13 @@ export class OfficeConnectionService {
          AND NOT EXISTS (SELECT 1 FROM gateway_routes r
            WHERE r.org_id = t.org_id AND r.recipient_session_id = t.recipient_session_id
              AND (r.recipient_agent_id <> t.recipient_agent_id OR
-               r.recipient_canonical_address <> t.recipient_canonical_address OR
                r.recipient_bot_id <> t.recipient_bot_id OR r.thread_mode <> t.thread_mode OR
                r.first_contact_mode <> t.first_contact_mode))
          AND NOT EXISTS (SELECT 1 FROM gateway_office_coworkers c
            WHERE c.org_id = t.org_id AND c.gateway_session_id = t.gateway_session_id
              AND c.recipient_bot_id = t.recipient_bot_id
              AND (c.recipient_session_id IS NULL OR c.recipient_session_id <> t.recipient_session_id OR
-               c.recipient_agent_id <> t.recipient_agent_id OR
-               c.recipient_canonical_address <> t.recipient_canonical_address))
+               c.recipient_agent_id <> t.recipient_agent_id))
     )`;
     const args = [organizationID, sessionID, gatewaySessionID, recipientBotID,
       threadMode, firstContactMode, createdAt, now];
@@ -70,7 +68,7 @@ export class OfficeConnectionService {
            (org_id, recipient_agent_id, recipient_session_id, recipient_canonical_address,
             recipient_bot_id, thread_mode, first_contact_mode, created_at)
          SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ${eligible}
-         ON CONFLICT(org_id, recipient_session_id) DO NOTHING`,
+         ON CONFLICT(org_id, recipient_session_id) DO UPDATE SET recipient_canonical_address = excluded.recipient_canonical_address`,
       ).bind(organizationID, agentID, sessionID, canonicalAddress,
         recipientBotID, threadMode, firstContactMode, now, ...args),
       this.env.DB.prepare(
@@ -80,13 +78,13 @@ export class OfficeConnectionService {
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${eligible}
          ON CONFLICT(org_id, gateway_session_id, recipient_bot_id) DO UPDATE SET
            display_name = excluded.display_name, activated_at = excluded.activated_at,
-           independent_at = NULL`,
+           recipient_canonical_address = excluded.recipient_canonical_address, independent_at = NULL`,
       ).bind(organizationID, gatewaySessionID, recipientBotID, handle, displayName,
         agentID, sessionID, canonicalAddress, now, now, ...args),
       this.env.DB.prepare(
-        `UPDATE gateway_teammates SET status = 'active', approved_at = ?
+        `UPDATE gateway_teammates SET status = 'active', approved_at = ?, recipient_canonical_address = ?
           WHERE org_id = ? AND recipient_session_id = ? AND ${eligible}`,
-      ).bind(now, organizationID, sessionID, ...args),
+      ).bind(now, canonicalAddress, organizationID, sessionID, ...args),
     ]);
 
     if (registry.meta.changes !== 1 || membership.meta.changes !== 1) {

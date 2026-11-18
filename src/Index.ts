@@ -442,6 +442,7 @@ export class RelayAPI {
     const identity = await address.authorize(sessionID, runtimeToken);
     const response = await this.authorized(request, path, identity, address);
     response.headers.set('x-nuwa-lease-expires-at', identity.leaseExpiresAt);
+    response.headers.set('x-nuwa-canonical-address', identity.canonicalAddress);
 
     return response;
   }
