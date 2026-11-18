@@ -188,6 +188,10 @@ export class WakeRegistration {
            FROM wake_registration_attempts
           WHERE session_id = ? AND org_id = ? AND verification_id = ?
             AND expires_at > ? AND failures < 5
+            AND NOT EXISTS (SELECT 1 FROM gateway_teammates t
+              WHERE t.org_id = wake_registration_attempts.org_id
+                AND t.recipient_session_id = wake_registration_attempts.session_id
+                AND t.status = 'active')
          ON CONFLICT(session_id) DO UPDATE SET
            org_id = excluded.org_id,
            callback_url = excluded.callback_url,

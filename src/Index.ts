@@ -327,15 +327,17 @@ export class RelayAPI {
         const query = new URL(request.url).searchParams;
         const address = query.get('recipient_address');
         const name = query.get('recipient_name');
+        const botID = query.get('recipient_bot_id');
 
-        if (Boolean(address) === Boolean(name) ||
-            address && address.length > 255 || name && name.length > 120) {
+        if ([address, name, botID].filter(Boolean).length !== 1 ||
+            address && address.length > 255 || name && name.length > 120 ||
+            botID && botID.length > 192) {
           throw new APIError(400, 'gateway_recipient_required',
-            'Specify exactly one valid recipient_name or recipient_address.');
+            'Specify exactly one recipient_name, recipient_address or recipient_bot_id.');
         }
 
         return HTTP.response(await roster.removeTeammate(
-          address ? { address } : { name: name! },
+          botID ? { botID } : address ? { address } : { name: name! },
         ));
       }
     }
@@ -346,7 +348,13 @@ export class RelayAPI {
       }
 
       if (request.method === 'PUT') {
-        return HTTP.response(await roster.approve());
+        const data = request.body ? await HTTP.json(request) : {};
+
+        if (data.shareConnection !== undefined && typeof data.shareConnection !== 'boolean') {
+          throw new APIError(400, 'invalid_office_connection', 'shareConnection must be a boolean.');
+        }
+
+        return HTTP.response(await roster.approve(data.shareConnection === true));
       }
 
       if (request.method === 'DELETE') {

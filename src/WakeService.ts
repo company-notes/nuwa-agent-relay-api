@@ -59,7 +59,7 @@ export class WakeService {
     }>();
 
     const pending = await new WakeRegistration(this.env, this.identity).pending();
-    const callback = row ?? shared;
+    const callback = shared ?? row;
 
     return {
       sessionID: this.identity.sessionID,
@@ -142,9 +142,9 @@ export class WakeService {
       const leaseUntil = new Date(Date.now() + 30_000).toISOString();
       const claimed = await env.DB.prepare(
         `UPDATE wake_events SET lease_owner = ?, lease_until = ?
-          WHERE message_id = ? AND status = 'pending' AND next_attempt_at <= ?
+          WHERE message_id = ? AND session_id = ? AND status = 'pending' AND next_attempt_at <= ?
             AND (lease_until IS NULL OR lease_until <= ?)`,
-      ).bind(leaseOwner, leaseUntil, event.messageId, now, now).run();
+      ).bind(leaseOwner, leaseUntil, event.messageId, event.sessionID, now, now).run();
 
       if (claimed.meta.changes !== 1) {
         continue;

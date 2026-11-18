@@ -2,6 +2,7 @@ import type { Env } from './Env';
 import { GatewayFirstContactMode, GatewayModeCodec, GatewayThreadMode } from './GatewayModeCodec';
 import { APIError } from './HTTP';
 import { PlatformBotIdentity } from './PlatformBotIdentity';
+import { OfficeConnectionService } from './OfficeConnectionService';
 import { RecipientDirectory } from './RecipientDirectory';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 
@@ -146,7 +147,7 @@ export class GatewayRoster {
     return this.teammate(this.identity.sessionID);
   }
 
-  async approve() {
+  async approve(shareConnection = false) {
     const teammate = await this.teammate(this.identity.sessionID);
 
     if (!teammate || GatewayRoster.status(teammate) !== GatewayTeammateStatus.Pending) {
@@ -161,6 +162,17 @@ export class GatewayRoster {
     }
 
     await this.verifiedGateway(teammate.gatewaySessionID);
+
+    if (shareConnection) {
+      await new OfficeConnectionService(this.env, this.identity).joinShared(teammate);
+
+      return {
+        recipientSessionID: this.identity.sessionID,
+        gatewaySessionID: teammate.gatewaySessionID,
+        recipientBotID: teammate.recipientBotID,
+        status: 'active',
+      };
+    }
 
     const existing = await this.env.DB.prepare(
       'SELECT recipient_session_id FROM gateway_routes WHERE org_id = ? AND recipient_session_id = ?',
@@ -229,38 +241,28 @@ export class GatewayRoster {
       return { removed: true, recipientSessionID };
     }
 
-    // Only approved coworkers own the shared route and its pending Wake.
-    // A pending proposal must never erase the recipient's unrelated route.
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `DELETE FROM wake_events WHERE session_id = ? AND status = 'pending'
-          AND message_id IN (
-            SELECT m.id FROM messages m JOIN threads t ON t.id = m.thread_id
-             WHERE t.org_id = ? AND m.recipient_session_id = ?
-          )`,
-      ).bind(row.gatewaySessionID, this.identity.organizationID, recipientSessionID),
-      this.env.DB.prepare(
-        'DELETE FROM gateway_first_contacts WHERE org_id = ? AND recipient_session_id = ?',
-      ).bind(this.identity.organizationID, recipientSessionID),
-      this.env.DB.prepare(
-        'DELETE FROM gateway_conversations WHERE org_id = ? AND recipient_session_id = ?',
-      ).bind(this.identity.organizationID, recipientSessionID),
-      this.env.DB.prepare(
-        'DELETE FROM gateway_routes WHERE org_id = ? AND recipient_session_id = ? AND recipient_bot_id = ?',
-      ).bind(this.identity.organizationID, recipientSessionID, row.recipientBotID),
-      this.env.DB.prepare(
-        `UPDATE gateway_office_coworkers SET activated_at = NULL
-          WHERE org_id = ? AND recipient_session_id = ?`,
-      ).bind(this.identity.organizationID, recipientSessionID),
-      this.env.DB.prepare(
-        'DELETE FROM gateway_teammates WHERE org_id = ? AND recipient_session_id = ?',
-      ).bind(this.identity.organizationID, recipientSessionID),
-    ]);
+    await new OfficeConnectionService(this.env, this.identity).leaveShared(row, gatewayOwned);
 
     return { removed: true, recipientSessionID };
   }
 
-  async removeTeammate(recipientTarget: { address?: string; name?: string }) {
+  async removeTeammate(recipientTarget: { address?: string; name?: string; botID?: string }) {
+    if (recipientTarget.botID !== undefined) {
+      PlatformBotIdentity.requireID(recipientTarget.botID, 'recipientBotID');
+      const { results } = await this.env.DB.prepare(
+        `SELECT recipient_session_id AS sessionID FROM gateway_teammates
+          WHERE org_id = ? AND gateway_session_id = ? AND recipient_bot_id = ? LIMIT 2`,
+      ).bind(this.identity.organizationID, this.identity.sessionID, recipientTarget.botID)
+        .all<{ sessionID: string }>();
+
+      if (results.length !== 1) {
+        throw new APIError(results.length ? 409 : 404, 'gateway_teammate_missing',
+          'The Bot ID must identify one coworker of this Gateway.');
+      }
+
+      return this.revoke(results[0].sessionID, true);
+    }
+
     // Destructive operations must consult current authoritative names, not a
     // short-lived snapshot that may still contain a previous display name.
     const recipient = recipientTarget.name
