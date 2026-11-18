@@ -22,6 +22,12 @@ class GatewayRosterScenario {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM wake_events WHERE session_id = ?')
         .bind(gatewaySessionID),
+      env.DB.prepare(`DELETE FROM wake_events WHERE session_id IN (${officeSessions})`)
+        .bind(organizationID, gatewaySessionID),
+      env.DB.prepare(`DELETE FROM wake_subscriptions WHERE session_id IN (${officeSessions})`)
+        .bind(organizationID, gatewaySessionID),
+      env.DB.prepare(`DELETE FROM wake_registration_attempts WHERE session_id IN (${officeSessions})`)
+        .bind(organizationID, gatewaySessionID),
 
       env.DB.prepare(
         `DELETE FROM agent_aliases WHERE org_id = ? AND agent_id IN (
@@ -95,6 +101,32 @@ class GatewayRosterScenario {
 
   private gateway(method: string, path: string, body?: object) {
     return this.client.call('token-g', method, path + '?session_id=session-g', body);
+  }
+
+  enroll(coworkers: Array<{ displayName: string; recipientBotID: string; threadMode: string }>) {
+    return this.gateway('POST', '/v2/gateway-office-coworkers', { coworkers });
+  }
+
+  office() {
+    return this.gateway('GET', '/v2/gateway-office-coworkers');
+  }
+
+  async arrive(messageID: string) {
+    await MailReceipt.confirmArrival(env, messageID, 'webhook');
+    await WakeService.dispatchDue(env);
+  }
+
+  async directWake(sessionID: string) {
+    const registered = await this.client.callAsSession(sessionID, 'POST', '/v2/wake-subscription', {
+      callbackUrl: 'https://agent-hook.example.com/individual',
+    });
+    expect(registered.status).toBe(201);
+
+    const challenge = this.client.wakeChallenges.at(-1)!;
+    const verified = await this.client.callAsSession(sessionID, 'POST', '/v2/wake-subscription/verification', {
+      verificationId: challenge.verificationId, challenge: challenge.challenge,
+    });
+    expect(verified.status).toBe(200);
   }
 
   invite(address: string, botID: string, threadMode: string = 'platform',
@@ -1532,6 +1564,145 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === answer.body.data.id)?.body)
       .toMatchObject({ recipientBotID, relayThreadID: reverse.body.data.threadId });
     expect(scenario.client.deliveries).toHaveLength(4);
+  });
+
+  it('keeps a coworker identity when changing modes and incrementally synchronizing the office', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+    const brian = { displayName: 'Brian', recipientBotID: 'office-brian', threadMode: 'platform' };
+    const nora = { displayName: 'Nora', recipientBotID: 'office-nora', threadMode: 'platform' };
+    const enrolled = await scenario.enroll([brian, nora]);
+    expect(enrolled.status).toBe(201);
+    const [member, colleague] = enrolled.body.data;
+    const sessionID = member.recipientSessionID as string;
+    const address = member.recipientCanonicalAddress as string;
+
+    const first = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
+      from: 'bot:office-brian', to: 'bot:office-nora', body: 'Please confirm the original conversation.',
+    });
+    expect(first.status).toBe(201);
+    const threadID = first.body.data.threadId as string;
+    await scenario.arrive(first.body.data.id);
+
+    const left = await scenario.client.callAsSession(sessionID, 'DELETE', '/v2/gateway-invitation');
+    expect(left.status).toBe(200);
+    const detached = await scenario.office();
+    expect(detached.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientSessionID: sessionID, route: 'inbox', enabled: false }),
+    ]));
+
+    const denied = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
+      from: 'bot:office-brian', to: 'bot:office-nora', body: 'Old shared permission must be gone.',
+    });
+    expect(denied.status).toBe(403);
+
+    const inboxReply = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + threadID + '/messages?session_id=session-g', {
+        from: 'bot:office-nora', body: 'Reply while Brian uses Inbox.',
+      });
+    expect(inboxReply.status).toBe(201);
+    await scenario.arrive(inboxReply.body.data.id);
+    const inbox = await scenario.client.callAsSession(sessionID, 'GET', '/v2/inbox');
+    expect(inbox.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: inboxReply.body.data.id, threadId: threadID }),
+    ]));
+    expect(scenario.client.wakeCallbacks.some((entry) => entry.body.messageID === inboxReply.body.data.id))
+      .toBe(false);
+
+    await scenario.directWake(sessionID);
+    const changed = await scenario.enroll([
+      { ...brian, displayName: 'Brian Chen' }, nora,
+      { displayName: 'New colleague', recipientBotID: 'office-new', threadMode: 'platform' },
+    ]);
+    expect(changed.status).toBe(201);
+    expect(changed.body.data[0]).toMatchObject({
+      displayName: 'Brian Chen', recipientSessionID: sessionID, recipientCanonicalAddress: address, route: 'direct',
+    });
+    expect(changed.body.data[1].recipientSessionID).toBe(colleague.recipientSessionID);
+    expect(scenario.client.officeRegistrations).toHaveLength(3);
+
+    const directMessage = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
+      from: 'bot:office-nora', to: 'bot:office-brian', body: 'Direct Wake after the mode change.',
+    });
+    expect(directMessage.status).toBe(201);
+    await scenario.arrive(directMessage.body.data.id);
+    expect(scenario.client.wakeRequests.filter((entry) => entry.body.messageID === directMessage.body.data.id)
+      .map((entry) => new URL(entry.url).pathname)).toEqual(['/individual']);
+
+    const independentReply = await scenario.client.callAsSession(sessionID, 'POST',
+      '/v2/threads/' + threadID + '/messages', { body: 'Original Thread still works.' });
+    expect(independentReply.status).toBe(201);
+    expect(independentReply.body.data.threadId).toBe(threadID);
+    await scenario.arrive(independentReply.body.data.id);
+
+    const invited = await scenario.invite(address, brian.recipientBotID);
+    expect(invited.status).toBe(201);
+    const approved = await scenario.client.callAsSession(sessionID, 'PUT', '/v2/gateway-invitation', {
+      shareConnection: true,
+    });
+    expect(approved.status).toBe(200);
+
+    const shared = await scenario.client.callAsSession(sessionID, 'GET', '/v2/wake-subscription');
+    expect(shared.body.data).toMatchObject({ enabled: true, receiverMode: 'gateway', gatewaySessionID: 'session-g' });
+    const resumed = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + threadID + '/messages?session_id=session-g', {
+        from: 'bot:office-brian', body: 'Back on the same shared office connection.',
+      });
+    expect(resumed.status).toBe(201);
+    expect(resumed.body.data.threadId).toBe(threadID);
+
+    const history = await scenario.client.callAsSession(sessionID, 'GET', '/v2/threads/' + threadID);
+    expect(history.body.data.map((item: { body: string }) => item.body)).toEqual([
+      'Please confirm the original conversation.', 'Reply while Brian uses Inbox.',
+      'Original Thread still works.', 'Back on the same shared office connection.',
+    ]);
+
+    const response = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + threadID + '/messages?session_id=session-g', {
+        from: 'bot:office-nora', body: 'Shared route restored.',
+      });
+    expect(response.status).toBe(201);
+    await scenario.arrive(response.body.data.id);
+    expect(scenario.client.wakeRequests.filter((entry) => entry.body.messageID === response.body.data.id)
+      .map((entry) => new URL(entry.url).pathname)).toEqual(['/gateway']);
+
+    const removed = await scenario.client.call('token-g', 'DELETE',
+      '/v2/gateway-teammates?session_id=session-g&recipient_address=' + encodeURIComponent(address));
+    expect(removed.status).toBe(200);
+    const rejoined = await scenario.enroll([{ ...brian, displayName: 'Brian Chen' }]);
+    expect(rejoined.status).toBe(201);
+    expect(rejoined.body.data[0]).toMatchObject({ recipientSessionID: sessionID, route: 'gateway' });
+    expect(scenario.client.officeRegistrations).toHaveLength(3);
+  });
+
+  it('lets an existing independent colleague explicitly join a shared office without creating another identity', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+    const address = 'relay-test-org/beta/reviewer';
+    const invited = await scenario.invite(address, 'existing-bot');
+    expect(invited.status).toBe(201);
+
+    const approved = await scenario.client.call('token-b', 'PUT',
+      '/v2/gateway-invitation?session_id=session-b', { shareConnection: true });
+    expect(approved.status).toBe(200);
+
+    const office = await scenario.enroll([
+      { displayName: '大熊', recipientBotID: 'existing-bot', threadMode: 'platform' },
+    ]);
+    expect(office.status).toBe(201);
+    expect(office.body.data[0]).toMatchObject({
+      recipientSessionID: 'session-b', recipientCanonicalAddress: address, route: 'gateway',
+    });
+    expect(scenario.client.officeRegistrations).toHaveLength(0);
+
+    const sent = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
+      from: 'bot:existing-bot', to: '小晴', body: 'Using my existing identity from the shared office.',
+    });
+    expect(sent.status).toBe(201);
+    const inbox = await scenario.client.call('token-a', 'GET', '/v2/inbox?session_id=session-a');
+    expect(inbox.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: sent.body.data.id, senderSessionID: 'session-b' }),
+    ]));
   });
 
   it('uses registered native Bot IDs for sending, replying and reading without name lookup', async () => {

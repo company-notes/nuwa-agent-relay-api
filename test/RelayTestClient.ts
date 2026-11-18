@@ -156,6 +156,7 @@ export class RelayTestClient {
         canonical: RelayTestClient.slug + '/' + input.agentName + '/' + input.sessionName,
         handle: input.agentName,
         displayName: input.agentDisplayName,
+        agentDisplayName: input.agentDisplayName,
         createdAt: new Date().toISOString(),
       };
       this.officeAgents.push(registered);
@@ -196,6 +197,22 @@ export class RelayTestClient {
           createdAt: agent.createdAt,
         })),
       ] });
+    }
+
+    const agentUpdate = url.pathname.match(/^\/v2\/account\/agents\/([^/]+)$/);
+
+    if (agentUpdate && init?.method === 'PATCH') {
+      const agent = this.officeAgents.find((item) => item.agentId === agentUpdate[1]);
+
+      if (!agent) {
+        return Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
+      }
+
+      const data = JSON.parse(String(init.body)) as { agentDisplayName: string };
+      agent.displayName = data.agentDisplayName;
+      agent.agentDisplayName = data.agentDisplayName;
+
+      return Response.json({ ok: true, data: { id: agent.agentId, displayName: agent.displayName } });
     }
 
     const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
@@ -716,17 +733,28 @@ export class RelayTestClient {
     this.mailboxArchives.set(id, archive);
   }
 
+  async callAsSession(
+    sessionID: string, method: string, path: string, data?: object,
+  ): Promise<{ status: number; body: any }> {
+    const separator = path.includes('?') ? '&' : '?';
+
+    return this.callWithHeaders(method, path + separator + 'session_id=' + sessionID, data, {
+      authorization: 'Bearer token-a',
+      'x-nuwa-runtime-token': sessionID.replace('session-', 'runtime-'),
+    });
+  }
+
   async callWithHeaders(
     method: string,
     path: string,
-    data: object,
+    data: object | undefined,
     headers: Record<string, string>,
   ): Promise<{ status: number; body: any }> {
     const response = await exports.default.fetch(
       new Request(`${RelayTestClient.origin}${path}`, {
         method,
         headers: { 'content-type': 'application/json', ...headers },
-        body: JSON.stringify(data),
+        body: data === undefined ? undefined : JSON.stringify(data),
       }),
     );
 
