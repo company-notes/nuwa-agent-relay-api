@@ -46,16 +46,19 @@ describe('authorized directory cache lifecycle', () => {
     });
     const first = cache.read('grant-a', () => pending);
 
-    const second = cache.read('grant-a', async () => []);
+    let secondLoaded = false;
+    const second = cache.read('grant-a', async () => {
+      secondLoaded = true;
+
+      return [];
+    });
+
     try {
-      const observed = await Promise.race([
-        second.then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
-      ]);
-      expect(observed, 'A second invocation must not wait for another request I/O').toBe(true);
+      expect(secondLoaded, 'A second invocation must own its request I/O').toBe(true);
+      expect(await second).toEqual([]);
     } finally {
       complete([]);
-      await first;
+      await Promise.all([first, second]);
     }
   });
 });
