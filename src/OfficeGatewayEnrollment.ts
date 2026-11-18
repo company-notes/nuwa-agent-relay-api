@@ -281,7 +281,7 @@ export class OfficeGatewayEnrollment {
       }
 
       return {
-        displayName: record.displayName,
+        displayName: session?.agentDisplayName ?? record.displayName,
         recipientBotID: record.recipientBotID,
         recipientSessionID: record.recipientSessionID,
         recipientCanonicalAddress: session?.canonical ?? record.recipientCanonicalAddress,

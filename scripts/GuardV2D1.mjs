@@ -131,6 +131,12 @@ export function requireOfficeConnectionColumn(names) {
   }
 }
 
+export function requireOfficeIdentityColumns(names) {
+  if (!names.includes('identity_revision') || !names.includes('identity_available')) {
+    throw new Error('Office identity projection migration (0009) is not applied.');
+  }
+}
+
 function inspectNames(query) {
   const output = WranglerRunner.execute([
     'd1', 'execute', 'DB', '--remote',
@@ -151,9 +157,11 @@ export function guardRemoteDatabase(requireMigrated = false) {
   const classification = classifyDatabase(tables, requireMigrated);
 
   if (requireMigrated) {
-    requireOfficeConnectionColumn(inspectNames(
+    const columns = inspectNames(
       "SELECT name FROM pragma_table_info('gateway_office_coworkers') ORDER BY name",
-    ));
+    );
+    requireOfficeConnectionColumn(columns);
+    requireOfficeIdentityColumns(columns);
   }
 
   process.stdout.write('Verified isolated Relay V2 D1: ' + classification + '\n');

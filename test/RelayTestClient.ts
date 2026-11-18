@@ -53,6 +53,7 @@ export class RelayTestClient {
   failAddressStatus = false;
   accountStatusLookups = 0;
   sessionLookups = 0;
+  officeSelectionLookups = 0;
   runtimeLeaseLookups = 0;
   failPublicAddressRequests = false;
   failNextRouteCreation = false;
@@ -107,6 +108,8 @@ export class RelayTestClient {
   };
 
   private organizationSlug = RelayTestClient.slug;
+  private identityRevision = 0;
+  private readonly archivedSessions = new Set<string>();
   private readonly previousAddresses = new Map<string, Session>();
 
   private sessions(): Session[] {
@@ -121,9 +124,10 @@ export class RelayTestClient {
     }
 
     this.organizationSlug = slug;
+    this.identityRevision += 1;
   }
 
-  renameOfficeAddress(sessionID: string, handle: string) {
+  renameOfficeAddress(sessionID: string, handle: string, displayName?: string) {
     const agent = this.officeAgents.find((item) => item.id === sessionID);
 
     if (!agent) {
@@ -133,6 +137,17 @@ export class RelayTestClient {
     this.previousAddresses.set(agent.canonical, agent);
     agent.handle = handle;
     agent.canonical = this.organizationSlug + '/' + handle + '/main';
+    if (displayName !== undefined) {
+      agent.displayName = displayName;
+      agent.agentDisplayName = displayName;
+    }
+
+    this.identityRevision += 1;
+  }
+
+  archiveOfficeSession(sessionID: string) {
+    this.archivedSessions.add(sessionID);
+    this.identityRevision += 1;
   }
 
   private requestAgentAddress(url: URL, token: string | null, init?: RequestInit): Response {
@@ -152,8 +167,8 @@ export class RelayTestClient {
         data: {
           account: { email: 'test@example.com' },
           organization: token === 'Bearer token-foreign'
-            ? { id: 'org-other', slug: 'other-organization' }
-            : { id: 'org-id', slug: this.organizationSlug },
+            ? { id: 'org-other', slug: 'other-organization', identityRevision: 0 }
+            : { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
         },
       });
     }
@@ -188,6 +203,7 @@ export class RelayTestClient {
         createdAt: new Date().toISOString(),
       };
       this.officeAgents.push(registered);
+      this.identityRevision += 2;
       this.officeRegistrations.push({ displayName: input.agentDisplayName, agentName: handle });
 
       if (this.loseNextOfficeRegistrationResponse) {
@@ -243,8 +259,20 @@ export class RelayTestClient {
       const data = JSON.parse(String(init.body)) as { agentDisplayName: string };
       agent.displayName = data.agentDisplayName;
       agent.agentDisplayName = data.agentDisplayName;
+      this.identityRevision += 1;
 
       return Response.json({ ok: true, data: { id: agent.agentId, displayName: agent.displayName } });
+    }
+
+    if (url.pathname === '/v2/account/sessions') {
+      this.officeSelectionLookups += 1;
+      const selected = new Set(url.searchParams.getAll('session_id'));
+
+      return Response.json({ ok: true, data: {
+        organization: { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
+        sessions: this.sessions().filter((session) =>
+          selected.has(session.id) && !this.archivedSessions.has(session.id)),
+      } });
     }
 
     const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
@@ -252,7 +280,7 @@ export class RelayTestClient {
     if (matched) {
       const session = this.sessions().find((candidate) => candidate.id === matched[1]);
 
-      if (!session) {
+      if (!session || this.archivedSessions.has(session.id)) {
         return Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
       }
 
@@ -276,8 +304,8 @@ export class RelayTestClient {
             ...(url.searchParams.get('include_identity') === '1' ? {
               session,
               organization: token === 'Bearer token-foreign'
-                ? { id: 'org-other', slug: 'other-organization' }
-                : { id: 'org-id', slug: this.organizationSlug },
+                ? { id: 'org-other', slug: 'other-organization', identityRevision: 0 }
+                : { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
             } : {}),
           },
         });

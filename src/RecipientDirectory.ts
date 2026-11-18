@@ -43,7 +43,9 @@ export class RecipientDirectory {
     }
 
     const requested = RecipientDirectory.normalize(name);
-    const scope = await this.address.directoryCacheScope(this.identity.organizationID);
+    const scope = await this.address.directoryCacheScope(
+      this.identity.organizationID, this.identity.organizationIdentityRevision,
+    );
     const load = () => this.address.listAgents();
     let candidates = await AuthorizedAgentDirectoryCache.shared.read(scope, load, requireFresh);
     const findMatches = (directory: DirectoryAgent[]) => directory.filter((agent) =>

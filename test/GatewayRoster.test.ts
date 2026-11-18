@@ -1327,6 +1327,7 @@ describe('Gateway coworker speaking scenarios', () => {
 
     const beforeStatus = scenario.client.accountStatusLookups;
     const beforeSessions = scenario.client.sessionLookups;
+    const beforeSelections = scenario.client.officeSelectionLookups;
     const beforeLeases = scenario.client.runtimeLeaseLookups;
     const sendStarted = performance.now();
     const sent = await scenario.client.call('token-g', 'POST',
@@ -1339,7 +1340,8 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(senderLookup).not.toHaveBeenCalled();
     expect(recipientLookup).not.toHaveBeenCalled();
     expect(scenario.client.accountStatusLookups - beforeStatus).toBe(0);
-    expect(scenario.client.sessionLookups - beforeSessions).toBe(1);
+    expect(scenario.client.sessionLookups - beforeSessions).toBe(0);
+    expect(scenario.client.officeSelectionLookups - beforeSelections).toBe(1);
     expect(scenario.client.runtimeLeaseLookups - beforeLeases).toBe(1);
 
     const messageID = sent.body.data.id as string;
@@ -1667,11 +1669,11 @@ describe('Gateway coworker speaking scenarios', () => {
     await scenario.arrive(sent.body.data.id);
 
     scenario.client.renameOrganization('renamed-org');
-    scenario.client.renameOfficeAddress(nora.recipientSessionID, 'nora');
+    scenario.client.renameOfficeAddress(nora.recipientSessionID, 'nora', 'Nora Chen');
 
     const reply = await scenario.client.call('token-g', 'POST',
       '/v2/threads/' + sent.body.data.threadId + '/messages?session_id=session-g', {
-        from: 'bot:renamed-nora', body: 'Same Thread, new address.',
+        from: 'Nora Chen', body: 'Same Thread, new address.',
       });
     expect(reply.status).toBe(201);
     expect(reply.body.data.threadId).toBe(sent.body.data.threadId);
@@ -1680,7 +1682,26 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === reply.body.data.id)?.body)
       .toMatchObject({ senderCanonicalAddress: 'renamed-org/nora/main', recipientBotID: 'renamed-brian' });
 
-    const repeated = await scenario.enroll(members);
+    const beforeSessions = scenario.client.sessionLookups;
+    const beforeSelections = scenario.client.officeSelectionLookups;
+    const beforeDirectories = scenario.client.nameDirectoryLookups;
+    const next = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + sent.body.data.threadId + '/messages?session_id=session-g', {
+        from: 'bot:renamed-brian', body: 'Continue without another identity lookup.',
+      });
+    expect(next.status).toBe(201);
+    const again = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + sent.body.data.threadId + '/messages?session_id=session-g', {
+        from: 'Nora Chen', body: 'Reply using the refreshed name.',
+      });
+    expect(again.status).toBe(201);
+    expect(scenario.client.sessionLookups - beforeSessions).toBe(0);
+    expect(scenario.client.officeSelectionLookups - beforeSelections).toBe(0);
+    expect(scenario.client.nameDirectoryLookups - beforeDirectories).toBe(0);
+
+    const repeated = await scenario.enroll([
+      { ...members[0], displayName: 'Nora Chen' }, members[1],
+    ]);
     expect(repeated.status).toBe(201);
     expect(repeated.body.data[0]).toMatchObject({
       recipientSessionID: nora.recipientSessionID, recipientCanonicalAddress: 'renamed-org/nora/main',
@@ -1697,6 +1718,16 @@ describe('Gateway coworker speaking scenarios', () => {
 
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === previousAddress.body.data.id)?.body)
       .toMatchObject({ recipientBotID: 'renamed-nora', recipientSessionID: nora.recipientSessionID });
+
+    scenario.client.archiveOfficeSession(nora.recipientSessionID);
+    const deliveries = scenario.client.deliveries.length;
+
+    const archived = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + sent.body.data.threadId + '/messages?session_id=session-g', {
+        from: 'bot:renamed-nora', body: 'Archived Sessions must not speak.',
+      });
+    expect(archived.status).toBe(403);
+    expect(scenario.client.deliveries).toHaveLength(deliveries);
   });
 
   it('keeps a coworker identity when changing modes and incrementally synchronizing the office', async () => {

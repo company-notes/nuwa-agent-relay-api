@@ -47,6 +47,12 @@ class GatewayMigrationScenario {
     assert.equal(member.activatedAt, '2026-11-12T00:00:00.000Z');
     assert.equal(member.independentAt, null);
 
+    const projection = this.db.prepare(
+      'SELECT identity_revision AS revision, identity_available AS available FROM gateway_office_coworkers',
+    ).get();
+    assert.equal(projection.revision, -1);
+    assert.equal(projection.available, 1);
+
     const message = this.db.prepare(
       'SELECT body, delivery_status AS deliveryStatus, sender_canonical_address AS senderAddress ' +
       'FROM messages WHERE id = ?',
@@ -124,6 +130,7 @@ test('upgrade deployed V2 with existing message and pending Wake without data lo
       'session-b', 'nuwa/coworker/main', '2026-11-12T00:00:00.000Z', '2026-11-12T00:00:00.000Z');
 
     scenario.apply('0008_office_independent_connection.sql');
+    scenario.apply('0009_office_identity_projection.sql');
     scenario.verify();
   } finally {
     scenario.close();
