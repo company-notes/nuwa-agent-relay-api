@@ -42,7 +42,7 @@ export class RelayTestClient {
   readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string; redirect: RequestRedirect | undefined }> = [];
   readonly officeRegistrations: Array<{ displayName: string; agentName: string }> = [];
   private readonly officeAgents: Array<Session & {
-    handle: string; displayName: string; createdAt: string;
+    registrationID: string; handle: string; displayName: string; createdAt: string;
   }> = [];
 
   failNextMail = false;
@@ -105,6 +105,35 @@ export class RelayTestClient {
     canonical: RelayTestClient.slug + '/gateway-2/main',
   };
 
+  private organizationSlug = RelayTestClient.slug;
+  private readonly previousAddresses = new Map<string, Session>();
+
+  private sessions(): Session[] {
+    return [this.sessionA, this.sessionB, this.sessionC, this.sessionD, this.sessionG, this.sessionH,
+      ...this.officeAgents];
+  }
+
+  renameOrganization(slug: string) {
+    for (const session of this.sessions()) {
+      this.previousAddresses.set(session.canonical, session);
+      session.canonical = slug + '/' + session.canonical.split('/').slice(1).join('/');
+    }
+
+    this.organizationSlug = slug;
+  }
+
+  renameOfficeAddress(sessionID: string, handle: string) {
+    const agent = this.officeAgents.find((item) => item.id === sessionID);
+
+    if (!agent) {
+      throw new Error('Missing office test identity.');
+    }
+
+    this.previousAddresses.set(agent.canonical, agent);
+    agent.handle = handle;
+    agent.canonical = this.organizationSlug + '/' + handle + '/main';
+  }
+
   private requestAgentAddress(url: URL, token: string | null, init?: RequestInit): Response {
     if (!['Bearer token-a', 'Bearer token-b', 'Bearer token-c', 'Bearer token-d', 'Bearer token-g', 'Bearer token-h', 'Bearer token-foreign'].includes(token ?? '')) {
       return Response.json({ ok: false, error: { code: 'unauthorized' } }, { status: 401 });
@@ -123,7 +152,7 @@ export class RelayTestClient {
           account: { email: 'test@example.com' },
           organization: token === 'Bearer token-foreign'
             ? { id: 'org-other', slug: 'other-organization' }
-            : { id: 'org-id', slug: RelayTestClient.slug },
+            : { id: 'org-id', slug: this.organizationSlug },
         },
       });
     }
@@ -134,35 +163,31 @@ export class RelayTestClient {
 
     if (registration && init?.method === 'PUT') {
       const input = JSON.parse(String(init.body)) as {
-        agentName: string; agentDisplayName: string; sessionName: string;
+        agentName?: string; agentDisplayName: string; sessionName: string;
       };
-      const existing = this.officeAgents.find((agent) => agent.handle === input.agentName);
+      const existing = this.officeAgents.find((agent) => agent.registrationID === registration[1]);
 
-      if (registration[1] !== input.agentName ||
-          (existing && (existing.displayName !== input.agentDisplayName ||
-            existing.canonical !== RelayTestClient.slug + '/' +
-            input.agentName + '/' + input.sessionName))) {
-        return Response.json({ ok: false, error: { code: 'agent_registration_conflict' } },
-          { status: 409 });
+      if (existing && existing.displayName !== input.agentDisplayName) {
+        return Response.json({ ok: false, error: { code: 'agent_registration_conflict' } }, { status: 409 });
       }
 
       if (existing) {
         return Response.json({ ok: true, data: { session: existing } });
       }
 
+      const handle = input.agentName ?? 'agent-' + crypto.randomUUID().slice(0, 8);
       const registered = {
         id: 'office-session-' + crypto.randomUUID(),
         agentId: 'office-agent-' + crypto.randomUUID(),
-        canonical: RelayTestClient.slug + '/' + input.agentName + '/' + input.sessionName,
-        handle: input.agentName,
+        registrationID: registration[1],
+        canonical: this.organizationSlug + '/' + handle + '/' + input.sessionName,
+        handle,
         displayName: input.agentDisplayName,
         agentDisplayName: input.agentDisplayName,
         createdAt: new Date().toISOString(),
       };
       this.officeAgents.push(registered);
-      this.officeRegistrations.push({
-        displayName: input.agentDisplayName, agentName: input.agentName,
-      });
+      this.officeRegistrations.push({ displayName: input.agentDisplayName, agentName: handle });
 
       return Response.json({ ok: true, data: { session: registered } });
     }
@@ -218,9 +243,7 @@ export class RelayTestClient {
     const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
 
     if (matched) {
-      const session = [this.sessionA, this.sessionB, this.sessionC,
-        this.sessionD, this.sessionG, this.sessionH, ...this.officeAgents]
-        .find((candidate) => candidate.id === matched[1]);
+      const session = this.sessions().find((candidate) => candidate.id === matched[1]);
 
       if (!session) {
         return Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
@@ -247,7 +270,7 @@ export class RelayTestClient {
               session,
               organization: token === 'Bearer token-foreign'
                 ? { id: 'org-other', slug: 'other-organization' }
-                : { id: 'org-id', slug: RelayTestClient.slug },
+                : { id: 'org-id', slug: this.organizationSlug },
             } : {}),
           },
         });
@@ -260,11 +283,10 @@ export class RelayTestClient {
 
     if (url.pathname === '/v2/account/addresses') {
       const input = url.searchParams.get('address');
-      const session = [this.sessionA, this.sessionB, this.sessionC,
-        this.sessionD, this.sessionG, this.sessionH, ...this.officeAgents].find((item) =>
+      const session = this.sessions().find((item) =>
         input === item.canonical ||
         input === item.canonical.split('/').slice(0, 2).join('/') &&
-          item.id !== this.sessionC.id);
+          item.id !== this.sessionC.id) ?? this.previousAddresses.get(input ?? '');
 
       return session
         ? Response.json({ ok: true, data: session })

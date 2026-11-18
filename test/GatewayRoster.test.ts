@@ -1153,7 +1153,7 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     expect(enrolled.body.data.map((item: { recipientCanonicalAddress: string }) =>
       item.recipientCanonicalAddress))
       .toEqual(enrolled.body.data.map((item: { recipientCanonicalAddress: string }) =>
-        expect.stringMatching(/^relay-test-org\/office-[a-f0-9]{32}\/main$/)));
+        expect.stringMatching(/^relay-test-org\/agent-[a-f0-9]{8}\/main$/)));
     expect(JSON.stringify(enrolled.body)).not.toContain('private-office-resume');
 
     const directory = await scenario.client.call('token-g', 'GET',
@@ -1339,7 +1339,7 @@ describe('Gateway coworker speaking scenarios', () => {
     expect(senderLookup).not.toHaveBeenCalled();
     expect(recipientLookup).not.toHaveBeenCalled();
     expect(scenario.client.accountStatusLookups - beforeStatus).toBe(0);
-    expect(scenario.client.sessionLookups - beforeSessions).toBe(0);
+    expect(scenario.client.sessionLookups - beforeSessions).toBe(1);
     expect(scenario.client.runtimeLeaseLookups - beforeLeases).toBe(1);
 
     const messageID = sent.body.data.id as string;
@@ -1617,6 +1617,59 @@ describe('Gateway coworker speaking scenarios', () => {
 
     expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === exact.body.data.id)?.body)
       .toMatchObject({ recipientBotID: first.recipientBotID });
+  });
+
+  it('retains office speaking, mailbox and original Thread under Organization and coworker address changes', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const members = [
+      { displayName: 'Nora', recipientBotID: 'renamed-nora', threadMode: 'platform' },
+      { displayName: 'Brian', recipientBotID: 'renamed-brian', threadMode: 'platform' },
+    ];
+    const registered = await scenario.enroll(members);
+    expect(registered.status).toBe(201);
+    const [nora, brian] = registered.body.data;
+    const originalAddress = nora.recipientCanonicalAddress as string;
+    const mailbox = await scenario.mailboxForSession(nora.recipientSessionID);
+
+    const sent = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
+      from: 'bot:renamed-brian', to: originalAddress, body: 'Before the rename.',
+    });
+    expect(sent.status).toBe(201);
+    await scenario.arrive(sent.body.data.id);
+
+    scenario.client.renameOrganization('renamed-org');
+    scenario.client.renameOfficeAddress(nora.recipientSessionID, 'nora');
+
+    const reply = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + sent.body.data.threadId + '/messages?session_id=session-g', {
+        from: 'bot:renamed-nora', body: 'Same Thread, new address.',
+      });
+    expect(reply.status).toBe(201);
+    expect(reply.body.data.threadId).toBe(sent.body.data.threadId);
+    await scenario.arrive(reply.body.data.id);
+
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === reply.body.data.id)?.body)
+      .toMatchObject({ senderCanonicalAddress: 'renamed-org/nora/main', recipientBotID: 'renamed-brian' });
+
+    const repeated = await scenario.enroll(members);
+    expect(repeated.status).toBe(201);
+    expect(repeated.body.data[0]).toMatchObject({
+      recipientSessionID: nora.recipientSessionID, recipientCanonicalAddress: 'renamed-org/nora/main',
+    });
+    expect(repeated.body.data[1].recipientSessionID).toBe(brian.recipientSessionID);
+    expect(scenario.client.officeRegistrations).toHaveLength(2);
+    expect(await scenario.mailboxForSession(nora.recipientSessionID)).toEqual(mailbox);
+
+    const previousAddress = await scenario.client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: originalAddress, body: 'An address copied from old history.',
+    });
+    expect(previousAddress.status).toBe(201);
+    await scenario.arrive(previousAddress.body.data.id);
+
+    expect(scenario.client.wakeCallbacks.find((entry) => entry.body.messageID === previousAddress.body.data.id)?.body)
+      .toMatchObject({ recipientBotID: 'renamed-nora', recipientSessionID: nora.recipientSessionID });
   });
 
   it('keeps a coworker identity when changing modes and incrementally synchronizing the office', async () => {
