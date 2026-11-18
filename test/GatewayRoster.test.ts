@@ -1569,6 +1569,7 @@ describe('Gateway coworker speaking scenarios', () => {
   it('keeps a coworker identity when changing modes and incrementally synchronizing the office', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
+
     const brian = { displayName: 'Brian', recipientBotID: 'office-brian', threadMode: 'platform' };
     const nora = { displayName: 'Nora', recipientBotID: 'office-nora', threadMode: 'platform' };
     const enrolled = await scenario.enroll([brian, nora]);
@@ -1590,8 +1591,24 @@ describe('Gateway coworker speaking scenarios', () => {
     const threadID = first.body.data.threadId as string;
     await scenario.arrive(first.body.data.id);
 
+    const pending = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
+      from: 'bot:office-nora', to: 'bot:office-brian', body: 'A message waiting during the connection change.',
+    });
+    expect(pending.status).toBe(201);
+    await MailReceipt.confirmArrival(env, pending.body.data.id, 'webhook');
+    await env.DB.prepare('UPDATE wake_events SET lease_until = ? WHERE message_id = ?')
+      .bind(new Date(Date.now() + 60_000).toISOString(), pending.body.data.id).run();
+
+    const busy = await scenario.client.callAsSession(sessionID, 'DELETE', '/v2/gateway-invitation');
+    expect(busy.status).toBe(409);
+    expect(busy.body.error.code).toBe('office_connection_conflict');
+
+    await env.DB.prepare('UPDATE wake_events SET lease_until = NULL WHERE message_id = ?')
+      .bind(pending.body.data.id).run();
+
     const left = await scenario.client.callAsSession(sessionID, 'DELETE', '/v2/gateway-invitation');
     expect(left.status).toBe(200);
+
     const detached = await scenario.office();
     expect(detached.body.data).toEqual(expect.arrayContaining([
       expect.objectContaining({ recipientSessionID: sessionID, route: 'inbox', enabled: false }),
@@ -1608,14 +1625,17 @@ describe('Gateway coworker speaking scenarios', () => {
       });
     expect(inboxReply.status).toBe(201);
     await scenario.arrive(inboxReply.body.data.id);
+
     const inbox = await scenario.client.callAsSession(sessionID, 'GET', '/v2/inbox');
     expect(inbox.body.data).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: inboxReply.body.data.id, threadId: threadID }),
+      expect.objectContaining({ id: pending.body.data.id, body: 'A message waiting during the connection change.' }),
     ]));
     expect(scenario.client.wakeCallbacks.some((entry) => entry.body.messageID === inboxReply.body.data.id))
       .toBe(false);
 
     await scenario.directWake(sessionID);
+
     const changed = await scenario.enroll([
       { ...brian, displayName: 'Brian Chen' }, nora,
       { displayName: 'New colleague', recipientBotID: 'office-new', threadMode: 'platform' },
@@ -1675,6 +1695,7 @@ describe('Gateway coworker speaking scenarios', () => {
     const removed = await scenario.client.call('token-g', 'DELETE',
       '/v2/gateway-teammates?session_id=session-g&recipient_bot_id=' + encodeURIComponent(brian.recipientBotID));
     expect(removed.status).toBe(200);
+
     const rejoined = await scenario.enroll([{ ...brian, displayName: 'Brian Chen' }]);
     expect(rejoined.status).toBe(201);
     expect(rejoined.body.data[0]).toMatchObject({ recipientSessionID: sessionID, route: 'gateway' });
@@ -1686,6 +1707,7 @@ describe('Gateway coworker speaking scenarios', () => {
         WHERE c.recipient_session_id = ?`,
     ).bind(sessionID).first();
     expect(mailboxAfter).toEqual(mailboxBefore);
+
     const finalRoster = await scenario.office();
     expect(finalRoster.body.data).toEqual(expect.arrayContaining([
       expect.objectContaining({ recipientSessionID: colleague.recipientSessionID, route: 'gateway' }),
