@@ -4,6 +4,7 @@ import { GatewayFirstContactMode, GatewayModeCodec, GatewayThreadMode } from './
 import { APIError } from './HTTP';
 import { Logger } from './Logger';
 import { OfficeCoworkerRegistry, type OfficeReceivingState } from './OfficeCoworkerRegistry';
+import { OfficeAddressProjection, type OfficeIdentitySnapshot } from './OfficeAddressProjection';
 import { PlatformBotIdentity } from './PlatformBotIdentity';
 import { SessionIdentityClient, type ResolvedSession, type SessionIdentity } from './SessionIdentityClient';
 
@@ -15,7 +16,7 @@ export type OfficeCoworker = {
 };
 
 type Reservation = OfficeReceivingState & {
-  agentHandle: string;
+  registrationID: string;
   displayName: string;
   recipientAgentID: string | null;
   recipientSessionID: string | null;
@@ -47,7 +48,7 @@ export class OfficeGatewayEnrollment {
   }
 
   private async reservation(coworker: OfficeCoworker): Promise<Reservation> {
-    const agentHandle = await OfficeCoworkerRegistry.handleFor(
+    const registrationID = await OfficeCoworkerRegistry.handleFor(
       this.identity.organizationID, this.identity.sessionID, coworker.recipientBotID,
     );
     const createdAt = new Date().toISOString();
@@ -57,10 +58,10 @@ export class OfficeGatewayEnrollment {
         (org_id, gateway_session_id, recipient_bot_id, agent_handle, display_name, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).bind(this.identity.organizationID, this.identity.sessionID,
-      coworker.recipientBotID, agentHandle, coworker.displayName, createdAt).run();
+      coworker.recipientBotID, registrationID, coworker.displayName, createdAt).run();
 
     const saved = await this.env.DB.prepare(
-      `SELECT c.agent_handle AS agentHandle, c.display_name AS displayName,
+      `SELECT c.agent_handle AS registrationID, c.display_name AS displayName,
               c.recipient_agent_id AS recipientAgentID, c.recipient_session_id AS recipientSessionID,
               c.recipient_canonical_address AS recipientCanonicalAddress,
               c.activated_at AS activatedAt, ${OfficeCoworkerRegistry.receivingColumns}
@@ -69,7 +70,7 @@ export class OfficeGatewayEnrollment {
     ).bind(this.identity.organizationID, this.identity.sessionID,
       coworker.recipientBotID).first<Reservation>();
 
-    if (!saved || saved.agentHandle !== agentHandle ||
+    if (!saved || saved.registrationID !== registrationID ||
         (!saved.recipientSessionID && saved.displayName !== coworker.displayName)) {
       throw new APIError(409, 'office_registration_conflict',
         'The platform Bot ID has a different registered identity.');
@@ -78,12 +79,12 @@ export class OfficeGatewayEnrollment {
     return saved;
   }
 
-  private async requireAvailableName(displayName: string, allowedHandle: string, allowedAgentID?: string) {
+  private async requireAvailableName(displayName: string, allowedRegistrationID: string, allowedAgentID?: string) {
     const normalized = displayName.normalize('NFKC').toLowerCase();
     const agents = await this.address.listAgents();
     const conflict = agents.some((entry) =>
       entry.displayName?.normalize('NFKC').toLowerCase() === normalized &&
-      entry.id !== allowedAgentID && entry.handle !== allowedHandle);
+      entry.id !== allowedAgentID && entry.registrationID !== allowedRegistrationID);
 
     if (conflict) {
       throw new APIError(409, 'office_coworker_name_conflict',
@@ -99,15 +100,15 @@ export class OfficeGatewayEnrollment {
       return;
     }
 
-    await this.requireAvailableName(coworker.displayName, reservation.agentHandle, recipient.agentId);
+    await this.requireAvailableName(coworker.displayName, reservation.registrationID, recipient.agentId);
     await this.address.renameAgent(recipient.agentId, coworker.displayName);
 
     const updated = await this.env.DB.prepare(
       `UPDATE gateway_office_coworkers SET display_name = ?
         WHERE org_id = ? AND gateway_session_id = ? AND recipient_bot_id = ?
-          AND recipient_session_id = ?`,
+          AND recipient_session_id = ? AND identity_revision <= ?`,
     ).bind(coworker.displayName, this.identity.organizationID, this.identity.sessionID,
-      coworker.recipientBotID, recipient.id).run();
+      coworker.recipientBotID, recipient.id, this.identity.organizationIdentityRevision).run();
 
     if (updated.meta.changes !== 1) {
       throw new APIError(409, 'office_registration_conflict', 'Coworker registration changed during rename.');
@@ -118,26 +119,24 @@ export class OfficeGatewayEnrollment {
     coworker: OfficeCoworker, reservation: Reservation,
   ): Promise<ResolvedSession> {
     if (reservation.recipientSessionID) {
-      const restored = await this.address.session(reservation.recipientSessionID);
-
-      if (restored.agentId !== reservation.recipientAgentID ||
-          restored.canonical !== reservation.recipientCanonicalAddress) {
-        throw new APIError(409, 'office_registration_conflict',
-          'The office Session identity no longer matches its reservation.');
+      if (!reservation.recipientAgentID) {
+        throw new APIError(409, 'office_registration_conflict', 'The office reservation has no Agent.');
       }
 
+      const projection = new OfficeAddressProjection(this.env, this.identity, this.address);
+      const restored = await projection.resolve(reservation.recipientSessionID, reservation.recipientAgentID);
+      await projection.refresh(restored, reservation.recipientCanonicalAddress);
       await this.synchronizeDisplayName(coworker, reservation, restored);
 
       return restored;
     }
 
-    await this.requireAvailableName(coworker.displayName, reservation.agentHandle);
+    await this.requireAvailableName(coworker.displayName, reservation.registrationID);
 
     const recipient = await this.address.registerOfficeAgent(
-      reservation.agentHandle, coworker.displayName);
+      reservation.registrationID, coworker.displayName);
 
-    if (recipient.canonical !== this.identity.organizationSlug +
-        '/' + reservation.agentHandle + '/main') {
+    if (recipient.canonical.split('/')[0] !== this.identity.organizationSlug) {
       throw new APIError(502, 'office_registration_invalid',
         'Agent Address registered an unexpected office Session.');
     }
@@ -259,25 +258,42 @@ export class OfficeGatewayEnrollment {
     const records = await this.env.DB.prepare(
       `SELECT c.display_name AS displayName, c.recipient_bot_id AS recipientBotID,
               c.recipient_session_id AS recipientSessionID,
+              c.recipient_agent_id AS recipientAgentID,
               c.recipient_canonical_address AS recipientCanonicalAddress,
-              c.activated_at AS activatedAt, ${OfficeCoworkerRegistry.receivingColumns}
+              c.activated_at AS activatedAt, c.identity_revision AS identityRevision,
+              c.identity_available AS identityAvailable, ${OfficeCoworkerRegistry.receivingColumns}
          FROM gateway_office_coworkers c ${OfficeCoworkerRegistry.receivingJoins}
         WHERE c.org_id = ? AND c.gateway_session_id = ?
         ORDER BY c.display_name, c.recipient_bot_id`,
     ).bind(this.identity.organizationID, this.identity.sessionID).all<OfficeReceivingState & {
       displayName: string; recipientBotID: string; recipientSessionID: string | null;
-      recipientCanonicalAddress: string | null; activatedAt: string | null;
+      recipientAgentID: string | null; recipientCanonicalAddress: string | null; activatedAt: string | null;
+      identityRevision: number; identityAvailable: number;
     }>();
 
-    return records.results.map((record) => ({
-      displayName: record.displayName,
-      recipientBotID: record.recipientBotID,
-      recipientSessionID: record.recipientSessionID,
-      recipientCanonicalAddress: record.recipientCanonicalAddress,
-      enabled: record.activatedAt !== null &&
-        record.activeGatewaySessionID === this.identity.sessionID,
-      route: OfficeCoworkerRegistry.route(record),
-    }));
+    const snapshots = records.results.flatMap((record): OfficeIdentitySnapshot[] =>
+      record.recipientSessionID && record.recipientAgentID && record.recipientCanonicalAddress ? [{
+        agentID: record.recipientAgentID, sessionID: record.recipientSessionID,
+        botID: record.recipientBotID, canonicalAddress: record.recipientCanonicalAddress,
+        displayName: record.displayName, identityRevision: record.identityRevision,
+        identityAvailable: record.identityAvailable,
+      }] : []);
+    const projection = new OfficeAddressProjection(this.env, this.identity, this.address);
+    const refreshed = new Map((await projection.refreshStale(snapshots)).map((row) => [row.botID, row]));
+
+    return records.results.map((record) => {
+      const session = refreshed.get(record.recipientBotID);
+
+      return {
+        displayName: session?.displayName ?? record.displayName,
+        recipientBotID: record.recipientBotID,
+        recipientSessionID: record.recipientSessionID,
+        recipientCanonicalAddress: session?.canonicalAddress ?? record.recipientCanonicalAddress,
+        enabled: session?.identityAvailable === 1 && record.activatedAt !== null &&
+          record.activeGatewaySessionID === this.identity.sessionID,
+        route: OfficeCoworkerRegistry.route(record),
+      };
+    });
   }
 
   async enrollOffice(coworkers: OfficeCoworker[]): Promise<Record<string, unknown>[]> {

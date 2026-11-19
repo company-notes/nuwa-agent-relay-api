@@ -160,11 +160,10 @@ export class AliasService {
 
   private async resolveNativeBot(botID: string): Promise<ResolvedSession> {
     const { results } = await this.env.DB.prepare(
-      `SELECT recipient_agent_id AS agentID, recipient_session_id AS sessionID,
-              recipient_canonical_address AS canonicalAddress
+      `SELECT recipient_agent_id AS agentID, recipient_session_id AS sessionID
          FROM gateway_routes WHERE org_id = ? AND recipient_bot_id = ? LIMIT 2`,
     ).bind(this.identity.organizationID, botID).all<{
-      agentID: string; sessionID: string; canonicalAddress: string;
+      agentID: string; sessionID: string;
     }>();
 
     if (results.length === 0) {
@@ -180,8 +179,7 @@ export class AliasService {
     const [route] = results;
     const session = await this.address.session(route.sessionID);
 
-    if (session.id !== route.sessionID || session.agentId !== route.agentID ||
-        session.canonical !== route.canonicalAddress) {
+    if (session.id !== route.sessionID || session.agentId !== route.agentID) {
       throw new APIError(409, 'recipient_bot_identity_mismatch',
         'The registered Bot route no longer matches its authorized Session.');
     }
@@ -200,7 +198,7 @@ export class AliasService {
       return this.address.resolve(target);
     }
 
-    return new RecipientDirectory(this.identity, this.address).resolve(target);
+    return new RecipientDirectory(this.identity, this.address).resolve(target, { allowShortNames: true });
   }
 
   async resolve(target: Recipient): Promise<ResolvedSession> {

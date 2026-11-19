@@ -166,9 +166,9 @@ export class GatewayRoster {
     const now = new Date().toISOString();
     const [activation, route] = await this.env.DB.batch([
       this.env.DB.prepare(
-        `UPDATE gateway_teammates SET status = 'active', approved_at = ?
+        `UPDATE gateway_teammates SET status = 'active', approved_at = ?, recipient_canonical_address = ?
          WHERE org_id = ? AND recipient_session_id = ? AND status = 'pending'`,
-      ).bind(now, this.identity.organizationID, this.identity.sessionID),
+      ).bind(now, this.identity.canonicalAddress, this.identity.organizationID, this.identity.sessionID),
       this.env.DB.prepare(
         `INSERT INTO gateway_routes
            (org_id, recipient_agent_id, recipient_session_id, recipient_canonical_address,
@@ -195,7 +195,7 @@ export class GatewayRoster {
     }
 
     if (teammate.recipientAgentID !== this.identity.agentID ||
-        teammate.recipientCanonicalAddress !== this.identity.canonicalAddress) {
+        teammate.recipientSessionID !== this.identity.sessionID) {
       throw new APIError(409, 'gateway_recipient_changed',
         'Recipient identity changed since the invitation was created.');
     }
@@ -264,7 +264,7 @@ export class GatewayRoster {
     // short-lived snapshot that may still contain a previous display name.
     const recipient = recipientTarget.name
       ? await new RecipientDirectory(this.identity, this.address).resolve(
-        recipientTarget.name, true)
+        recipientTarget.name, { requireFresh: true })
       : await this.address.resolve(recipientTarget.address!);
 
     if (recipient.canonical.split('/')[0] !== this.identity.organizationSlug) {

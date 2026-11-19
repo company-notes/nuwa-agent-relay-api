@@ -5,6 +5,7 @@ import { Logger } from './Logger';
 export type SessionIdentity = {
   organizationID: string;
   organizationSlug: string;
+  organizationIdentityRevision: number;
   agentID: string;
   sessionID: string;
   canonicalAddress: string;
@@ -18,13 +19,20 @@ export type ResolvedSession = {
   agentDisplayName?: string | null;
 };
 
+type OrganizationIdentity = { id: string; slug: string; identityRevision: number };
+
 type AccountStatus = {
   organization: { id: string; slug: string } | null;
 };
 
+export type SessionSelection = {
+  organization: OrganizationIdentity;
+  sessions: ResolvedSession[];
+};
+
 type Lease = {
   expiresAt: string;
-  organization: AccountStatus['organization'];
+  organization: OrganizationIdentity | null;
   session: ResolvedSession;
 };
 
@@ -36,7 +44,7 @@ export type DirectoryAgent = {
   displayName: string | null;
   defaultSessionID: string | null;
   defaultSessionHandle: string | null;
-
+  registrationID?: string | null;
 };
 
 export class SessionIdentityClient {
@@ -107,7 +115,8 @@ export class SessionIdentityClient {
     if (!session || typeof session.id !== 'string' || !session.id ||
         typeof session.agentId !== 'string' || !session.agentId ||
         typeof session.canonical !== 'string' ||
-        session.canonical.split('/').length !== 3) {
+        session.canonical.split('/').length !== 3 ||
+        session.agentDisplayName != null && typeof session.agentDisplayName !== 'string') {
       throw new APIError(502, 'address_response_invalid', 'Agent Address returned an invalid Session.');
     }
 
@@ -115,13 +124,13 @@ export class SessionIdentityClient {
   }
 
   /** Cache identity is scoped to the OAuth bearer and verified Organization. */
-  async directoryCacheScope(organizationID: string): Promise<string> {
+  async directoryCacheScope(organizationID: string, identityRevision: number): Promise<string> {
     const credential = new TextEncoder().encode(this.authorization);
     const digest = await crypto.subtle.digest('SHA-256', credential);
     const fingerprint = Array.from(new Uint8Array(digest), (value) =>
       value.toString(16).padStart(2, '0')).join('');
 
-    return this.addressURL + ':' + organizationID + ':' + fingerprint;
+    return this.addressURL + ':' + organizationID + ':' + identityRevision + ':' + fingerprint;
   }
 
   async listAgents(): Promise<DirectoryAgent[]> {
@@ -131,6 +140,7 @@ export class SessionIdentityClient {
       !row || typeof row !== 'object' || typeof row.id !== 'string' ||
       typeof row.handle !== 'string' || !row.handle ||
       row.displayName != null && typeof row.displayName !== 'string' ||
+      row.registrationID != null && typeof row.registrationID !== 'string' ||
       row.defaultSessionID != null && typeof row.defaultSessionID !== 'string' ||
       row.defaultSessionHandle != null && typeof row.defaultSessionHandle !== 'string' ||
       Boolean(row.defaultSessionID) !== Boolean(row.defaultSessionHandle))) {
@@ -141,12 +151,12 @@ export class SessionIdentityClient {
     return records as DirectoryAgent[];
   }
 
-  async registerOfficeAgent(agentName: string, agentDisplayName: string): Promise<ResolvedSession> {
+  async registerOfficeAgent(registrationID: string, agentDisplayName: string): Promise<ResolvedSession> {
     // A stable request ID is scoped by the OAuth Organization in Agent Address.
     // Its idempotent response contains only the public Session, never a Runtime credential.
     const registered = await this.request<{ session: unknown }>(
-      'PUT', '/v2/account/agent-registrations/' + encodeURIComponent(agentName),
-      { agentName, agentDisplayName, sessionName: 'main' },
+      'PUT', '/v2/account/agent-registrations/' + encodeURIComponent(registrationID),
+      { agentDisplayName, sessionName: 'main' },
     );
 
     return SessionIdentityClient.requireSession(registered.session);
@@ -171,6 +181,35 @@ export class SessionIdentityClient {
     return SessionIdentityClient.requireSession(await this.request<ResolvedSession>(
       'GET', '/v2/account/sessions/' + encodeURIComponent(sessionID),
     ));
+  }
+
+  async selectSessions(sessionIDs: string[]): Promise<SessionSelection> {
+    const query = new URLSearchParams();
+    for (const sessionID of sessionIDs) {
+      query.append('session_id', sessionID);
+    }
+
+    const selection = await this.request<SessionSelection>(
+      'GET', '/v2/account/sessions?' + query.toString(),
+    );
+    const organization = selection?.organization;
+
+    if (!organization || typeof organization.id !== 'string' ||
+        typeof organization.slug !== 'string' ||
+        !Number.isSafeInteger(organization.identityRevision) || organization.identityRevision < 0 ||
+        !Array.isArray(selection.sessions)) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address returned an invalid Session selection.');
+    }
+
+    const sessions = selection.sessions.map(SessionIdentityClient.requireSession);
+    const selectedIDs = new Set(sessions.map((session) => session.id));
+
+    if (selectedIDs.size !== sessions.length ||
+        sessions.some((session) => !sessionIDs.includes(session.id))) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address returned unexpected Sessions.');
+    }
+
+    return { organization, sessions };
   }
 
   async resolve(address: string): Promise<ResolvedSession> {
@@ -200,6 +239,10 @@ export class SessionIdentityClient {
       throw new APIError(403, 'organization_required', 'No authorized Organization is available.');
     }
 
+    if (!Number.isSafeInteger(organization.identityRevision) || organization.identityRevision < 0) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address did not return an identity revision.');
+    }
+
     if (verifiedSession.id !== sessionID ||
         verifiedSession.canonical.split('/')[0] !== organization.slug) {
       throw new APIError(502, 'address_response_invalid', 'Session identity does not match its Organization.');
@@ -214,6 +257,7 @@ export class SessionIdentityClient {
     return {
       organizationID: organization.id,
       organizationSlug: organization.slug,
+      organizationIdentityRevision: organization.identityRevision,
       agentID: verifiedSession.agentId,
       sessionID: verifiedSession.id,
       canonicalAddress: verifiedSession.canonical,

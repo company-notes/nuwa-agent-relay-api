@@ -5,7 +5,7 @@ import { SessionIdentityClient } from '../src/SessionIdentityClient';
 class AddressScenario {
   readonly requests: Array<{ path: string; method: string; runtimeToken?: string }> = [];
   readonly expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
-  private readonly organization = { id: 'org-a', slug: 'nuwa' };
+  private readonly organization = { id: 'org-a', slug: 'nuwa', identityRevision: 0 };
 
   constructor(
     private readonly sessionID = 'session-a',
@@ -100,6 +100,7 @@ describe('Relay V2 Session authorization', () => {
     expect(identity).toEqual({
       organizationID: 'org-a',
       organizationSlug: 'nuwa',
+      organizationIdentityRevision: 0,
       agentID: 'agent-a',
       sessionID: 'session-a',
       canonicalAddress: 'nuwa/reviewer/main',

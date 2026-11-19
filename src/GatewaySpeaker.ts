@@ -2,8 +2,9 @@ import { AliasService, type Recipient } from './AliasService';
 import type { Env } from './Env';
 import { APIError } from './HTTP';
 import { PlatformBotIdentity } from './PlatformBotIdentity';
+import { OfficeAddressProjection, type OfficeIdentitySnapshot } from './OfficeAddressProjection';
 import {
-  SessionIdentityClient, type SessionIdentity,
+  SessionIdentityClient, type ResolvedSession, type SessionIdentity,
 } from './SessionIdentityClient';
 
 export enum SenderAuthMode {
@@ -15,13 +16,7 @@ export type SpeakerRequest = {
   from?: Recipient;
 };
 
-type OfficeSender = {
-  agentID: string;
-  sessionID: string;
-  canonicalAddress: string;
-  displayName: string;
-  ready: number;
-};
+type OfficeSender = OfficeIdentitySnapshot & { ready: number };
 
 export type AuthorizedSpeaker = {
   identity: SessionIdentity;
@@ -40,6 +35,8 @@ export class GatewaySpeaker {
     const rows = await this.env.DB.prepare(
       `SELECT c.recipient_agent_id AS agentID, c.recipient_session_id AS sessionID,
               c.recipient_canonical_address AS canonicalAddress, c.display_name AS displayName,
+              c.recipient_bot_id AS botID, c.identity_revision AS identityRevision,
+              c.identity_available AS identityAvailable,
               EXISTS (
                 SELECT 1 FROM gateway_teammates t JOIN gateway_routes r
                   ON r.org_id = t.org_id AND r.recipient_session_id = t.recipient_session_id
@@ -59,16 +56,18 @@ export class GatewaySpeaker {
 
   private async resolveSender(from: Recipient): Promise<OfficeSender> {
     const botID = typeof from === 'string' ? PlatformBotIdentity.readSelector(from) : null;
+    const projection = new OfficeAddressProjection(this.env, this.actor, this.address);
     let matches: OfficeSender[];
+    let resolved: ResolvedSession | undefined;
 
     if (botID !== null) {
-      matches = await this.officeSenders(botID);
+      matches = await projection.refreshStale(await this.officeSenders(botID));
     } else if (typeof from !== 'string' || from.includes('/') ||
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
-      const session = await new AliasService(this.env, this.actor, this.address).resolve(from);
+      resolved = await new AliasService(this.env, this.actor, this.address).resolve(from);
+      const session = resolved;
       matches = (await this.officeSenders()).filter((entry) =>
-        entry.sessionID === session.id && entry.agentID === session.agentId &&
-        entry.canonicalAddress === session.canonical);
+        entry.sessionID === session.id && entry.agentID === session.agentId);
     } else {
       const name = from.trim().normalize('NFKC').toLowerCase();
 
@@ -77,16 +76,28 @@ export class GatewaySpeaker {
           'Coworker display names must be one short line.');
       }
 
-      matches = (await this.officeSenders()).filter((entry) =>
-        entry.displayName.trim().normalize('NFKC').toLowerCase() === name);
+      matches = (await projection.refreshStale(await this.officeSenders())).filter((entry) =>
+        entry.identityAvailable && entry.displayName.trim().normalize('NFKC').toLowerCase() === name);
     }
 
-    if (matches.length !== 1 || !matches[0].ready) {
+    if (matches.length !== 1 || !matches[0].ready ||
+        (!resolved && !matches[0].identityAvailable)) {
       throw new APIError(403, 'gateway_sender_not_enrolled',
         'This sender is not a unique active coworker of the authenticated Gateway.');
     }
 
-    return matches[0];
+    const selected = matches[0];
+
+    if (!resolved) {
+      return selected;
+    }
+
+    await projection.refresh(resolved, selected.canonicalAddress);
+
+    return {
+      ...selected, canonicalAddress: resolved.canonical,
+      displayName: resolved.agentDisplayName ?? selected.displayName,
+    };
   }
 
   async resolve(from: Recipient | undefined): Promise<AuthorizedSpeaker | null> {

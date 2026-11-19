@@ -42,9 +42,10 @@ export class RelayTestClient {
   readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string; redirect: RequestRedirect | undefined }> = [];
   readonly officeRegistrations: Array<{ displayName: string; agentName: string }> = [];
   private readonly officeAgents: Array<Session & {
-    handle: string; displayName: string; createdAt: string;
+    registrationID: string; handle: string; displayName: string; createdAt: string;
   }> = [];
 
+  loseNextOfficeRegistrationResponse = false;
   failNextMail = false;
   loseNextMailAcknowledgement = false;
   failNextWake = false;
@@ -52,6 +53,7 @@ export class RelayTestClient {
   failAddressStatus = false;
   accountStatusLookups = 0;
   sessionLookups = 0;
+  officeSelectionLookups = 0;
   runtimeLeaseLookups = 0;
   failPublicAddressRequests = false;
   failNextRouteCreation = false;
@@ -105,6 +107,49 @@ export class RelayTestClient {
     canonical: RelayTestClient.slug + '/gateway-2/main',
   };
 
+  private organizationSlug = RelayTestClient.slug;
+  private identityRevision = 0;
+  private readonly archivedSessions = new Set<string>();
+  private readonly previousAddresses = new Map<string, Session>();
+
+  private sessions(): Session[] {
+    return [this.sessionA, this.sessionB, this.sessionC, this.sessionD, this.sessionG, this.sessionH,
+      ...this.officeAgents];
+  }
+
+  renameOrganization(slug: string) {
+    for (const session of this.sessions()) {
+      this.previousAddresses.set(session.canonical, session);
+      session.canonical = slug + '/' + session.canonical.split('/').slice(1).join('/');
+    }
+
+    this.organizationSlug = slug;
+    this.identityRevision += 1;
+  }
+
+  renameOfficeAddress(sessionID: string, handle: string, displayName?: string) {
+    const agent = this.officeAgents.find((item) => item.id === sessionID);
+
+    if (!agent) {
+      throw new Error('Missing office test identity.');
+    }
+
+    this.previousAddresses.set(agent.canonical, agent);
+    agent.handle = handle;
+    agent.canonical = this.organizationSlug + '/' + handle + '/main';
+    if (displayName !== undefined) {
+      agent.displayName = displayName;
+      agent.agentDisplayName = displayName;
+    }
+
+    this.identityRevision += 1;
+  }
+
+  archiveOfficeSession(sessionID: string) {
+    this.archivedSessions.add(sessionID);
+    this.identityRevision += 1;
+  }
+
   private requestAgentAddress(url: URL, token: string | null, init?: RequestInit): Response {
     if (!['Bearer token-a', 'Bearer token-b', 'Bearer token-c', 'Bearer token-d', 'Bearer token-g', 'Bearer token-h', 'Bearer token-foreign'].includes(token ?? '')) {
       return Response.json({ ok: false, error: { code: 'unauthorized' } }, { status: 401 });
@@ -122,8 +167,8 @@ export class RelayTestClient {
         data: {
           account: { email: 'test@example.com' },
           organization: token === 'Bearer token-foreign'
-            ? { id: 'org-other', slug: 'other-organization' }
-            : { id: 'org-id', slug: RelayTestClient.slug },
+            ? { id: 'org-other', slug: 'other-organization', identityRevision: 0 }
+            : { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
         },
       });
     }
@@ -134,35 +179,37 @@ export class RelayTestClient {
 
     if (registration && init?.method === 'PUT') {
       const input = JSON.parse(String(init.body)) as {
-        agentName: string; agentDisplayName: string; sessionName: string;
+        agentName?: string; agentDisplayName: string; sessionName: string;
       };
-      const existing = this.officeAgents.find((agent) => agent.handle === input.agentName);
+      const existing = this.officeAgents.find((agent) => agent.registrationID === registration[1]);
 
-      if (registration[1] !== input.agentName ||
-          (existing && (existing.displayName !== input.agentDisplayName ||
-            existing.canonical !== RelayTestClient.slug + '/' +
-            input.agentName + '/' + input.sessionName))) {
-        return Response.json({ ok: false, error: { code: 'agent_registration_conflict' } },
-          { status: 409 });
+      if (existing && existing.displayName !== input.agentDisplayName) {
+        return Response.json({ ok: false, error: { code: 'agent_registration_conflict' } }, { status: 409 });
       }
 
       if (existing) {
         return Response.json({ ok: true, data: { session: existing } });
       }
 
+      const handle = input.agentName ?? 'agent-' + crypto.randomUUID().slice(0, 8);
       const registered = {
         id: 'office-session-' + crypto.randomUUID(),
         agentId: 'office-agent-' + crypto.randomUUID(),
-        canonical: RelayTestClient.slug + '/' + input.agentName + '/' + input.sessionName,
-        handle: input.agentName,
+        registrationID: registration[1],
+        canonical: this.organizationSlug + '/' + handle + '/' + input.sessionName,
+        handle,
         displayName: input.agentDisplayName,
         agentDisplayName: input.agentDisplayName,
         createdAt: new Date().toISOString(),
       };
       this.officeAgents.push(registered);
-      this.officeRegistrations.push({
-        displayName: input.agentDisplayName, agentName: input.agentName,
-      });
+      this.identityRevision += 2;
+      this.officeRegistrations.push({ displayName: input.agentDisplayName, agentName: handle });
+
+      if (this.loseNextOfficeRegistrationResponse) {
+        this.loseNextOfficeRegistrationResponse = false;
+        return Response.json({ ok: false, error: { code: 'response_lost' } }, { status: 503 });
+      }
 
       return Response.json({ ok: true, data: { session: registered } });
     }
@@ -188,9 +235,10 @@ export class RelayTestClient {
           defaultSessionID: 'session-g', defaultSessionHandle: 'main' },
         { id: 'agent-000h', handle: 'gateway-2', displayName: '未啟用',
           defaultSessionID: null, defaultSessionHandle: null },
-        ...this.officeAgents.map((agent) => ({
+        ...this.officeAgents.filter((agent) => !this.archivedSessions.has(agent.id)).map((agent) => ({
           id: agent.agentId,
           handle: agent.handle,
+          registrationID: agent.registrationID,
           displayName: agent.displayName,
           defaultSessionID: agent.id,
           defaultSessionHandle: 'main',
@@ -211,18 +259,30 @@ export class RelayTestClient {
       const data = JSON.parse(String(init.body)) as { agentDisplayName: string };
       agent.displayName = data.agentDisplayName;
       agent.agentDisplayName = data.agentDisplayName;
+      this.identityRevision += 1;
 
       return Response.json({ ok: true, data: { id: agent.agentId, displayName: agent.displayName } });
+    }
+
+    if (url.pathname === '/v2/account/sessions') {
+      this.officeSelectionLookups += 1;
+      const selected = new Set(url.searchParams.getAll('session_id'));
+
+      return Response.json({ ok: true, data: {
+        organization: token === 'Bearer token-foreign'
+          ? { id: 'org-other', slug: 'other-organization', identityRevision: 0 }
+          : { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
+        sessions: token === 'Bearer token-foreign' ? [] : this.sessions().filter((session) =>
+          selected.has(session.id) && !this.archivedSessions.has(session.id)),
+      } });
     }
 
     const matched = url.pathname.match(/^\/v2\/account\/sessions\/([^/]+)(\/runtime-lease)?$/);
 
     if (matched) {
-      const session = [this.sessionA, this.sessionB, this.sessionC,
-        this.sessionD, this.sessionG, this.sessionH, ...this.officeAgents]
-        .find((candidate) => candidate.id === matched[1]);
+      const session = this.sessions().find((candidate) => candidate.id === matched[1]);
 
-      if (!session) {
+      if (!session || this.archivedSessions.has(session.id)) {
         return Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
       }
 
@@ -246,8 +306,8 @@ export class RelayTestClient {
             ...(url.searchParams.get('include_identity') === '1' ? {
               session,
               organization: token === 'Bearer token-foreign'
-                ? { id: 'org-other', slug: 'other-organization' }
-                : { id: 'org-id', slug: RelayTestClient.slug },
+                ? { id: 'org-other', slug: 'other-organization', identityRevision: 0 }
+                : { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
             } : {}),
           },
         });
@@ -260,13 +320,12 @@ export class RelayTestClient {
 
     if (url.pathname === '/v2/account/addresses') {
       const input = url.searchParams.get('address');
-      const session = [this.sessionA, this.sessionB, this.sessionC,
-        this.sessionD, this.sessionG, this.sessionH, ...this.officeAgents].find((item) =>
+      const session = this.sessions().find((item) =>
         input === item.canonical ||
         input === item.canonical.split('/').slice(0, 2).join('/') &&
-          item.id !== this.sessionC.id);
+          item.id !== this.sessionC.id) ?? this.previousAddresses.get(input ?? '');
 
-      return session
+      return session && !this.archivedSessions.has(session.id)
         ? Response.json({ ok: true, data: session })
         : Response.json({ ok: false, error: { code: 'not_found' } }, { status: 404 });
     }

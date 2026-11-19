@@ -15,13 +15,37 @@ export class RecipientDirectory {
     return value.trim().normalize('NFKC').toLowerCase();
   }
 
-  async resolve(name: string, requireFresh = false): Promise<ResolvedSession> {
+  private static shortNames(displayName: string): string[] {
+    // Only structured personal-name components qualify: names before a role
+    // separator, an optional parenthesized alternate name, and a Latin given name.
+    const personal = RecipientDirectory.normalize(displayName).split(/[|·]/u, 1)[0].trim();
+    const parts = personal.match(/^([^()]+?)(?:\s*\(([^()]+)\))?$/u);
+
+    if (!parts) {
+      return [];
+    }
+
+    const names = [parts[1], parts[2] ?? ''].map((part) => part.trim()).filter(Boolean);
+    const givenNames = names.flatMap((part) => {
+      const match = part.match(/^([\p{Script=Latin}]+)\s+[\p{Script=Latin}]+(?:\s+[\p{Script=Latin}]+)*$/u);
+
+      return match ? [match[1]] : [];
+    });
+
+    return [...names, ...givenNames];
+  }
+
+  async resolve(
+    name: string, { requireFresh = false, allowShortNames = false } = {},
+  ): Promise<ResolvedSession> {
     if (!name.trim() || name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
       throw new APIError(400, 'invalid_recipient_name', 'Recipient name must be a single short line.');
     }
 
     const requested = RecipientDirectory.normalize(name);
-    const scope = await this.address.directoryCacheScope(this.identity.organizationID);
+    const scope = await this.address.directoryCacheScope(
+      this.identity.organizationID, this.identity.organizationIdentityRevision,
+    );
     const load = () => this.address.listAgents();
     const candidates = await AuthorizedAgentDirectoryCache.shared.read(scope, load, requireFresh);
     const findMatches = (directory: DirectoryAgent[]) => directory.filter((agent) =>
@@ -30,10 +54,12 @@ export class RecipientDirectory {
 
     let matches = findMatches(candidates);
 
-    // A newly enrolled office Agent may be absent from another isolate's
-    // 15-second OAuth-scoped snapshot. Refresh a miss before returning 404.
-    if (!requireFresh && matches.length === 0) {
-      matches = findMatches(await AuthorizedAgentDirectoryCache.shared.read(scope, load, true));
+    // The existing authorization carries the authoritative revision. A rename,
+    // registration, archive or default change invalidates the directory key.
+    // Exact and short names use the same complete snapshot, including unavailable Agents.
+    if (allowShortNames && matches.length === 0) {
+      matches = candidates.filter((agent) =>
+        RecipientDirectory.shortNames(agent.displayName ?? '').includes(requested));
     }
 
     if (matches.length === 0) {

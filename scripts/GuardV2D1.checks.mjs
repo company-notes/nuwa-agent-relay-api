@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { classifyDatabase, readTableNames, requireOfficeConnectionColumn, validateProductionBindings } from './GuardV2D1.mjs';
+import { classifyDatabase, readTableNames, requireOfficeConnectionColumn, requireOfficeIdentityColumns, validateProductionBindings } from './GuardV2D1.mjs';
 
 const v2 = [
   'agent_mailboxes', 'agent_aliases', 'threads', 'messages',
@@ -98,4 +98,9 @@ test('requires canonical Agent Address binding before remote schema inspection o
 test('requires the independent connection column before deployment', () => {
   assert.throws(() => requireOfficeConnectionColumn(['activated_at']), /migration \(0008\)/);
   assert.doesNotThrow(() => requireOfficeConnectionColumn(['activated_at', 'independent_at']));
+});
+
+test('requires the identity projection columns before deployment', () => {
+  assert.throws(() => requireOfficeIdentityColumns(['identity_revision']), /migration \(0009\)/);
+  assert.doesNotThrow(() => requireOfficeIdentityColumns(['identity_revision', 'identity_available']));
 });
