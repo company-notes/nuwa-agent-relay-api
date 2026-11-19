@@ -28,6 +28,21 @@ describe('Agent mailboxes use the existing MailTrigger transport', () => {
     expect(count?.count).toBe(1);
   });
 
+  it('prepares a work Agent mailbox once across distinct Runtime leases', async () => {
+    const workClient = new RelayTestClient();
+
+    workClient.installExternalTestTransport();
+    const first = await workClient.call('token-b', 'PUT', '/v2/agent-mailboxes?session_id=session-b');
+    expect(first.status).toBe(200);
+    expect(first.body.data.mailboxID).toBeTruthy();
+
+    const requests = workClient.mailTriggerRequests;
+    const next = await workClient.call('token-c', 'PUT', '/v2/agent-mailboxes?session_id=session-c');
+    expect(next.status).toBe(200);
+    expect(next.body.data).toEqual(first.body.data);
+    expect(workClient.mailTriggerRequests).toBe(requests);
+  });
+
   it('isolates different Agents without any MailTrigger API changes', async () => {
     client.installExternalTestTransport();
 

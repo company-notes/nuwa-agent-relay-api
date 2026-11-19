@@ -82,6 +82,10 @@ export class RelayV2Service {
     return recipient;
   }
 
+  async ensureMailbox() {
+    return this.mailboxes.ready(this.identity.organizationID, this.identity.agentID);
+  }
+
   async provisionMailbox() {
     return this.mailboxes.provision(this.identity.organizationID, this.identity.agentID);
   }
