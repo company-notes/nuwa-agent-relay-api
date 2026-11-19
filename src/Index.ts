@@ -456,6 +456,10 @@ export class RelayAPI {
     const gatewayRoster = new GatewayRoster(this.env, identity, address);
     const officeGateway = new OfficeGatewayEnrollment(this.env, identity, address);
 
+    if (path === '/v2/agent-mailboxes' && request.method === 'PUT') {
+      return HTTP.response(await relay.ensureMailbox());
+    }
+
     if (path === '/v2/agent-mailboxes' && request.method === 'POST') {
       return HTTP.response(await relay.provisionMailbox(), 201);
     }

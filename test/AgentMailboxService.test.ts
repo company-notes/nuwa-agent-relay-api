@@ -5,7 +5,10 @@ import { AgentMailboxService } from '../src/AgentMailboxService';
 import { RelayTestClient } from './RelayTestClient';
 
 describe('Agent mailboxes use the existing MailTrigger transport', () => {
+  // D1 and the simulated MailTrigger provider persist across these scenarios.
+  // Keep the provider's mailbox IDs unique over the same lifetime as D1.
   const client = new RelayTestClient();
+
   it('provisions once per Agent and reuses the same mailbox for all of its Sessions', async () => {
     client.installExternalTestTransport();
 
@@ -26,6 +29,25 @@ describe('Agent mailboxes use the existing MailTrigger transport', () => {
     ).bind('org-v2', 'agent-0001').first<{ count: number }>();
 
     expect(count?.count).toBe(1);
+  });
+
+  it('prepares a work Agent mailbox once across distinct Runtime leases', async () => {
+    client.installExternalTestTransport();
+    const before = client.mailTriggerRequests;
+
+    const first = await client.call('token-b', 'PUT', '/v2/agent-mailboxes?session_id=session-b');
+    expect(first.status).toBe(200);
+    expect(first.body.data.mailboxID).toBeTruthy();
+    expect(client.mailTriggerRequests).toBeGreaterThan(before);
+
+    const requests = client.mailTriggerRequests;
+    const next = await client.call('token-c', 'PUT', '/v2/agent-mailboxes?session_id=session-c');
+    expect(next.status).toBe(200);
+    expect(next.body.data).toEqual(first.body.data);
+    expect(client.mailTriggerRequests).toBe(requests);
+
+    const saved = await new AgentMailboxService(env).require('org-id', 'agent-000b');
+    expect(saved).toEqual(first.body.data);
   });
 
   it('isolates different Agents without any MailTrigger API changes', async () => {

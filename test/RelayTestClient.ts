@@ -64,6 +64,7 @@ export class RelayTestClient {
   failNextWebhookParameterUpdate = false;
   nameDirectoryLookups = 0;
   domainLookups = 0;
+  mailTriggerRequests = 0;
   actionTemplateLookups = 0;
   domainVerified = true;
   corruptNameDirectory = false;
@@ -684,6 +685,7 @@ export class RelayTestClient {
     }
 
     if (url.origin === MAILTRIGGER_TEST_ORIGIN) {
+      this.mailTriggerRequests += 1;
       return this.requestMailTrigger(url, init);
     }
 
