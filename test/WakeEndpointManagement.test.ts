@@ -134,7 +134,7 @@ describe('account-owned Wake endpoint migration', () => {
 
     const target = await WakeTarget.decrypt(env, saved!.encrypted);
     expect(target.callbackURL).toBe('https://agent-demo.ngrok-free.app/private-wake');
-    expect(target.bearerToken).toBe(bear);
+    expect(target.bearerToken).toBe(bearer);
   });
 
   it('migrates a legacy signed receiver preserving the existing signature secret', async () => {
