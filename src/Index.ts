@@ -10,10 +10,17 @@ import { MailReceipt } from './MailReceipt';
 import { OfficeGatewayEnrollment, type OfficeCoworker } from './OfficeGatewayEnrollment';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
+import { WakeEndpointManagement } from './WakeEndpointManagement';
 import { WakePairing } from './WakePairing';
 import { WakeService } from './WakeService';
 
 export class RelayAPI {
+  static readonly accountPortalOrigin = 'https://address.company-notes.com';
+
+  static isAccountWakeEndpoint(path: string): boolean {
+    return /^\/v2\/account-wake\/sessions\/[^/]+\/endpoint$/.test(path);
+  }
+
   constructor(private readonly env: Env) {}
 
   private static authorization(request: Request): string {
@@ -409,8 +416,50 @@ export class RelayAPI {
     return null;
   }
 
+  private async accountWake(request: Request, path: string): Promise<Response> {
+    if (request.headers.get('origin') !== RelayAPI.accountPortalOrigin) {
+      throw new APIError(403, 'wake_portal_origin_required',
+        'Wake endpoint management is available from the Agent Address Portal.');
+    }
+
+    const sessionID = path.match(/^\/v2\/account-wake\/sessions\/([^/]+)\/endpoint$/)![1];
+    const authorization = RelayAPI.authorization(request);
+    const transport = new AgentAddressTransport(this.env.ADDRESS_WORKER);
+    const address = new SessionIdentityClient(
+      this.env.ADDRESS_API_URL, authorization, transport.request.bind(transport),
+    );
+    const selected = await address.selectSessions([sessionID]);
+
+    if (selected.sessions.length !== 1 || selected.sessions[0].id !== sessionID) {
+      throw new APIError(403, 'wake_session_not_owned',
+        'The account does not own the selected Session.');
+    }
+
+    const endpoint = new WakeEndpointManagement(
+      this.env, selected.organization.id, sessionID,
+    );
+    let data: unknown;
+
+    if (request.method === 'GET') {
+      data = await endpoint.get();
+    } else if (request.method === 'PUT') {
+      const body = await HTTP.json(request);
+      data = await endpoint.changeURL(HTTP.requiredString(body, 'callbackUrl', 2048));
+    } else {
+      throw new APIError(405, 'method_not_allowed', 'GET or PUT is required.');
+    }
+
+    const response = HTTP.response(data);
+    response.headers.set('cache-control', 'no-store');
+    return response;
+  }
+
   async handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
+
+    if (RelayAPI.isAccountWakeEndpoint(path)) {
+      return this.accountWake(request, path);
+    }
 
     if (path.startsWith('/wake-pair/')) {
       return new WakePairing(this.env).handlePublic(request);
