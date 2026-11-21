@@ -254,7 +254,8 @@ describe('Office Gateway registration and shared Wake use cases', () => {
     const second = await scenario.send('token-a', 'session-a',
       'relay-test-org/beta/reviewer', 'New try after Tunnel hostname changed');
 
-    expect(scenario.client.wakeCallbacks).toHaveLength(0);
+    // The test transport records the HTTP 503 attempt, even though no native chat was created.
+    expect(scenario.client.wakeCallbacks).toHaveLength(1);
     const firstWake = await env.DB.prepare(
       'SELECT status, attempts, last_error AS lastError FROM wake_events WHERE message_id = ?',
     ).bind(first).first<{ status: string; attempts: number; lastError: string }>();
@@ -287,8 +288,8 @@ describe('Office Gateway registration and shared Wake use cases', () => {
 
     // Retry only the original queued message, not a new user submission.
     await WakeService.dispatchDue(env);
-    expect(scenario.client.wakeCallbacks).toHaveLength(1);
-    expect(scenario.client.wakeCallbacks[0].body).toMatchObject({
+    expect(scenario.client.wakeCallbacks).toHaveLength(2);
+    expect(scenario.client.wakeCallbacks[1].body).toMatchObject({
       messageID: first, recipientPlatformThreadID: null,
     });
 
