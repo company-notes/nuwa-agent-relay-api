@@ -160,6 +160,7 @@ describe('account-owned Wake endpoint migration', () => {
     expect(js).toContain('address.company-notes.com/authorize');
     expect(js).toContain('code_challenge_method');
     expect(js).toContain('wake-endpoint');
+    expect(js).toContain(String.raw`replace(/\+/g, '-').replace(/\//g, '_')`);
 
     const registered = await management('POST', '/manage/oauth/client', null, {});
     expect(registered.status).toBe(201);
