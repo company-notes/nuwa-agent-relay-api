@@ -56,10 +56,19 @@ export class WakeEndpointManagement {
       this.env, this.organizationID, this.sessionID,
     );
 
-    const nextURL = WakeTarget.validateURL(callbackURL).toString();
     const current = await this.subscription();
     const encrypted = current.encryptedTarget
       ? await WakeTarget.decrypt(this.env, current.encryptedTarget) : null;
+    const target = WakeTarget.validateURL(callbackURL);
+
+    // Tunnel host rotation normally keeps the platform's private /hooks path.
+    // A full URL with its own path remains an explicit path replacement.
+    const previous = encrypted?.callbackURL ?? current.callbackURL;
+    if (target.pathname === '/' && previous) {
+      target.pathname = WakeTarget.validateURL(previous).pathname;
+    }
+
+    const nextURL = target.toString();
 
     if (!encrypted && current.authMode !== 'hmac') {
       throw new APIError(409, 'wake_target_invalid',
