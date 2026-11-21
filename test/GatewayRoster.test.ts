@@ -297,9 +297,14 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       '/v2/gateway-teammates/session-b/first-contacts/session-a?session_id=session-g',
       { messageID: first, nativeThreadID: 'native-thread-after-recovery' });
     expect(confirmed.status).toBe(200);
-    await WakeService.dispatchDue(env);
-    expect(scenario.client.wakeCallbacks.filter(entry =>
-      entry.body.messageID === second)).toHaveLength(1);
+
+    // Confirmation can launch a background dispatch while a direct call is
+    // still fenced by its lease. Wait for the actual completed user flow.
+    await vi.waitFor(async () => {
+      await WakeService.dispatchDue(env);
+      expect(scenario.client.wakeCallbacks.filter(entry =>
+        entry.body.messageID === second)).toHaveLength(1);
+    }, { timeout: 3000, interval: 50 });
     expect(scenario.client.wakeCallbacks.find(entry =>
       entry.body.messageID === second)?.body.recipientPlatformThreadID)
       .toBe('native-thread-after-recovery');
