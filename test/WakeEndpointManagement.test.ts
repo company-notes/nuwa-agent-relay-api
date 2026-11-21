@@ -119,6 +119,24 @@ describe('account-owned Wake endpoint migration', () => {
     expect(deniedPreflight.headers.get('access-control-allow-origin')).not.toBe('*');
   });
 
+  it('changing only a Quick Tunnel host retains the protected Webhook route path', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.registerVerifiedWake(original, 'bearer', bearer);
+
+    const updated = await portal('PUT', path, 'token-b', {
+      callbackUrl: 'https://agent-demo.ngrok-free.app',
+    });
+    expect(updated.status).toBe(200);
+    const saved = await env.DB.prepare(
+      'SELECT encrypted_target AS encrypted FROM wake_subscriptions WHERE session_id = ?',
+    ).bind('session-b').first<{ encrypted: string }>();
+
+    const target = await WakeTarget.decrypt(env, saved!.encrypted);
+    expect(target.callbackURL).toBe('https://agent-demo.ngrok-free.app/private-wake');
+    expect(target.bearerToken).toBe(bear);
+  });
+
   it('migrates a legacy signed receiver preserving the existing signature secret', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
