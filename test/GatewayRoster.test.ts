@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env, exports } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentMailboxService } from '../src/AgentMailboxService';
@@ -101,6 +101,29 @@ class GatewayRosterScenario {
 
   private gateway(method: string, path: string, body?: object) {
     return this.client.call('token-g', method, path + '?session_id=session-g', body);
+  }
+
+  async manageFirstContact(
+    method: 'GET' | 'POST',
+    gatewaySessionID: string,
+    data?: Record<string, unknown>,
+    token = 'token-g',
+  ) {
+    const path = '/v2/management/sessions/' + gatewaySessionID + '/first-contacts' +
+      (method === 'POST' ? '/recover' : '');
+    const response = await exports.default.fetch(new Request(
+      RelayTestClient.origin + path, {
+        method,
+        headers: {
+          origin: RelayTestClient.origin,
+          authorization: 'Bearer ' + token,
+          ...(data ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(data ? { body: JSON.stringify(data) } : {}),
+      },
+    ));
+
+    return { status: response.status, body: await response.json() as any };
   }
 
   enroll(coworkers: Array<{ displayName: string; recipientBotID: string; threadMode: string }>) {
@@ -216,6 +239,75 @@ describe('Office Gateway registration and shared Wake use cases', () => {
       });
     expect(invalid.status).toBe(400);
     expect(invalid.body.error.code).toBe('gateway_recipient_required');
+  });
+
+  it('recovers a shared teammate first contact after a definite failed Wake without duplicating the native chat', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+    expect((await scenario.invite('relay-test-org/beta/reviewer',
+      'openmaus-bear-id', 'explicit', 'automatic')).status).toBe(201);
+    expect((await scenario.approve('token-b', 'session-b')).status).toBe(200);
+
+    scenario.client.failNextWake = true;
+    const first = await scenario.send('token-a', 'session-a',
+      'relay-test-org/beta/reviewer', 'First attempt during Tunnel outage');
+    const second = await scenario.send('token-a', 'session-a',
+      'relay-test-org/beta/reviewer', 'New try after Tunnel hostname changed');
+
+    // The test transport records the HTTP 503 attempt, even though no native chat was created.
+    expect(scenario.client.wakeCallbacks).toHaveLength(1);
+    const firstWake = await env.DB.prepare(
+      'SELECT status, attempts, last_error AS lastError FROM wake_events WHERE message_id = ?',
+    ).bind(first).first<{ status: string; attempts: number; lastError: string }>();
+    expect(firstWake).toMatchObject({ status: 'pending', attempts: 1, lastError: 'http_rejected' });
+
+    const pending = await scenario.manageFirstContact('GET', 'session-g');
+    expect(pending.status).toBe(200);
+    expect(pending.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        senderSessionID: 'session-a', recipientSessionID: 'session-b',
+        initialMessageID: first, initialWakeAttempts: 1,
+      }),
+    ]));
+
+    const request = {
+      senderSessionID: 'session-a', recipientSessionID: 'session-b',
+      initialMessageID: first, confirmedNoNativeDelivery: true,
+    };
+    expect((await scenario.manageFirstContact('POST', 'session-g',
+      { ...request, confirmedNoNativeDelivery: false })).status).toBe(400);
+    expect((await scenario.manageFirstContact('POST', 'session-g',
+      request, 'token-foreign')).status).toBe(403);
+    expect((await scenario.manageFirstContact('POST', 'session-h',
+      request, 'token-h')).status).toBe(403);
+
+    const recovered = await scenario.manageFirstContact('POST', 'session-g', request);
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.data).toMatchObject({ recovered: true, initialMessageID: first });
+    expect((await scenario.manageFirstContact('POST', 'session-g', request)).status).toBe(409);
+
+    // Retry only the original queued message, not a new user submission.
+    await WakeService.dispatchDue(env);
+    expect(scenario.client.wakeCallbacks).toHaveLength(2);
+    expect(scenario.client.wakeCallbacks[1].body).toMatchObject({
+      messageID: first, recipientPlatformThreadID: null,
+    });
+
+    const confirmed = await scenario.client.call('token-g', 'PUT',
+      '/v2/gateway-teammates/session-b/first-contacts/session-a?session_id=session-g',
+      { messageID: first, nativeThreadID: 'native-thread-after-recovery' });
+    expect(confirmed.status).toBe(200);
+
+    // Confirmation can launch a background dispatch while a direct call is
+    // still fenced by its lease. Wait for the actual completed user flow.
+    await vi.waitFor(async () => {
+      await WakeService.dispatchDue(env);
+      expect(scenario.client.wakeCallbacks.filter(entry =>
+        entry.body.messageID === second)).toHaveLength(1);
+    }, { timeout: 3000, interval: 50 });
+    expect(scenario.client.wakeCallbacks.find(entry =>
+      entry.body.messageID === second)?.body.recipientPlatformThreadID)
+      .toBe('native-thread-after-recovery');
   });
 
   it('lets only an approved office Gateway confirm a real first-contact receipt for its coworker', async () => {

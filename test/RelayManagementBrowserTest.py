@@ -35,6 +35,7 @@ class ManagementScenarioServer:
         self.script = assets['script']
         self.callbackHost = 'old-tunnel.trycloudflare.com'
         self.updated = 0
+        self.recovered = 0
         self.updateBody: dict[str, str] = {}
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), self.handler())
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -78,6 +79,22 @@ class ManagementScenarioServer:
                     self.respond(200, scenario.script, 'application/javascript')
                     return
 
+                if path == '/v2/management/sessions/test-gateway-main/first-contacts':
+                    if not self.requireOAuth():
+                        return
+
+                    entries = [] if scenario.recovered else [{
+                        'senderSessionID': 'session-a',
+                        'recipientSessionID': 'session-b',
+                        'senderCanonicalAddress': 'relay-test-org/tammy/main',
+                        'recipientCanonicalAddress': 'relay-test-org/may/main',
+                        'initialMessageID': 'lost-first-message',
+                        'initialWakeAttempts': 1,
+                    }]
+                    self.respond(200, json.dumps({
+                        'ok': True, 'data': entries}), 'application/json')
+                    return
+
                 if path == '/v2/management/wake-sessions':
                     if not self.requireOAuth():
                         return
@@ -93,6 +110,24 @@ class ManagementScenarioServer:
 
             def do_POST(self) -> None:
                 body = self.payload()
+                if self.path == '/v2/management/sessions/test-gateway-main/first-contacts/recover':
+                    if not self.requireOAuth():
+                        return
+
+                    assert body == {
+                        'senderSessionID': 'session-a',
+                        'recipientSessionID': 'session-b',
+                        'initialMessageID': 'lost-first-message',
+                        'confirmedNoNativeDelivery': True,
+                    }
+                    scenario.recovered += 1
+                    self.respond(200, json.dumps({
+                        'ok': True,
+                        'data': { 'recovered': True,
+                                  'initialMessageID': 'lost-first-message' },
+                    }), 'application/json')
+                    return
+
                 if self.path == '/manage/oauth/client':
                     self.respond(201, json.dumps({'ok': True, 'data': {
                         'clientId': 'test-public-client'}}), 'application/json')
@@ -178,6 +213,13 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     page.get_by_text('Wake 網址已更新，原本的接收金鑰及 Thread 保持不變。').wait_for()
                     self.assertTrue(page.get_by_text('new-tunnel.trycloudflare.com').is_visible())
                     self.assertEqual(scenario.updated, 1)
+
+                    page.get_by_role('button', name='查看待恢復首聯').click()
+                    page.get_by_text('relay-test-org/tammy/main → relay-test-org/may/main').wait_for()
+                    page.once('dialog', lambda dialog: dialog.accept())
+                    page.get_by_role('button', name='確認未建立對話並恢復').click()
+                    page.get_by_text('已解除這一組首次聯絡的保留').wait_for()
+                    self.assertEqual(scenario.recovered, 1)
 
                     page.get_by_role('button', name='登出').click()
                     self.assertTrue(page.get_by_role('button', name='使用 Agent Address 登入').is_visible())
