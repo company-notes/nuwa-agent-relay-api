@@ -2,6 +2,7 @@ import { AliasService } from './AliasService';
 import { AgentAddressTransport } from './AgentAddressTransport';
 import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
+import { GatewayFirstContactRecovery } from './GatewayFirstContactRecovery';
 import type { SpeakerRequest } from './GatewaySpeaker';
 import { GatewayModeCodec } from './GatewayModeCodec';
 import { GatewayRoster } from './GatewayRoster';
@@ -563,6 +564,55 @@ export class RelayAPI {
     return response;
   }
 
+  private async manageFirstContacts(request: Request, path: string): Promise<Response> {
+    const match = path.match(
+      /^\/v2\/management\/sessions\/([^/]+)\/first-contacts(\/recover)?$/,
+    );
+    if (!match) {
+      throw new APIError(404, 'not_found', 'First-contact management route not found.');
+    }
+
+    const write = Boolean(match[2]);
+    RelayAPI.requireManagementOrigin(request, write);
+
+    const gatewaySessionID = match[1];
+    const address = this.accountClient(RelayAPI.authorization(request));
+    const selected = await address.selectSessions([gatewaySessionID]);
+
+    if (selected.sessions.length !== 1 || selected.sessions[0].id !== gatewaySessionID) {
+      throw new APIError(403, 'gateway_session_not_owned',
+        'This account does not manage the selected Gateway Session.');
+    }
+
+    const recovery = new GatewayFirstContactRecovery(
+      this.env, selected.organization.id, gatewaySessionID,
+    );
+    let data: unknown;
+
+    if (!write && request.method === 'GET') {
+      data = await recovery.pending();
+    } else if (write && request.method === 'POST') {
+      const body = await HTTP.json(request);
+      if (body.confirmedNoNativeDelivery !== true) {
+        throw new APIError(400, 'native_delivery_confirmation_required',
+          'Confirm in the receiving platform that no native conversation was created.');
+      }
+
+      data = await recovery.recover(
+        HTTP.requiredString(body, 'senderSessionID', 64),
+        HTTP.requiredString(body, 'recipientSessionID', 64),
+        HTTP.requiredString(body, 'initialMessageID', 64),
+      );
+    } else {
+      throw new APIError(405, 'method_not_allowed',
+        'GET for pending first contacts or POST to recover is required.');
+    }
+
+    const response = HTTP.response(data);
+    response.headers.set('cache-control', 'no-store');
+    return response;
+  }
+
   async handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
 
@@ -585,6 +635,10 @@ export class RelayAPI {
 
     if (RelayAPI.isWakeEndpoint(path)) {
       return this.wakeEndpoint(request, path);
+    }
+
+    if (/^\/v2\/management\/sessions\/[^/]+\/first-contacts(?:\/recover)?$/.test(path)) {
+      return this.manageFirstContacts(request, path);
     }
 
     if (path.startsWith('/wake-pair/')) {
