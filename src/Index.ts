@@ -554,24 +554,40 @@ export default {
     request: Request, env: Env,
     context?: { waitUntil(promise: Promise<unknown>): void },
   ): Promise<Response> {
+    const path = new URL(request.url).pathname;
+    const accountWake = RelayAPI.isAccountWakeEndpoint(path);
+    const portalOrigin = request.headers.get('origin') === RelayAPI.accountPortalOrigin;
+
     if (request.method === 'OPTIONS') {
+      if (accountWake && !portalOrigin) {
+        return new Response(null, { status: 403 });
+      }
+
       return new Response(null, {
         status: 204,
         headers: {
-          'access-control-allow-origin': '*',
-          'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
-          'access-control-allow-headers':
-            'authorization,content-type,x-nuwa-runtime-token,x-relay-verification-key',
+          'access-control-allow-origin': accountWake ? RelayAPI.accountPortalOrigin : '*',
+          'access-control-allow-methods': accountWake ? 'GET,PUT,OPTIONS' : 'GET,POST,PUT,DELETE,OPTIONS',
+          'access-control-allow-headers': accountWake
+            ? 'authorization,content-type'
+            : 'authorization,content-type,x-nuwa-runtime-token,x-relay-verification-key',
           'access-control-max-age': '86400',
+          ...(accountWake ? { vary: 'Origin' } : {}),
         },
       });
     }
 
     try {
       const response = await new RelayAPI(env).handle(request);
-      response.headers.set('access-control-allow-origin', '*');
+      if (!accountWake || portalOrigin) {
+        response.headers.set('access-control-allow-origin',
+          accountWake ? RelayAPI.accountPortalOrigin : '*');
+      }
 
-      const path = new URL(request.url).pathname;
+      if (accountWake) {
+        response.headers.set('vary', 'Origin');
+        response.headers.set('cache-control', 'no-store');
+      }
 
       if (response.ok && context &&
           ((request.method === 'POST' && path === '/v1/mailtrigger/receipt') ||
@@ -585,7 +601,16 @@ export default {
       return response;
     } catch (error) {
       const response = HTTP.error(error);
-      response.headers.set('access-control-allow-origin', '*');
+
+      if (!accountWake || portalOrigin) {
+        response.headers.set('access-control-allow-origin',
+          accountWake ? RelayAPI.accountPortalOrigin : '*');
+      }
+
+      if (accountWake) {
+        response.headers.set('vary', 'Origin');
+        response.headers.set('cache-control', 'no-store');
+      }
 
       return response;
     }
