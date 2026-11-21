@@ -9,7 +9,7 @@ const original = 'https://agent-hook.example.com/private-wake';
 const migrated = 'https://agent-demo.ngrok-free.app/new-private-webhook';
 const bearer = 'preexisting-webhook-secret-preserved';
 
-async function portal(method: string, pathName: string, token: string | null, body?: object,
+async function management(method: string, pathName: string, token: string | null, body?: object,
                       origin = 'https://agent-relay.company-notes.com') {
   const response = await exports.default.fetch(new Request(RelayTestClient.origin + pathName, {
     method,
@@ -34,7 +34,7 @@ describe('account-owned Wake endpoint migration', () => {
       'SELECT encrypted_target AS encrypted, created_at AS activated FROM wake_subscriptions WHERE session_id = ?',
     ).bind('session-b').first<{ encrypted: string; activated: string }>();
 
-    const existing = await portal('GET', path, 'token-b');
+    const existing = await management('GET', path, 'token-b');
     expect(existing.status).toBe(200);
     expect(existing.body.data).toMatchObject({
       enabled: true, callbackHost: 'agent-hook.example.com', authMode: 'bearer',
@@ -42,7 +42,7 @@ describe('account-owned Wake endpoint migration', () => {
     expect(JSON.stringify(existing.body)).not.toContain('/private-wake');
     expect(JSON.stringify(existing.body)).not.toContain(bearer);
 
-    const changed = await portal('PUT', path, 'token-b', { callbackUrl: migrated });
+    const changed = await management('PUT', path, 'token-b', { callbackUrl: migrated });
     expect(changed.status).toBe(200);
     expect(changed.body.data).toMatchObject({
       enabled: true, callbackHost: 'agent-demo.ngrok-free.app', authMode: 'bearer',
@@ -74,17 +74,17 @@ describe('account-owned Wake endpoint migration', () => {
     client.installExternalTestTransport();
     await client.registerVerifiedWake(original, 'bearer', bearer);
 
-    expect((await portal('PUT', path, null, { callbackUrl: migrated })).status).toBe(401);
-    expect((await portal('PUT', path, 'token-foreign', { callbackUrl: migrated })).status).toBe(403);
-    expect((await portal('PUT', path, 'token-b', { callbackUrl: migrated },
+    expect((await management('PUT', path, null, { callbackUrl: migrated })).status).toBe(401);
+    expect((await management('PUT', path, 'token-foreign', { callbackUrl: migrated })).status).toBe(403);
+    expect((await management('PUT', path, 'token-b', { callbackUrl: migrated },
       'https://attacker.example.com')).status).toBe(403);
-    expect((await portal('PUT', '/v2/management/sessions/session-a/wake-endpoint',
+    expect((await management('PUT', '/v2/management/sessions/session-a/wake-endpoint',
       'token-a', { callbackUrl: migrated })).status).toBe(404);
 
     for (const invalid of ['http://agent-demo.ngrok-free.app/hooks',
       'https://localhost/hooks', 'https://agent-demo.ngrok-free.app/hooks?token=unsafe',
       'https://127.0.0.1/hooks']) {
-      const attempt = await portal('PUT', path, 'token-b', { callbackUrl: invalid });
+      const attempt = await management('PUT', path, 'token-b', { callbackUrl: invalid });
       expect(attempt.status).toBe(400);
     }
 
@@ -124,7 +124,7 @@ describe('account-owned Wake endpoint migration', () => {
     client.installExternalTestTransport();
     await client.registerVerifiedWake(original, 'bearer', bearer);
 
-    const updated = await portal('PUT', path, 'token-b', {
+    const updated = await management('PUT', path, 'token-b', {
       callbackUrl: 'https://agent-demo.ngrok-free.app',
     });
     expect(updated.status).toBe(200);
@@ -161,11 +161,11 @@ describe('account-owned Wake endpoint migration', () => {
     expect(js).toContain('code_challenge_method');
     expect(js).toContain('wake-endpoint');
 
-    const registered = await portal('POST', '/manage/oauth/client', null, {});
+    const registered = await management('POST', '/manage/oauth/client', null, {});
     expect(registered.status).toBe(201);
     expect(registered.body.data.clientId).toBe('test-pairing-oauth-client');
 
-    const exchanged = await portal('POST', '/manage/oauth/token', null, {
+    const exchanged = await management('POST', '/manage/oauth/token', null, {
       clientId: registered.body.data.clientId,
       code: 'owned-work',
       verifier: 'a'.repeat(64),
@@ -174,7 +174,7 @@ describe('account-owned Wake endpoint migration', () => {
     expect(exchanged.body.data.accessToken).toBe('token-b');
     expect(exchanged.headers.get('cache-control')).toBe('no-store');
 
-    const listed = await portal('GET', '/v2/management/wake-sessions', 'token-b');
+    const listed = await management('GET', '/v2/management/wake-sessions', 'token-b');
     expect(listed.status).toBe(200);
     expect(listed.body.data).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -192,11 +192,11 @@ describe('account-owned Wake endpoint migration', () => {
     client.installExternalTestTransport();
     await client.registerVerifiedWake(original, 'bearer', bearer);
 
-    const foreign = await portal('GET', '/v2/management/wake-sessions', 'token-foreign');
+    const foreign = await management('GET', '/v2/management/wake-sessions', 'token-foreign');
     expect(foreign.status).toBe(200);
     expect(foreign.body.data).toEqual([]);
 
-    const other = await portal('PUT', path, 'token-foreign', {
+    const other = await management('PUT', path, 'token-foreign', {
       callbackUrl: migrated,
     });
     expect(other.status).toBe(403);
@@ -205,7 +205,7 @@ describe('account-owned Wake endpoint migration', () => {
     ).bind('session-b').first<{ callbackURL: string }>();
     expect(originalWake?.callbackURL).toBe('https://agent-hook.example.com');
 
-    const crossSite = await portal('POST', '/manage/oauth/token', null,
+    const crossSite = await management('POST', '/manage/oauth/token', null,
       { clientId: 'test', code: 'owned-work', verifier: 'a'.repeat(64) },
       'https://evil.example.com');
     expect(crossSite.status).toBe(403);
@@ -220,7 +220,7 @@ describe('account-owned Wake endpoint migration', () => {
       'SELECT encrypted_target AS encrypted, signing_secret AS secret FROM wake_subscriptions WHERE session_id = ?',
     ).bind('session-b').first<{ encrypted: string | null; secret: string }>();
 
-    const updated = await portal('PUT', path, 'token-b', { callbackUrl: migrated });
+    const updated = await management('PUT', path, 'token-b', { callbackUrl: migrated });
     expect(updated.status).toBe(200);
     const after = await env.DB.prepare(
       'SELECT encrypted_target AS encrypted, signing_secret AS secret FROM wake_subscriptions WHERE session_id = ?',
