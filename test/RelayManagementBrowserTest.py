@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import re
 import shutil
+import subprocess
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,23 +18,27 @@ class ManagementScenarioServer:
     """Serve the actual Relay HTML/JS while isolating external OAuth/API effects."""
 
     def __init__(self) -> None:
-        source = (Path(__file__).resolve().parents[1] /
-                  'src' / 'RelayManagementPage.ts').read_text(encoding='utf-8')
-        self.html = self.extract(source, r'const html = `(.*?)`;\s*const response')
-        self.script = self.extract(source, r'const source = `(.*?)`;\s*return new Response')
+        repoRoot = Path(__file__).resolve().parents[1]
+        source = (
+            "import { RelayManagementPage } from './src/RelayManagementPage.ts';"
+            "console.log(JSON.stringify({"
+            "html: await RelayManagementPage.page().text(),"
+            "script: await RelayManagementPage.script().text()"
+            "}));"
+        )
+        compiled = subprocess.check_output(
+            ['node', '--input-type=module', '--eval', source],
+            cwd=repoRoot, text=True,
+        )
+        assets = json.loads(compiled)
+        self.html = assets['html']
+        self.script = assets['script']
         self.callbackHost = 'old-tunnel.trycloudflare.com'
         self.updated = 0
         self.updateBody: dict[str, str] = {}
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), self.handler())
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.origin = f'http://127.0.0.1:{self.server.server_port}'
-
-    @staticmethod
-    def extract(source: str, pattern: str) -> str:
-        match = re.search(pattern, source, re.DOTALL)
-        if match is None:
-            raise AssertionError('Cannot extract the actual Relay UI source.')
-        return match.group(1)
 
     def handler(self) -> type[BaseHTTPRequestHandler]:
         scenario = self
