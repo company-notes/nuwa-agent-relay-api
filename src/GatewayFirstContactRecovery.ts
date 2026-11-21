@@ -57,6 +57,20 @@ export class GatewayFirstContactRecovery {
     return result.results;
   }
 
+  private async requireOwnedTeammate(recipientSessionID: string): Promise<void> {
+    const owned = await this.env.DB.prepare(
+      `SELECT 1 AS allowed FROM gateway_teammates
+        WHERE org_id = ? AND gateway_session_id = ?
+          AND recipient_session_id = ? AND status = 'active'`,
+    ).bind(this.organizationID, this.gatewaySessionID,
+      recipientSessionID).first<{ allowed: number }>();
+
+    if (!owned) {
+      throw new APIError(403, 'gateway_teammate_not_authorized',
+        'This coworker does not belong to the selected Gateway.');
+    }
+  }
+
   private async priorityTime(senderSessionID: string, recipientSessionID: string): Promise<string> {
     const row = await this.env.DB.prepare(
       `SELECT MIN(e.next_attempt_at) AS earliestDue
@@ -80,6 +94,8 @@ export class GatewayFirstContactRecovery {
 
   async recover(senderSessionID: string, recipientSessionID: string,
                 initialMessageID: string): Promise<{ recovered: boolean; initialMessageID: string }> {
+    await this.requireOwnedTeammate(recipientSessionID);
+
     const candidate = (await this.pending()).find((entry) =>
       entry.senderSessionID === senderSessionID &&
       entry.recipientSessionID === recipientSessionID &&
