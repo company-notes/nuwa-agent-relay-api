@@ -13,7 +13,7 @@ type WakeSubscription = {
 /**
  * Account-owned Wake endpoint relocation. The identity proof is performed by
  * Agent Address before constructing this service; Runtime capabilities are not
- * used for Portal administration.
+ * used for Relay management.
  */
 export class WakeEndpointManagement {
   constructor(
