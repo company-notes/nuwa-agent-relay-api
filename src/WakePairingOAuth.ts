@@ -110,7 +110,7 @@ export class WakePairingOAuth {
     const token = tokenResponse.access_token;
 
     if (typeof token !== 'string' || !token || token.length > 4096 ||
-      /[\\r\\n\\t ]/.test(token)) {
+      /[\r\n\t ]/.test(token)) {
       throw new APIError(502, 'pairing_oauth_invalid', 'OAuth did not issue an access token.');
     }
 
