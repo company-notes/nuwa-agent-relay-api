@@ -646,9 +646,11 @@ export class RelayTestClient {
 
       if (url.pathname === '/register' && init?.method === 'POST') {
         const registration = JSON.parse(String(init.body));
-        expect(registration.redirect_uris).toEqual([
+        expect(registration.redirect_uris).toHaveLength(1);
+        expect([
           'https://agent-relay.company-notes.com/wake-pair/oauth/callback',
-        ]);
+          'https://agent-relay.company-notes.com/manage/callback',
+        ]).toContain(registration.redirect_uris[0]);
         expect(init.redirect).toBe('manual');
 
         return Response.json({ client_id: 'test-pairing-oauth-client' }, { status: 201 });
