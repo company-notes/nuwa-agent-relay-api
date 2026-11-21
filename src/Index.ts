@@ -9,11 +9,24 @@ import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { MailReceipt } from './MailReceipt';
 import { OfficeGatewayEnrollment, type OfficeCoworker } from './OfficeGatewayEnrollment';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
+import { RelayManagementPage } from './RelayManagementPage';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
+import { WakeEndpointManagement } from './WakeEndpointManagement';
 import { WakePairing } from './WakePairing';
+import { WakePairingOAuth } from './WakePairingOAuth';
+import { WakeTarget } from './WakeTarget';
 import { WakeService } from './WakeService';
 
 export class RelayAPI {
+  static isManagementPath(path: string): boolean {
+    return path === '/manage' || path === '/manage.js' ||
+      path.startsWith('/manage/') || path.startsWith('/v2/management/');
+  }
+
+  static isWakeEndpoint(path: string): boolean {
+    return /^\/v2\/management\/sessions\/[^/]+\/wake-endpoint$/.test(path);
+  }
+
   constructor(private readonly env: Env) {}
 
   private static authorization(request: Request): string {
@@ -409,8 +422,170 @@ export class RelayAPI {
     return null;
   }
 
+  private accountClient(authorization: string): SessionIdentityClient {
+    const transport = new AgentAddressTransport(this.env.ADDRESS_WORKER);
+
+    return new SessionIdentityClient(
+      this.env.ADDRESS_API_URL, authorization, transport.request.bind(transport),
+    );
+  }
+
+  private static requireManagementOrigin(request: Request, write: boolean): void {
+    const origin = request.headers.get('origin');
+
+    if (origin !== null && origin !== RelayManagementPage.origin ||
+      write && origin !== RelayManagementPage.origin) {
+      throw new APIError(403, 'management_origin_invalid',
+        'This operation must come from Nuwa Relay management.');
+    }
+  }
+
+  private async managementOAuth(request: Request, path: string): Promise<Response> {
+    RelayAPI.requireManagementOrigin(request, true);
+
+    if (request.method !== 'POST') {
+      throw new APIError(405, 'method_not_allowed', 'POST is required.');
+    }
+
+    const oauth = new WakePairingOAuth(this.env);
+    let data: unknown;
+
+    if (path === '/manage/oauth/client') {
+      const clientId = await oauth.registerClient(
+        RelayManagementPage.callbackURI, 'Nuwa Relay Management',
+      );
+      data = { clientId };
+    } else if (path === '/manage/oauth/token') {
+      const body = await HTTP.json(request);
+      const clientID = HTTP.requiredString(body, 'clientId', 512);
+      const code = HTTP.requiredString(body, 'code', 4096);
+      const verifier = HTTP.requiredString(body, 'verifier', 128);
+
+      if (!/^[a-zA-Z0-9_-]{43,128}$/.test(verifier)) {
+        throw new APIError(400, 'management_oauth_invalid',
+          'The OAuth PKCE verifier is invalid.');
+      }
+
+      data = { accessToken: await oauth.exchangeToken(
+        clientID, code, verifier, RelayManagementPage.callbackURI,
+      ) };
+    } else {
+      throw new APIError(404, 'not_found', 'Management OAuth route not found.');
+    }
+
+    const response = HTTP.response(data, path.endsWith('/client') ? 201 : 200);
+    response.headers.set('cache-control', 'no-store');
+    return response;
+  }
+
+  private async wakeSessions(request: Request): Promise<Response> {
+    RelayAPI.requireManagementOrigin(request, false);
+    const address = this.accountClient(RelayAPI.authorization(request));
+    const account = await address.status();
+
+    if (!account.organization) {
+      throw new APIError(403, 'organization_required',
+        'An Agent Address Organization is required.');
+    }
+
+    const stored = await this.env.DB.prepare(
+      `SELECT session_id AS sessionID, callback_url AS callbackURL,
+              auth_mode AS authMode
+         FROM wake_subscriptions WHERE org_id = ? ORDER BY session_id`,
+    ).bind(account.organization.id).all<{
+      sessionID: string; callbackURL: string; authMode: string;
+    }>();
+
+    const sessionIDs = stored.results.map((row) => row.sessionID);
+    const verified = new Map<string, { canonical: string; agentDisplayName?: string | null }>();
+
+    for (let offset = 0; offset < sessionIDs.length; offset += 25) {
+      const batch = await address.selectSessions(sessionIDs.slice(offset, offset + 25));
+
+      if (batch.organization.id !== account.organization.id) {
+        throw new APIError(403, 'management_organization_mismatch',
+          'Agent Address Session ownership does not match the Organization.');
+      }
+
+      for (const entry of batch.sessions) {
+        verified.set(entry.id, entry);
+      }
+    }
+
+    const entries = stored.results.flatMap((row) => {
+      const session = verified.get(row.sessionID);
+      if (!session) {
+        return [];
+      }
+
+      return [{
+        sessionID: row.sessionID,
+        canonical: session.canonical,
+        agentDisplayName: session.agentDisplayName ?? null,
+        callbackHost: WakeTarget.validateURL(row.callbackURL).hostname,
+        authMode: row.authMode,
+      }];
+    });
+    const response = HTTP.response(entries);
+    response.headers.set('cache-control', 'no-store');
+    return response;
+  }
+
+  private async wakeEndpoint(request: Request, path: string): Promise<Response> {
+    RelayAPI.requireManagementOrigin(request, request.method !== 'GET');
+    const sessionID = path.match(
+      /^\/v2\/management\/sessions\/([^/]+)\/wake-endpoint$/,
+    )![1];
+    const address = this.accountClient(RelayAPI.authorization(request));
+    const selected = await address.selectSessions([sessionID]);
+
+    if (selected.sessions.length !== 1 || selected.sessions[0].id !== sessionID) {
+      throw new APIError(403, 'wake_session_not_owned',
+        'The account does not own the selected Session.');
+    }
+
+    const endpoint = new WakeEndpointManagement(
+      this.env, selected.organization.id, sessionID,
+    );
+    let data: unknown;
+
+    if (request.method === 'GET') {
+      data = await endpoint.get();
+    } else if (request.method === 'PUT') {
+      const body = await HTTP.json(request);
+      data = await endpoint.changeURL(HTTP.requiredString(body, 'callbackUrl', 2048));
+    } else {
+      throw new APIError(405, 'method_not_allowed', 'GET or PUT is required.');
+    }
+
+    const response = HTTP.response(data);
+    response.headers.set('cache-control', 'no-store');
+    return response;
+  }
+
   async handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
+
+    if ((path === '/manage' || path === '/manage/' ||
+      path === '/manage/callback') && request.method === 'GET') {
+      return RelayManagementPage.page();
+    }
+
+    if (path === '/manage.js' && request.method === 'GET') {
+      return RelayManagementPage.script();
+    }
+
+    if (path === '/manage/oauth/client' || path === '/manage/oauth/token') {
+      return this.managementOAuth(request, path);
+    }
+
+    if (path === '/v2/management/wake-sessions' && request.method === 'GET') {
+      return this.wakeSessions(request);
+    }
+
+    if (RelayAPI.isWakeEndpoint(path)) {
+      return this.wakeEndpoint(request, path);
+    }
 
     if (path.startsWith('/wake-pair/')) {
       return new WakePairing(this.env).handlePublic(request);
@@ -505,24 +680,42 @@ export default {
     request: Request, env: Env,
     context?: { waitUntil(promise: Promise<unknown>): void },
   ): Promise<Response> {
+    const path = new URL(request.url).pathname;
+    const management = RelayAPI.isManagementPath(path);
+    const managementOrigin = request.headers.get('origin') === RelayManagementPage.origin;
+
     if (request.method === 'OPTIONS') {
+      if (management && !managementOrigin) {
+        return new Response(null, { status: 403 });
+      }
+
       return new Response(null, {
         status: 204,
         headers: {
-          'access-control-allow-origin': '*',
-          'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
-          'access-control-allow-headers':
-            'authorization,content-type,x-nuwa-runtime-token,x-relay-verification-key',
+          'access-control-allow-origin': management ? RelayManagementPage.origin : '*',
+          'access-control-allow-methods': management
+            ? 'GET,POST,PUT,OPTIONS' : 'GET,POST,PUT,DELETE,OPTIONS',
+          'access-control-allow-headers': management
+            ? 'authorization,content-type'
+            : 'authorization,content-type,x-nuwa-runtime-token,x-relay-verification-key',
           'access-control-max-age': '86400',
+          ...(management ? { vary: 'Origin' } : {}),
         },
       });
     }
 
     try {
       const response = await new RelayAPI(env).handle(request);
-      response.headers.set('access-control-allow-origin', '*');
 
-      const path = new URL(request.url).pathname;
+      if (!management || managementOrigin) {
+        response.headers.set('access-control-allow-origin',
+          management ? RelayManagementPage.origin : '*');
+      }
+
+      if (management) {
+        response.headers.set('vary', 'Origin');
+        response.headers.set('cache-control', 'no-store');
+      }
 
       if (response.ok && context &&
           ((request.method === 'POST' && path === '/v1/mailtrigger/receipt') ||
@@ -536,7 +729,16 @@ export default {
       return response;
     } catch (error) {
       const response = HTTP.error(error);
-      response.headers.set('access-control-allow-origin', '*');
+
+      if (!management || managementOrigin) {
+        response.headers.set('access-control-allow-origin',
+          management ? RelayManagementPage.origin : '*');
+      }
+
+      if (management) {
+        response.headers.set('vary', 'Origin');
+        response.headers.set('cache-control', 'no-store');
+      }
 
       return response;
     }

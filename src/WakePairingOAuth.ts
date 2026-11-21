@@ -57,10 +57,13 @@ export class WakePairingOAuth {
     }
   }
 
-  async registerClient(): Promise<string> {
+  async registerClient(
+    redirectURI = WakePairingOAuth.callbackURL,
+    clientName = 'Nuwa Wake Pairing',
+  ): Promise<string> {
     const response = await this.post('/register', {
-      client_name: 'Nuwa Wake Pairing',
-      redirect_uris: [WakePairingOAuth.callbackURL],
+      client_name: clientName,
+      redirect_uris: [redirectURI],
       grant_types: ['authorization_code'],
       response_types: ['code'],
       token_endpoint_auth_method: 'none',
@@ -74,20 +77,44 @@ export class WakePairingOAuth {
     return response.client_id;
   }
 
-  async authorizationURL(clientId: string, state: string, verifier: string): Promise<string> {
+  async authorizationURL(
+    clientId: string, state: string, verifier: string,
+    redirectURI = WakePairingOAuth.callbackURL,
+  ): Promise<string> {
     const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
     const challenge = btoa(String.fromCharCode(...new Uint8Array(hash)))
       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
     const url = new URL(this.endpoint('/authorize'));
 
     url.searchParams.set('client_id', clientId);
-    url.searchParams.set('redirect_uri', WakePairingOAuth.callbackURL);
+    url.searchParams.set('redirect_uri', redirectURI);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('state', state);
     url.searchParams.set('code_challenge', challenge);
     url.searchParams.set('code_challenge_method', 'S256');
 
     return url.toString();
+  }
+
+  async exchangeToken(
+    clientID: string, code: string, verifier: string,
+    redirectURI = WakePairingOAuth.callbackURL,
+  ): Promise<string> {
+    const tokenResponse = await this.post('/token', new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: clientID,
+      code,
+      redirect_uri: redirectURI,
+      code_verifier: verifier,
+    }));
+    const token = tokenResponse.access_token;
+
+    if (typeof token !== 'string' || !token || token.length > 4096 ||
+      /[\r\n\t ]/.test(token)) {
+      throw new APIError(502, 'pairing_oauth_invalid', 'OAuth did not issue an access token.');
+    }
+
+    return token;
   }
 
   async verifySession(
@@ -97,19 +124,7 @@ export class WakePairingOAuth {
     sessionID: string,
     organizationID: string,
   ): Promise<void> {
-    const tokenResponse = await this.post('/token', new URLSearchParams({
-      grant_type: 'authorization_code',
-      client_id: clientID,
-      code,
-      redirect_uri: WakePairingOAuth.callbackURL,
-      code_verifier: verifier,
-    }));
-    const token = tokenResponse.access_token;
-
-    if (typeof token !== 'string' || !token || token.length > 4096 ||
-        /[\r\n\t ]/.test(token)) {
-      throw new APIError(502, 'pairing_oauth_invalid', 'OAuth did not issue an access token.');
-    }
+    const token = await this.exchangeToken(clientID, code, verifier);
 
     const identity = new SessionIdentityClient(
       this.env.ADDRESS_API_URL, 'Bearer ' + token,
