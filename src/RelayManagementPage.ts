@@ -51,6 +51,13 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 <p><small>清單僅顯示已設定的接收器與公開主機名稱；私密 Webhook 路徑和 Bearer key 不會顯示。</small></p>
 <div id="receivers"></div>
 </section>
+<section id="recoverPanel" hidden>
+<h2>恢復尚未完成的首次聯絡</h2>
+<p>當原生 Webhook 連線中斷、重新發送仍顯示等待首次聯絡時，可在確認收件平台沒有建立原生對話後恢復原本的待送訊息。</p>
+<p id="selectedGateway"></p>
+<div id="pendingContacts"></div>
+<p><button id="closeRecoveries" class="secondary" type="button">關閉恢復清單</button></p>
+</section>
 <section id="editPanel" hidden>
 <h2>更新 Wake 網址</h2>
 <p id="selectedSession"></p>
@@ -93,6 +100,8 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   const loginPanel = document.getElementById('loginPanel');
   const management = document.getElementById('management');
   const editPanel = document.getElementById('editPanel');
+  const recoverPanel = document.getElementById('recoverPanel');
+  const pendingContacts = document.getElementById('pendingContacts');
   const receivers = document.getElementById('receivers');
   let activeSession = null;
 
@@ -174,7 +183,55 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
     window.history.replaceState({}, '', '/manage');
   }
 
+  async function showRecoveries(entry) {
+    const path = '/v2/management/sessions/' +
+      encodeURIComponent(entry.sessionID) + '/first-contacts';
+    const contacts = await api('GET', path, undefined, true);
+    document.getElementById('selectedGateway').textContent = entry.canonical;
+    pendingContacts.replaceChildren();
+    recoverPanel.hidden = false;
+    editPanel.hidden = true;
+
+    if (contacts.length === 0) {
+      pendingContacts.textContent = '目前沒有符合安全恢復條件的首次聯絡。';
+    }
+
+    contacts.forEach((contact) => {
+      const row = document.createElement('div');
+      row.className = 'receiver';
+      const title = document.createElement('strong');
+      title.textContent = contact.senderCanonicalAddress + ' → ' +
+        contact.recipientCanonicalAddress;
+      const detail = document.createElement('div');
+      detail.textContent = '原始 Message ID：' + contact.initialMessageID +
+        ' · 已嘗試 ' + contact.initialWakeAttempts + ' 次';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = '確認未建立對話並恢復';
+      button.addEventListener('click', () => {
+        const accepted = window.confirm(
+          '請先確認收件助理沒有收到原始訊息、也沒有建立原生對話。' +
+          '確定後會重新排程原始 Wake，可能觸發一次新的原生轉交。確定恢復？');
+        if (!accepted) {
+          return;
+        }
+
+        void api('POST', path + '/recover', {
+          senderSessionID: contact.senderSessionID,
+          recipientSessionID: contact.recipientSessionID,
+          initialMessageID: contact.initialMessageID,
+          confirmedNoNativeDelivery: true,
+        }, true).then(() => showRecoveries(entry)).then(() => {
+          message('已解除這一組首次聯絡的保留，原始 Wake 已優先排入重試。');
+        }).catch((error) => message(error.message));
+      });
+      row.append(title, detail, button);
+      pendingContacts.append(row);
+    });
+  }
+
   function showEditor(entry) {
+    recoverPanel.hidden = true;
     activeSession = entry.sessionID;
     document.getElementById('selectedSession').textContent =
       entry.canonical + ' · ' + entry.callbackHost;
@@ -188,6 +245,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       loginPanel.hidden = false;
       management.hidden = true;
       editPanel.hidden = true;
+      recoverPanel.hidden = true;
       return;
     }
 
@@ -210,7 +268,14 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       edit.type = 'button';
       edit.textContent = '更新連線網址';
       edit.addEventListener('click', () => showEditor(entry));
-      row.append(title, detail, edit);
+      const recover = document.createElement('button');
+      recover.type = 'button';
+      recover.textContent = '查看待恢復首聯';
+      recover.className = 'secondary';
+      recover.addEventListener('click', () => {
+        void showRecoveries(entry).catch((error) => message(error.message));
+      });
+      row.append(title, detail, edit, recover);
       receivers.append(row);
     });
     message('已載入你有權管理的 Wake 接收器。');
@@ -249,6 +314,9 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   });
   document.getElementById('cancelEdit').addEventListener('click', () => {
     editPanel.hidden = true;
+  });
+  document.getElementById('closeRecoveries').addEventListener('click', () => {
+    recoverPanel.hidden = true;
   });
   document.getElementById('wakeForm').addEventListener('submit', (event) => {
     void save(event);
