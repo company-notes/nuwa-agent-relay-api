@@ -96,13 +96,19 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   const receivers = document.getElementById('receivers');
   let activeSession = null;
 
-  function message(text) { notice.textContent = text; }
+  function message(text) {
+    notice.textContent = text;
+  }
 
   async function api(method, path, body, authenticated) {
     const token = sessionStorage.getItem(tokenKey);
     const headers = {};
-    if (body !== undefined) { headers['content-type'] = 'application/json'; }
-    if (authenticated) { headers.authorization = 'Bearer ' + token; }
+    if (body !== undefined) {
+      headers['content-type'] = 'application/json';
+    }
+    if (authenticated) {
+      headers.authorization = 'Bearer ' + token;
+    }
 
     const response = await fetch(path, {
       method, headers, cache: 'no-store',
@@ -117,8 +123,10 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 
   function base64URL(bytes) {
     let raw = '';
-    bytes.forEach((byte) => { raw += String.fromCharCode(byte); });
-    return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    bytes.forEach((byte) => {
+      raw += String.fromCharCode(byte);
+    });
+    return btoa(raw).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
   }
 
   async function signIn() {
@@ -145,7 +153,9 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   }
 
   async function completeSignIn() {
-    if (window.location.pathname !== '/manage/callback') { return; }
+    if (window.location.pathname !== '/manage/callback') {
+      return;
+    }
     const query = new URLSearchParams(window.location.search);
     const state = query.get('state');
     const code = query.get('code');
@@ -208,7 +218,9 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 
   async function save(event) {
     event.preventDefault();
-    if (!activeSession) { return; }
+    if (!activeSession) {
+      return;
+    }
     const newURL = document.getElementById('callbackUrl').value;
     const target = new URL(newURL);
     if (target.protocol !== 'https:') {
