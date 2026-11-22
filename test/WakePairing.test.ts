@@ -62,6 +62,17 @@ async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' |
   return { created, state: state!, oauthCookie };
 }
 
+async function resetCopiedHeaderScenario(): Promise<void> {
+  // This suite intentionally shares one isolated D1. The repeated browser
+  // pairing scenarios need independent invitation and verification cooldowns.
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM wake_pairing_oauth_attempts WHERE pairing_id IN ' +
+      '(SELECT id FROM wake_pairing_requests WHERE session_id = ?)').bind('session-b'),
+    env.DB.prepare('DELETE FROM wake_pairing_requests WHERE session_id = ?').bind('session-b'),
+    env.DB.prepare('DELETE FROM wake_registration_attempts WHERE session_id = ?').bind('session-b'),
+  ]);
+}
+
 describe('user-controlled Wake Pairing', () => {
   it('OAuth-verifies exact Session, accepts key only in private browser form, and emits one challenge', async () => {
     const client = new RelayTestClient();
@@ -305,6 +316,8 @@ describe('user-controlled Wake Pairing', () => {
     '  authorization :   bEaReR   example-rakazo-webhook-token-32  ',
     'Bearer example-rakazo-webhook-token-32',
   ])('accepts a copied Webhook Authorization header without storing its prefix (%s)', async (copied) => {
+    await resetCopiedHeaderScenario();
+
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     const { state, oauthCookie } = await authorize(client);
@@ -344,6 +357,8 @@ describe('user-controlled Wake Pairing', () => {
   });
 
   it('rejects malformed copied Authorization headers without using the pairing invitation', async () => {
+    await resetCopiedHeaderScenario();
+
     const client = new RelayTestClient();
     client.installExternalTestTransport();
     const { state, oauthCookie } = await authorize(client);
