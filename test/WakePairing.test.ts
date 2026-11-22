@@ -330,7 +330,7 @@ describe('user-controlled Wake Pairing', () => {
     const html = await form.text();
     expect(html).toContain('Authorization: Bearer');
     const csrfToken = extractCSRF(html);
-    const callbackUrl = 'https://rakazo.example.org/api/v1/bots/gateway-bot/webhook';
+    const callbackUrl = 'https://agent-hook.example.com/api/v1/bots/gateway-bot/webhook';
     const result = await open(origin + '/wake-pair/complete', sessionCookie, {
       method: 'POST',
       headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
@@ -367,7 +367,7 @@ describe('user-controlled Wake Pairing', () => {
     const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
     const form = await open(origin + '/wake-pair/complete', sessionCookie);
     const csrfToken = extractCSRF(await form.text());
-    const callbackUrl = 'https://rakazo.example.org/api/v1/bots/gateway-bot/webhook';
+    const callbackUrl = 'https://agent-hook.example.com/api/v1/bots/gateway-bot/webhook';
 
     for (const bearerToken of [
       'Authorization: Basic example-rakazo-webhook-token-32',
