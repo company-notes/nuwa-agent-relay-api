@@ -342,6 +342,27 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
     return row;
   }
 
+  /** Extract the token if a provider copied an entire HTTP Authorization line. */
+  private static bearerFromPaste(value: string): string {
+    if (/[\r\n]/.test(value)) {
+      throw new APIError(400, 'invalid_wake_auth',
+        'Paste a single Webhook key or Authorization: Bearer line.');
+    }
+
+    const pasted = value.trim();
+    if (!/^(?:Authorization\s*:|Bearer(?:\s|$))/i.test(pasted)) {
+      return pasted;
+    }
+
+    const matched = pasted.match(/^(?:Authorization\s*:\s*)?Bearer[ \t]+([^\s]+)$/i);
+    if (!matched) {
+      throw new APIError(400, 'invalid_wake_auth',
+        'Paste a valid Bearer key or Authorization: Bearer line.');
+    }
+
+    return matched[1];
+  }
+
   private async showForm(request: Request): Promise<Response> {
     const row = await this.session(request);
     const safeWork = WakePairing.escape(row.sessionID);
@@ -359,7 +380,9 @@ small { opacity: .75; } code { overflow-wrap: anywhere; }
 <label for="url">Webhook HTTPS URL</label>
 <input id="url" name="callbackUrl" type="url" inputmode="url" maxlength="2048"
  placeholder="https://api2.cursor.sh/..." required>
-<label for="key">Webhook Key</label>
+<label for="key">Webhook Key / Bearer token</label>
+<p><small>可直接貼上平台複製的 <code>Authorization: Bearer ...</code> 整行，
+系統會自動移除 Header 前綴，只加密保存真正的 token。</small></p>
 <input id="key" name="bearerToken" type="password" minlength="12" maxlength="2048"
  autocomplete="new-password" required>
 <button type="submit">加密保存並發送一次驗證</button></form>
@@ -425,8 +448,10 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
       throw new APIError(400, 'pairing_form_invalid', 'A Webhook URL and Key are required.');
     }
 
-    // Validate before consuming the one-time authorization; never echo either field.
-    WakeTarget.validateConfig(callbackValues[0], 'bearer', credentialValues[0]);
+    // Normalize and validate before consuming the one-time authorization.
+    // Neither the pasted header nor the extracted key may enter logs or HTML.
+    const bearerToken = WakePairing.bearerFromPaste(credentialValues[0]);
+    WakeTarget.validateConfig(callbackValues[0], 'bearer', bearerToken);
 
     const now = new Date().toISOString();
     const consumed = await this.env.DB.prepare(
@@ -448,7 +473,7 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
 
     try {
       const result = await new WakeRegistration(this.env, scope).begin(
-        callbackValues[0], 'bearer', credentialValues[0],
+        callbackValues[0], 'bearer', bearerToken,
       );
 
       return WakePairing.page('Webhook 已提交驗證', `
@@ -456,7 +481,11 @@ MCP 工具參數或 Agent 任務提示。</small></p>`);
 <p>${result.challengeDelivered
   ? '驗證事件已送達 Webhook。請讓已授權的 Agent 呼叫 relayVerifyWake 完成一次性驗證。'
   : 'Relay 尚未確認 Webhook 收到 Challenge，請檢查 Automation 執行紀錄後重新建立配對連結。'}</p>
-<p>Key 已交由 Relay 加密管理，不會回傳給助理。這個配對連結無法再次使用。</p>`);
+<p><strong>尚未完成驗證。</strong>只有通過 relayVerifyWake 的 Wake 才會在管理頁顯示。</p>
+<p><a href="https://agent-relay.company-notes.com/manage" rel="noreferrer">前往 Wake 接收管理頁</a></p>
+<p><small>已驗證的 Wake 可在管理頁修改接收網址；如果這次驗證失敗或填錯 key，
+請回原 Gateway 產生新的配對連結。密鑰只會加密保存，不會回傳給助理。
+本次配對連結無法再次使用。</small></p>`);
     } catch (error) {
       WakePairing.logger.exception('registration_failed', error);
       throw error;

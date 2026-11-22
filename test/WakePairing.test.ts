@@ -62,6 +62,17 @@ async function authorize(client: RelayTestClient, token: 'token-a' | 'token-b' |
   return { created, state: state!, oauthCookie };
 }
 
+async function resetCopiedHeaderScenario(): Promise<void> {
+  // This suite intentionally shares one isolated D1. The repeated browser
+  // pairing scenarios need independent invitation and verification cooldowns.
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM wake_pairing_oauth_attempts WHERE pairing_id IN ' +
+      '(SELECT id FROM wake_pairing_requests WHERE session_id = ?)').bind('session-b'),
+    env.DB.prepare('DELETE FROM wake_pairing_requests WHERE session_id = ?').bind('session-b'),
+    env.DB.prepare('DELETE FROM wake_registration_attempts WHERE session_id = ?').bind('session-b'),
+  ]);
+}
+
 describe('user-controlled Wake Pairing', () => {
   it('OAuth-verifies exact Session, accepts key only in private browser form, and emits one challenge', async () => {
     const client = new RelayTestClient();
@@ -298,6 +309,93 @@ describe('user-controlled Wake Pairing', () => {
 
     const reused = await open(created.body.data.pairingUrl);
     expect(reused.status).toBe(404);
+  });
+
+  it.each([
+    'Authorization: Bearer example-rakazo-webhook-token-32',
+    '  authorization :   bEaReR   example-rakazo-webhook-token-32  ',
+    'Bearer example-rakazo-webhook-token-32',
+  ])('accepts a copied Webhook Authorization header without storing its prefix (%s)', async (copied) => {
+    await resetCopiedHeaderScenario();
+
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const { state, oauthCookie } = await authorize(client);
+    const callback = await open(origin + '/wake-pair/oauth/callback?' +
+      new URLSearchParams({ state, code: 'owned-work' }), oauthCookie);
+    expect(callback.status).toBe(303);
+
+    const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
+    const form = await open(origin + '/wake-pair/complete', sessionCookie);
+    const html = await form.text();
+    expect(html).toContain('Authorization: Bearer');
+    const csrfToken = extractCSRF(html);
+    const callbackUrl = 'https://agent-hook.example.com/api/v1/bots/gateway-bot/webhook';
+    const result = await open(origin + '/wake-pair/complete', sessionCookie, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ callbackUrl, bearerToken: copied, csrfToken }),
+    });
+
+    expect(result.status).toBe(200);
+    const confirmation = await result.text();
+    expect(confirmation).toContain('https://agent-relay.company-notes.com/manage');
+    expect(confirmation).toContain('尚未完成驗證');
+    expect(confirmation).not.toContain('example-rakazo-webhook-token-32');
+    expect(confirmation).not.toContain('gateway-bot');
+    expect(client.wakeRequests).toHaveLength(1);
+    expect(client.wakeRequests[0]).toMatchObject({
+      url: callbackUrl,
+      authorization: 'Bearer example-rakazo-webhook-token-32',
+    });
+
+    const stored = await env.DB.prepare(
+      'SELECT encrypted_target AS encrypted FROM wake_registration_attempts WHERE session_id = ?',
+    ).bind('session-b').first<{ encrypted: string }>();
+    expect(stored!.encrypted).not.toContain('example-rakazo-webhook-token-32');
+    expect(stored!.encrypted).not.toContain('Authorization:');
+  });
+
+  it('rejects malformed copied Authorization headers without using the pairing invitation', async () => {
+    await resetCopiedHeaderScenario();
+
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    const { state, oauthCookie } = await authorize(client);
+    const callback = await open(origin + '/wake-pair/oauth/callback?' +
+      new URLSearchParams({ state, code: 'owned-work' }), oauthCookie);
+    const sessionCookie = extractCookie(callback, '__Host-nuwa_pair_session');
+    const form = await open(origin + '/wake-pair/complete', sessionCookie);
+    const csrfToken = extractCSRF(await form.text());
+    const callbackUrl = 'https://agent-hook.example.com/api/v1/bots/gateway-bot/webhook';
+
+    for (const bearerToken of [
+      'Authorization: Basic example-rakazo-webhook-token-32',
+      'Authorization: Bearer first-token second-token',
+      'Authorization: Bearer',
+    ]) {
+      const response = await open(origin + '/wake-pair/complete', sessionCookie, {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ callbackUrl, bearerToken, csrfToken }),
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json() as any).error.code).toBe('invalid_wake_auth');
+      expect(client.wakeRequests).toHaveLength(0);
+    }
+
+    const correct = await open(origin + '/wake-pair/complete', sessionCookie, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        callbackUrl,
+        bearerToken: 'example-rakazo-webhook-token-32',
+        csrfToken,
+      }),
+    });
+    expect(correct.status).toBe(200);
+    expect(client.wakeRequests[0].authorization)
+      .toBe('Bearer example-rakazo-webhook-token-32');
   });
 
   it('keeps sensitive callback paths and key values out of pairing, OAuth and HTML responses', async () => {
