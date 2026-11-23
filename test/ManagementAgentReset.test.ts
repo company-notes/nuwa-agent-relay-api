@@ -96,8 +96,8 @@ describe('Owner resets one installed Gateway to simulate first-time onboarding',
     });
     expect(preview.body.data.members).toHaveLength(2);
 
-    const denied = await scenario.management('GET', path, undefined, 'token-foreign');
-    expect(denied.status).toBe(404);
+    await expect(scenario.management('GET', path, undefined, 'token-foreign'))
+      .rejects.toMatchObject({ status: 404, code: 'agent_not_owned' });
 
     await expect(scenario.management('DELETE', path, {
       confirmation: 'RESET wrong-address',
