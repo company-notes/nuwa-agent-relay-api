@@ -158,7 +158,7 @@ export class AliasService {
     return { id, revoked: true };
   }
 
-  private async resolveNativeBot(botID: string): Promise<ResolvedSession> {
+  private async findNativeBot(botID: string): Promise<ResolvedSession | null> {
     const { results } = await this.env.DB.prepare(
       `SELECT recipient_agent_id AS agentID, recipient_session_id AS sessionID
          FROM gateway_routes WHERE org_id = ? AND recipient_bot_id = ? LIMIT 2`,
@@ -167,8 +167,7 @@ export class AliasService {
     }>();
 
     if (results.length === 0) {
-      throw new APIError(404, 'recipient_bot_not_found',
-        'No registered Bot matches this native ID in the Organization.');
+      return null;
     }
 
     if (results.length > 1) {
@@ -187,6 +186,17 @@ export class AliasService {
     return session;
   }
 
+  private async resolveNativeBot(botID: string): Promise<ResolvedSession> {
+    const resolved = await this.findNativeBot(botID);
+
+    if (!resolved) {
+      throw new APIError(404, 'recipient_bot_not_found',
+        'No registered Bot matches this native ID in the Organization.');
+    }
+
+    return resolved;
+  }
+
   private async resolveAddressOrName(target: string): Promise<ResolvedSession> {
     const botID = PlatformBotIdentity.readSelector(target);
 
@@ -198,7 +208,12 @@ export class AliasService {
       return this.address.resolve(target);
     }
 
-    return new RecipientDirectory(this.identity, this.address).resolve(target, { allowShortNames: true });
+    // Exact registered Bot IDs take precedence over names, including opaque
+    // platform IDs that are neither UUIDs nor explicitly bot:-prefixed.
+    const native = await this.findNativeBot(target);
+
+    return native ?? new RecipientDirectory(this.identity, this.address)
+      .resolve(target, { allowShortNames: true });
   }
 
   async resolve(target: Recipient): Promise<ResolvedSession> {
