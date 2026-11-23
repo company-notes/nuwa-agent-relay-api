@@ -366,7 +366,7 @@ export class ManagementAgentReset {
 
       await this.env.DB.prepare(
         'UPDATE management_agent_resets SET purged_agent_ids_json = ' +
-        'json_insert(purged_agent_ids_json, `$[#]`, ?) WHERE org_id = ? AND agent_id = ? AND ' +
+        "json_insert(purged_agent_ids_json, '$[#]', ?) WHERE org_id = ? AND agent_id = ? AND " +
         'NOT EXISTS (SELECT 1 FROM json_each(purged_agent_ids_json) WHERE value = ?)',
       ).bind(member.agentID, orgID, targetID, member.agentID).run();
     }
