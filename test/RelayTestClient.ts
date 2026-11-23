@@ -111,11 +111,12 @@ export class RelayTestClient {
   private organizationSlug = RelayTestClient.slug;
   private identityRevision = 0;
   private readonly archivedSessions = new Set<string>();
+  readonly resetAgentIDs = new Set<string>();
   private readonly previousAddresses = new Map<string, Session>();
 
   private sessions(): Session[] {
     return [this.sessionA, this.sessionB, this.sessionC, this.sessionD, this.sessionG, this.sessionH,
-      ...this.officeAgents];
+      ...this.officeAgents].filter((session) => !this.resetAgentIDs.has(session.agentId));
   }
 
   renameOrganization(slug: string) {
@@ -215,6 +216,42 @@ export class RelayTestClient {
       return Response.json({ ok: true, data: { session: registered } });
     }
 
+    const resetPath = url.pathname.match(/^\/v2\/account\/agents\/([^/]+)\/data$/);
+
+    if (resetPath && init?.method === 'DELETE') {
+      const target = resetPath[1];
+      const input = JSON.parse(String(init.body)) as { confirmAgentID: string };
+
+      if (token === 'Bearer token-foreign' ||
+          !this.sessions().some((session) => session.agentId === target)) {
+        return Response.json({ ok: false, error: { code: 'agent_not_found' } }, { status: 404 });
+      }
+
+      if (input.confirmAgentID !== target) {
+        return Response.json({ ok: false, error: { code: 'reset_confirmation_mismatch' } }, { status: 409 });
+      }
+
+      this.resetAgentIDs.add(target);
+      const officeIndex = this.officeAgents.findIndex((agent) => agent.agentId === target);
+
+      if (officeIndex >= 0) {
+        this.officeAgents.splice(officeIndex, 1);
+      }
+
+      return Response.json({ ok: true, data: { id: target, purged: true } });
+    }
+
+    const agentSessions = url.pathname.match(/^\/v2\/account\/agents\/([^/]+)\/sessions$/);
+
+    if (agentSessions && init?.method === 'GET') {
+      const sessions = token === 'Bearer token-foreign' ? [] : this.sessions()
+        .filter((session) => session.agentId === agentSessions[1]);
+
+      return sessions.length
+        ? Response.json({ ok: true, data: sessions })
+        : Response.json({ ok: false, error: { code: 'agent_not_found' } }, { status: 404 });
+    }
+
     if (url.pathname === '/v2/account/agents') {
       this.nameDirectoryLookups += 1;
 
@@ -225,7 +262,8 @@ export class RelayTestClient {
         }] });
       }
 
-      return Response.json({ ok: true, data: [
+      return Response.json({ ok: true, data: token === 'Bearer token-foreign'
+        ? [] : [
         { id: 'agent-000a', handle: 'alpha', displayName: '小晴',
           defaultSessionID: 'session-a', defaultSessionHandle: 'author' },
         { id: 'agent-000b', handle: 'beta', displayName: '大熊',
@@ -245,7 +283,7 @@ export class RelayTestClient {
           defaultSessionHandle: 'main',
           createdAt: agent.createdAt,
         })),
-      ] });
+      ].filter((agent) => !this.resetAgentIDs.has(agent.id)) });
     }
 
     const agentUpdate = url.pathname.match(/^\/v2\/account\/agents\/([^/]+)$/);
