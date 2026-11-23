@@ -76,7 +76,12 @@ export class GatewaySpeaker {
           'Coworker display names must be one short line.');
       }
 
-      matches = (await projection.refreshStale(await this.officeSenders())).filter((entry) =>
+      const office = await projection.refreshStale(await this.officeSenders());
+      const exactIDs = office.filter((entry) => entry.botID === from.trim());
+
+      // Platform-native IDs are opaque. Resolve a registered ID before
+      // interpreting the same string as a coworker's display name.
+      matches = exactIDs.length ? exactIDs : office.filter((entry) =>
         entry.identityAvailable && entry.displayName.trim().normalize('NFKC').toLowerCase() === name);
     }
 
