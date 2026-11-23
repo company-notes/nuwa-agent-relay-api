@@ -4,6 +4,7 @@ export interface AgentAddressWorker {
 
 export interface Env {
   ADDRESS_WORKER: AgentAddressWorker;
+  MCP_WORKER: AgentAddressWorker;
   DB: D1Database;
   ADDRESS_API_URL: string;
   MAILTRIGGER_API_URL: string;

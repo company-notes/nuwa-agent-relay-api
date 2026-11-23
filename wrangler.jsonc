@@ -18,6 +18,10 @@
     {
       "binding": "ADDRESS_WORKER",
       "service": "agent-address"
+    },
+    {
+      "binding": "MCP_WORKER",
+      "service": "nuwa-agent-relay-mcp"
     }
   ],
   "triggers": {
