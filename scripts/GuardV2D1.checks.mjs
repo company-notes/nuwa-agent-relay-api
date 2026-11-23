@@ -13,12 +13,15 @@ const gateway = ['gateway_routes', 'gateway_conversations', 'gateway_first_conta
 const roster = ['gateway_teammates'];
 const office = ['gateway_office_coworkers'];
 const delegation = ['gateway_office_delegation'];
+const reset = ['management_agent_resets'];
 
 test('accepts only a new empty or fully migrated V2 database', () => {
   assert.equal(classifyDatabase(['d1_migrations', '_cf_KV', '_cf_METADATA']), 'empty');
   assert.equal(classifyDatabase([...v2, 'd1_migrations', '_cf_KV']), 'v2');
   assert.equal(classifyDatabase([...v2, ...gateway]), 'v2');
-  assert.equal(classifyDatabase([...v2, ...gateway, ...roster, ...office, ...delegation], true), 'v2');
+  assert.equal(classifyDatabase([...v2, ...gateway, ...roster, ...office, ...delegation, ...reset], true), 'v2');
+  assert.throws(() => classifyDatabase([...v2, ...gateway, ...roster, ...office, ...delegation], true),
+    /management reset migration/);
   assert.throws(() => classifyDatabase([...v2, ...gateway, ...roster, ...office], true),
     /Office delegation migration/);
   assert.throws(() => classifyDatabase([...v2, ...gateway, ...roster], true),
@@ -79,7 +82,10 @@ test('guard, remote migration and deploy require the same private production con
 test('requires canonical Agent Address binding before remote schema inspection or deploy', () => {
   const config = {
     name: 'nuwa-agent-relay-api',
-    services: [{ binding: 'ADDRESS_WORKER', service: 'agent-address' }],
+    services: [
+      { binding: 'ADDRESS_WORKER', service: 'agent-address' },
+      { binding: 'MCP_WORKER', service: 'nuwa-agent-relay-mcp' },
+    ],
   };
 
   assert.doesNotThrow(() => validateProductionBindings(config));
@@ -88,10 +94,12 @@ test('requires canonical Agent Address binding before remote schema inspection o
     { ...config, services: [] },
     { ...config, services: [{ binding: 'ADDRESS_WORKER', service: 'other-worker' }] },
     { ...config, services: [...config.services, ...config.services] },
+    { ...config, services: config.services.slice(0, 1) },
+    { ...config, services: [config.services[0], { binding: 'MCP_WORKER', service: 'untrusted' }] },
     { ...config, name: 'other-worker' },
   ]) {
     assert.throws(() => validateProductionBindings(missing),
-      /canonical Agent Address service binding/);
+      /canonical Agent Address and MCP service bindings/);
   }
 });
 

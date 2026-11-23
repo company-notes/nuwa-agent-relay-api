@@ -11,6 +11,7 @@ import { MailReceipt } from './MailReceipt';
 import { OfficeGatewayEnrollment, type OfficeCoworker } from './OfficeGatewayEnrollment';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
 import { RelayManagementPage } from './RelayManagementPage';
+import { ManagementAgentReset } from './ManagementAgentReset';
 import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
 import { WakeEndpointManagement } from './WakeEndpointManagement';
 import { WakePairing } from './WakePairing';
@@ -613,6 +614,38 @@ export class RelayAPI {
     return response;
   }
 
+  private async manageAgents(request: Request, path: string): Promise<Response> {
+    const selected = path.match(/^\/v2\/management\/agents\/([^/]+)\/data$/);
+    const write = request.method === 'DELETE';
+    RelayAPI.requireManagementOrigin(request, write);
+
+    const authorization = RelayAPI.authorization(request);
+    const manager = new ManagementAgentReset(
+      this.env, this.accountClient(authorization), authorization,
+    );
+    let data: unknown;
+
+    if (path === '/v2/management/agents' && request.method === 'GET') {
+      data = await manager.agents();
+    } else if (selected && request.method === 'GET') {
+      data = await manager.preview(selected[1]);
+    } else if (selected && write) {
+      const body = await HTTP.json(request);
+      data = await manager.execute(
+        selected[1], HTTP.requiredString(body, 'confirmation', 255),
+        HTTP.requiredString(body, 'fingerprint', 128),
+      );
+    } else {
+      throw new APIError(405, 'method_not_allowed',
+        'List Agents, preview one Agent or DELETE a confirmed reset.');
+    }
+
+    const response = HTTP.response(data);
+    response.headers.set('cache-control', 'no-store');
+
+    return response;
+  }
+
   async handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
 
@@ -631,6 +664,11 @@ export class RelayAPI {
 
     if (path === '/v2/management/wake-sessions' && request.method === 'GET') {
       return this.wakeSessions(request);
+    }
+
+    if (path === '/v2/management/agents' ||
+        /^\/v2\/management\/agents\/[^/]+\/data$/.test(path)) {
+      return this.manageAgents(request, path);
     }
 
     if (RelayAPI.isWakeEndpoint(path)) {

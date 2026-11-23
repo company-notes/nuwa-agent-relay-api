@@ -62,7 +62,7 @@ export class SessionIdentityClient {
     }
   }
 
-  private async request<T>(method: 'GET' | 'PATCH' | 'POST' | 'PUT', path: string, body?: Record<string, string>): Promise<T> {
+  private async request<T>(method: 'GET' | 'PATCH' | 'POST' | 'PUT' | 'DELETE', path: string, body?: Record<string, string>): Promise<T> {
     let response: Response;
 
     try {
@@ -149,6 +149,30 @@ export class SessionIdentityClient {
     }
 
     return records as DirectoryAgent[];
+  }
+
+  async listSessions(agentID: string): Promise<ResolvedSession[]> {
+    const value = await this.request<unknown>(
+      'GET', '/v2/account/agents/' + encodeURIComponent(agentID) + '/sessions',
+    );
+
+    if (!Array.isArray(value) || value.some((session) =>
+      !session || typeof session !== 'object' || session.agentId !== agentID)) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address returned invalid Agent Sessions.');
+    }
+
+    return value.map(SessionIdentityClient.requireSession);
+  }
+
+  async purgeAgent(agentID: string): Promise<void> {
+    const data = await this.request<{ id: string; purged: true }>(
+      'DELETE', '/v2/account/agents/' + encodeURIComponent(agentID) + '/data',
+      { confirmAgentID: agentID },
+    );
+
+    if (data.id !== agentID || data.purged !== true) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address did not confirm permanent cleanup.');
+    }
   }
 
   async registerOfficeAgent(registrationID: string, agentDisplayName: string): Promise<ResolvedSession> {

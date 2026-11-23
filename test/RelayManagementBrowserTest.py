@@ -36,6 +36,7 @@ class ManagementScenarioServer:
         self.callbackHost = 'old-tunnel.trycloudflare.com'
         self.updated = 0
         self.recovered = 0
+        self.resetCompleted = 0
         self.updateBody: dict[str, str] = {}
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), self.handler())
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -95,6 +96,38 @@ class ManagementScenarioServer:
                         'ok': True, 'data': entries}), 'application/json')
                     return
 
+                if path == '/v2/management/agents':
+                    if not self.requireOAuth():
+                        return
+                    records = [] if scenario.resetCompleted else [{
+                        'id': 'test-gateway-id',
+                        'canonical': 'nuwainfo/gateway/main',
+                        'displayName': 'GrokBot Gateway',
+                    }]
+                    self.respond(200, json.dumps({'ok': True, 'data': records}), 'application/json')
+                    return
+
+                if path == '/v2/management/agents/test-gateway-id/data':
+                    if not self.requireOAuth():
+                        return
+                    self.respond(200, json.dumps({
+                        'ok': True, 'data': {
+                            'targetAgentID': 'test-gateway-id',
+                            'targetCanonical': 'nuwainfo/gateway/main',
+                            'confirmation': 'RESET nuwainfo/gateway/main',
+                            'fingerprint': 'test-preview-fingerprint',
+                            'stage': 'preview',
+                            'members': [{
+                                'id': 'test-gateway-id',
+                                'addressPrefix': 'nuwainfo/gateway',
+                                'displayName': 'GrokBot Gateway',
+                                'sessions': 1,
+                            }],
+                            'conversationCount': 2, 'mailboxCount': 1, 'protectedCoworkers': 0,
+                        },
+                    }), 'application/json')
+                    return
+
                 if path == '/v2/management/wake-sessions':
                     if not self.requireOAuth():
                         return
@@ -142,6 +175,24 @@ class ManagementScenarioServer:
                     return
 
                 self.respond(404, 'Not Found')
+
+            def do_DELETE(self) -> None:
+                if not self.requireOAuth():
+                    return
+
+                if self.path != '/v2/management/agents/test-gateway-id/data':
+                    self.respond(404, 'Not Found')
+                    return
+
+                body = self.payload()
+                assert body == {
+                    'confirmation': 'RESET nuwainfo/gateway/main',
+                    'fingerprint': 'test-preview-fingerprint',
+                }
+                scenario.resetCompleted += 1
+                self.respond(200, json.dumps({
+                    'ok': True, 'data': { 'completed': True },
+                }), 'application/json')
 
             def do_PUT(self) -> None:
                 if not self.requireOAuth():
@@ -202,8 +253,8 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     page.route('https://address.company-notes.com/authorize**', authorizedRedirect)
                     page.goto(scenario.origin + '/manage')
                     page.get_by_role('button', name='使用 Agent Address 登入').click()
-                    page.get_by_text('已載入你有權管理的 Wake 接收器。').wait_for()
-                    self.assertTrue(page.get_by_text('nuwainfo/gateway/main').is_visible())
+                    page.get_by_text('已載入你有權管理的接線與 Agent 身分。').wait_for()
+                    self.assertTrue(page.get_by_text('nuwainfo/gateway/main', exact=True).is_visible())
                     self.assertTrue(page.get_by_text('old-tunnel.trycloudflare.com').is_visible())
 
                     page.get_by_role('button', name='更新連線網址').click()
@@ -220,6 +271,18 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     page.get_by_role('button', name='確認未建立對話並恢復').click()
                     page.get_by_text('已解除這一組首次聯絡的保留').wait_for()
                     self.assertEqual(scenario.recovered, 1)
+
+                    page.get_by_label('要重製的 Agent').select_option('test-gateway-id')
+                    page.get_by_role('button', name='預覽清除範圍').click()
+                    page.get_by_text('所選身分：nuwainfo/gateway/main').wait_for()
+                    self.assertTrue(page.get_by_text('相關對話：2 段').is_visible())
+
+                    page.get_by_label('請完整輸入下列確認文字').fill(
+                        'RESET nuwainfo/gateway/main')
+                    page.once('dialog', lambda dialog: dialog.accept())
+                    page.get_by_role('button', name='永久清除並重製').click()
+                    page.get_by_text('身分已重製完成。可重新使用首頁安裝流程建立新的地址。').wait_for()
+                    self.assertEqual(scenario.resetCompleted, 1)
 
                     page.get_by_role('button', name='登出').click()
                     self.assertTrue(page.get_by_role('button', name='使用 Agent Address 登入').is_visible())
