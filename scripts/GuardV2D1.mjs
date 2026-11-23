@@ -26,6 +26,7 @@ const ROSTER_TABLES = ['gateway_teammates'];
 
 const OFFICE_TABLES = ['gateway_office_coworkers'];
 const DELEGATION_TABLES = ['gateway_office_delegation'];
+const RESET_TABLES = ['management_agent_resets'];
 
 const KNOWN_INFRASTRUCTURE = new Set(['d1_migrations', 'sqlite_sequence', '_cf_KV', '_cf_METADATA']);
 
@@ -42,7 +43,8 @@ export function classifyDatabase(names, requireMigrated = false) {
     throw new Error('Refusing legacy Host/Work D1 database. Use a new isolated V2 D1.');
   }
 
-  const unknown = [...tables].filter((name) => !REQUIRED.includes(name) && !GATEWAY_TABLES.includes(name) && !ROSTER_TABLES.includes(name) && !OFFICE_TABLES.includes(name) && !DELEGATION_TABLES.includes(name));
+  const unknown = [...tables].filter((name) => !REQUIRED.includes(name) && !GATEWAY_TABLES.includes(name) && !ROSTER_TABLES.includes(name) && !OFFICE_TABLES.includes(name) && !DELEGATION_TABLES.includes(name) &&
+    !RESET_TABLES.includes(name));
 
   if (unknown.length) {
     throw new Error('Refusing unrecognized D1 tables: ' + unknown.join(', '));
@@ -96,6 +98,15 @@ export function classifyDatabase(names, requireMigrated = false) {
     throw new Error('Office delegation migration is not applied.');
   }
 
+  if (tables.has('management_agent_resets') &&
+      DELEGATION_TABLES.some((name) => !tables.has(name))) {
+    throw new Error('Agent reset migration requires complete Gateway office delegation.');
+  }
+
+  if (requireMigrated && RESET_TABLES.some((name) => !tables.has(name))) {
+    throw new Error('Agent management reset migration (0010) is not applied.');
+  }
+
   return 'v2';
 }
 
@@ -119,9 +130,12 @@ export function readTableNames(output) {
 export function validateProductionBindings(config) {
   const bindings = config.services?.filter((item) => item.binding === 'ADDRESS_WORKER') ?? [];
 
+  const mcpBindings = config.services?.filter((item) => item.binding === 'MCP_WORKER') ?? [];
+
   if (config.name !== 'nuwa-agent-relay-api' ||
-      bindings.length !== 1 || bindings[0].service !== 'agent-address') {
-    throw new Error('Refusing Relay deployment without canonical Agent Address service binding.');
+      bindings.length !== 1 || bindings[0].service !== 'agent-address' ||
+      mcpBindings.length !== 1 || mcpBindings[0].service !== 'nuwa-agent-relay-mcp') {
+    throw new Error('Refusing Relay deployment without canonical Agent Address and MCP service bindings.');
   }
 }
 
