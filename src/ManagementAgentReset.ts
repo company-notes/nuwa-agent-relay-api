@@ -161,7 +161,13 @@ export class ManagementAgentReset {
       'gateway_session_id NOT IN (' + ManagementAgentReset.slots(rootIDs) + ')',
     ).bind(org.id, ...agentIDs, ...rootIDs).first<{ count: number }>();
 
-    if (outside && outside.count > 0) {
+    const outsideOffice = await this.env.DB.prepare(
+      'SELECT count(*) AS count FROM gateway_office_coworkers WHERE org_id = ? AND ' +
+      'recipient_agent_id IN (' + ManagementAgentReset.slots(agentIDs) + ') AND ' +
+      'gateway_session_id NOT IN (' + ManagementAgentReset.slots(rootIDs) + ')',
+    ).bind(org.id, ...agentIDs, ...rootIDs).first<{ count: number }>();
+
+    if ((outside?.count ?? 0) > 0 || (outsideOffice?.count ?? 0) > 0) {
       throw new APIError(409, 'reset_other_gateway_in_use',
         'An affected Agent is connected to another Gateway; remove that connection first.');
     }
