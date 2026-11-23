@@ -24,6 +24,11 @@ h1 { font-size: 1.6rem; margin: 0 0 .5rem; } h2 { font-size: 1.2rem; }
 p, li { line-height: 1.7; } small { color: #546d61; }
 button { cursor: pointer; background: #14664c; color: white; border: 0; border-radius: .45rem; padding: .65rem .9rem; font: inherit; }
 button.secondary { background: #e5efea; color: #1a503d; }
+button.danger { background: #a72c35; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+select { box-sizing: border-box; width: 100%; padding: .7rem; border: 1px solid #a5bfb2; border-radius: .4rem; font: inherit; background: white; }
+#resetSummary { white-space: pre-wrap; font-family: inherit; line-height: 1.6; padding: 1rem; background: #fff6f0; border-radius: .5rem; }
+#resetPanel { border-color: #efbfba; }
 input { box-sizing: border-box; width: 100%; padding: .7rem; border: 1px solid #a5bfb2; border-radius: .4rem; font: inherit; }
 label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 .receiver { border-bottom: 1px solid #edf3ef; padding: .8rem 0; }
@@ -50,6 +55,24 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 <h2>已有 Wake 的 Gateway / Session</h2>
 <p><small>清單僅顯示已設定的接收器與公開主機名稱；私密 Webhook 路徑和 Bearer key 不會顯示。</small></p>
 <div id="receivers"></div>
+</section>
+<section id="resetPanel" hidden>
+<h2>重製 AI 身分（從零開始測試）</h2>
+<p>選擇 Organization 內的 AI Agent，可預覽並清除其 Nuwa 身分、Session、Wake、已登記的辦公室同事、通訊紀錄、MCP 綁定及受管理的 MailTrigger 信箱。其他身分維持原狀。</p>
+<label for="resetAgent">要重製的 Agent</label>
+<select id="resetAgent"></select>
+<p><button id="previewReset" class="secondary" type="button">預覽清除範圍</button></p>
+<div id="resetPreview" hidden>
+<h3>清除前確認</h3>
+<pre id="resetSummary"></pre>
+<p><small>此操作永久清除 Nuwa 的所選 Agent 及其受管理同事，包含曾經的訊息歷史。平台內原有的 MCP 連線、Routine、Webhook 金鑰需由平台管理者另外清理或輪替。受管理的 MailTrigger 信箱亦會刪除。</small></p>
+<form id="resetForm">
+<label for="resetPhrase">請完整輸入下列確認文字</label>
+<p><strong id="resetConfirmation"></strong></p>
+<input id="resetPhrase" type="text" autocomplete="off" required>
+<p><button id="performReset" class="danger" type="submit">永久清除並重製</button> <button id="cancelReset" type="button" class="secondary">取消</button></p>
+</form>
+</div>
 </section>
 <section id="recoverPanel" hidden>
 <h2>恢復尚未完成的首次聯絡</h2>
@@ -103,7 +126,12 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   const recoverPanel = document.getElementById('recoverPanel');
   const pendingContacts = document.getElementById('pendingContacts');
   const receivers = document.getElementById('receivers');
+  const resetPanel = document.getElementById('resetPanel');
+  const resetPreview = document.getElementById('resetPreview');
+  const resetAgent = document.getElementById('resetAgent');
+  const performReset = document.getElementById('performReset');
   let activeSession = null;
+  let activeReset = null;
 
   function message(text) {
     notice.textContent = text;
@@ -240,12 +268,100 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
     document.getElementById('callbackUrl').focus();
   }
 
+  async function loadResetAgents() {
+    const agents = await api('GET', '/v2/management/agents', undefined, true);
+    resetAgent.replaceChildren();
+    resetPreview.hidden = true;
+    activeReset = null;
+
+    agents.forEach((agent) => {
+      const item = document.createElement('option');
+      item.value = agent.id;
+      item.textContent = agent.canonical +
+        (agent.displayName ? ' · ' + agent.displayName : '');
+      resetAgent.append(item);
+    });
+
+    resetPanel.hidden = false;
+    document.getElementById('previewReset').disabled = agents.length === 0;
+    if (agents.length === 0) {
+      const option = document.createElement('option');
+      option.textContent = '目前沒有可重製的 Agent。';
+      resetAgent.append(option);
+    }
+  }
+
+  async function previewReset() {
+    const id = resetAgent.value;
+    if (!id) {
+      return;
+    }
+
+    try {
+      message('正在讀取清除範圍…');
+      const preview = await api('GET',
+        '/v2/management/agents/' + encodeURIComponent(id) + '/data', undefined, true);
+      activeReset = preview;
+      const details = preview.members.map((member) =>
+        '• ' + member.addressPrefix + ' (' + member.sessions + ' Session)' +
+        (member.displayName ? ' · ' + member.displayName : '')).join('\\n');
+
+      document.getElementById('resetSummary').textContent =
+        '所選身分：' + preview.targetCanonical + '\\n' +
+        '將清除的 Agent（共 ' + preview.members.length + ' 個）：\\n' + details + '\\n' +
+        '相關對話：' + preview.conversationCount + ' 段\\n' +
+        '受管理信箱：' + preview.mailboxCount + ' 個\\n' +
+        '保留的獨立接入同事：' + preview.protectedCoworkers + ' 個\\n' +
+        '目前階段：' + preview.stage;
+      document.getElementById('resetConfirmation').textContent = preview.confirmation;
+      document.getElementById('resetPhrase').value = '';
+      resetPreview.hidden = false;
+      message('請確認列出的 Agent 與資料，再決定是否重製。');
+    } catch (error) {
+      activeReset = null;
+      resetPreview.hidden = true;
+      message(error.message);
+    }
+  }
+
+  async function performResetNow(event) {
+    event.preventDefault();
+
+    if (!activeReset || resetAgent.value !== activeReset.targetAgentID ||
+        document.getElementById('resetPhrase').value.trim() !== activeReset.confirmation) {
+      message('請先預覽，並完整輸入與選取身分相符的確認文字。');
+      return;
+    }
+
+    if (!window.confirm('即將永久清除所列 Nuwa Agent、同事、收件、信箱與通訊紀錄。確定繼續？')) {
+      return;
+    }
+
+    performReset.disabled = true;
+    try {
+      message('正在重製 Agent…');
+      const result = await api('DELETE',
+        '/v2/management/agents/' + encodeURIComponent(activeReset.targetAgentID) + '/data',
+        { confirmation: activeReset.confirmation, fingerprint: activeReset.fingerprint }, true);
+      resetPreview.hidden = true;
+      activeReset = null;
+      await load();
+      message(result.completed ? '身分已重製完成。可重新使用首頁安裝流程建立新的地址。'
+        : '重製已開始；請重新預覽確認進度。');
+    } catch (error) {
+      message('重製尚未完成：' + error.message + '。重新預覽後可依原確認內容繼續。');
+    } finally {
+      performReset.disabled = false;
+    }
+  }
+
   async function load() {
     if (!sessionStorage.getItem(tokenKey)) {
       loginPanel.hidden = false;
       management.hidden = true;
       editPanel.hidden = true;
       recoverPanel.hidden = true;
+      resetPanel.hidden = true;
       return;
     }
 
@@ -278,7 +394,8 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       row.append(title, detail, edit, recover);
       receivers.append(row);
     });
-    message('已載入你有權管理的 Wake 接收器。');
+    await loadResetAgents();
+    message('已載入你有權管理的接線與 Agent 身分。');
   }
 
   async function save(event) {
@@ -320,6 +437,20 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   });
   document.getElementById('wakeForm').addEventListener('submit', (event) => {
     void save(event);
+  });
+  document.getElementById('previewReset').addEventListener('click', () => {
+    void previewReset();
+  });
+  resetAgent.addEventListener('change', () => {
+    resetPreview.hidden = true;
+    activeReset = null;
+  });
+  document.getElementById('cancelReset').addEventListener('click', () => {
+    resetPreview.hidden = true;
+    activeReset = null;
+  });
+  document.getElementById('resetForm').addEventListener('submit', (event) => {
+    void performResetNow(event);
   });
 
   void completeSignIn().then(load).catch((error) => {
