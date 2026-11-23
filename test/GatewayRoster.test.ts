@@ -2026,6 +2026,76 @@ describe('Gateway coworker speaking scenarios', () => {
     ]));
   });
 
+  it('resolves exact Rakazo-style native Bot IDs under the authorized Gateway', async () => {
+    const scenario = new GatewayRosterScenario();
+    await scenario.setup();
+
+    const senderBotID = 'cmwnepyyqa4nawy9bhrhzxand';
+    const recipientBotID = 'cmwnil50wt1bamovxu820ehxi';
+    const enrolled = await scenario.enroll([
+      { displayName: '方承宇 (Leon Fang) | 數位協作事業部主管',
+        recipientBotID: senderBotID, threadMode: 'platform' },
+      { displayName: '小萓 (Claire Hsuan) | 行銷部門經理',
+        recipientBotID, threadMode: 'platform' },
+    ]);
+    expect(enrolled.status).toBe(201);
+    const [sender, recipient] = enrolled.body.data;
+    const directoryLookups = scenario.client.nameDirectoryLookups;
+
+    const sent = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
+      from: senderBotID, to: recipientBotID, body: 'Please confirm the Rakazo message.',
+    });
+    expect(sent.status, 'An exact registered native ID is not a display name').toBe(201);
+    const threadID = sent.body.data.threadId as string;
+    expect(scenario.client.nameDirectoryLookups).toBe(directoryLookups);
+
+    const reply = await scenario.client.call('token-g', 'POST',
+      '/v2/threads/' + threadID + '/messages?session_id=session-g', {
+        from: recipientBotID, body: 'Confirmed on the original Relay Thread.',
+      });
+    expect(reply.status).toBe(201);
+    expect(reply.body.data.threadId).toBe(threadID);
+
+    const received = await scenario.client.call('token-g', 'GET',
+      '/v2/messages/' + reply.body.data.id + '?session_id=session-g&from=' + senderBotID);
+    expect(received.status).toBe(200);
+    expect(received.body.data.body).toBe('Confirmed on the original Relay Thread.');
+    expect(scenario.client.nameDirectoryLookups).toBe(directoryLookups);
+
+    const explicit = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        from: 'bot:' + senderBotID, to: 'bot:' + recipientBotID,
+        body: 'Explicit Bot selectors still work.',
+      });
+    expect(explicit.status).toBe(201);
+
+    const messageRows = await env.DB.prepare(
+      `SELECT sender_session_id AS senderSessionID, recipient_session_id AS recipientSessionID,
+              actor_session_id AS actorSessionID FROM messages WHERE id IN (?, ?)`,
+    ).bind(sent.body.data.id, reply.body.data.id).all();
+    expect(messageRows.results).toEqual(expect.arrayContaining([
+      { senderSessionID: sender.recipientSessionID,
+        recipientSessionID: recipient.recipientSessionID, actorSessionID: 'session-g' },
+      { senderSessionID: recipient.recipientSessionID,
+        recipientSessionID: sender.recipientSessionID, actorSessionID: 'session-g' },
+    ]));
+
+    const foreign = await scenario.client.call('token-h', 'POST',
+      '/v2/messages?session_id=session-h', {
+        from: senderBotID, to: recipientBotID, body: 'Not a coworker of this Gateway.',
+      });
+    expect(foreign.status).toBe(403);
+    expect(foreign.body.error.code).toBe('gateway_sender_not_enrolled');
+
+    const unknown = await scenario.client.call('token-g', 'POST',
+      '/v2/messages?session_id=session-g', {
+        from: 'cmwunknownbotid123456789012', to: recipientBotID,
+        body: 'An unregistered Bot must not speak.',
+      });
+    expect(unknown.status).toBe(403);
+    expect(unknown.body.error.code).toBe('gateway_sender_not_enrolled');
+  });
+
   it('uses registered native Bot IDs for sending, replying and reading without name lookup', async () => {
     const scenario = new GatewayRosterScenario();
     await scenario.setup();
