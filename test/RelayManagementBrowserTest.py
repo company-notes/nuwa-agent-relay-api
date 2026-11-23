@@ -254,7 +254,7 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     page.goto(scenario.origin + '/manage')
                     page.get_by_role('button', name='使用 Agent Address 登入').click()
                     page.get_by_text('已載入你有權管理的接線與 Agent 身分。').wait_for()
-                    self.assertTrue(page.get_by_text('nuwainfo/gateway/main').is_visible())
+                    self.assertTrue(page.get_by_text('nuwainfo/gateway/main', exact=True).is_visible())
                     self.assertTrue(page.get_by_text('old-tunnel.trycloudflare.com').is_visible())
 
                     page.get_by_role('button', name='更新連線網址').click()
