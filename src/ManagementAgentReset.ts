@@ -3,7 +3,7 @@ import { APIError } from './HTTP';
 import { MailTriggerClient } from './MailTriggerClient';
 import { RelayManagementPage } from './RelayManagementPage';
 import {
-  SessionIdentityClient, type DirectoryAgent, type ResolvedSession,
+  SessionIdentityClient,
 } from './SessionIdentityClient';
 
 type Organization = { id: string; slug: string };
@@ -366,6 +366,7 @@ export class ManagementAgentReset {
           throw new APIError(409, 'reset_sessions_changed',
             'Agent Sessions changed during reset; refresh and resolve the conflict.');
         }
+
 
         await this.address.purgeAgent(member.agentID);
       }

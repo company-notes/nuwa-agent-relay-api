@@ -302,6 +302,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       const preview = await api('GET',
         '/v2/management/agents/' + encodeURIComponent(id) + '/data', undefined, true);
       activeReset = preview;
+
       const details = preview.members.map((member) =>
         '• ' + member.addressPrefix + ' (' + member.sessions + ' Session)' +
         (member.displayName ? ' · ' + member.displayName : '')).join('\\n');
@@ -343,8 +344,10 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       const result = await api('DELETE',
         '/v2/management/agents/' + encodeURIComponent(activeReset.targetAgentID) + '/data',
         { confirmation: activeReset.confirmation, fingerprint: activeReset.fingerprint }, true);
+
       resetPreview.hidden = true;
       activeReset = null;
+
       await load();
       message(result.completed ? '身分已重製完成。可重新使用首頁安裝流程建立新的地址。'
         : '重製已開始；請重新預覽確認進度。');
