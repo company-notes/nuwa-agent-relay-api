@@ -724,10 +724,6 @@ export class RelayAPI {
       return new InboxEvents(this.env, identity).page(InboxEvents.readCursor(request));
     }
 
-    if (request.method === 'GET' && path === '/v2/inbox/events/head') {
-      return new InboxEvents(this.env, identity).head();
-    }
-
     if (request.method === 'GET' && path === '/v2/inbox/events/stream') {
       return new InboxEvents(this.env, identity).subscribe(request, identity);
     }
