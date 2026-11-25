@@ -4,6 +4,7 @@ import type { Env } from './Env';
 import { GatewaySpeaker, SenderAuthMode, type SpeakerRequest } from './GatewaySpeaker';
 import { HandoffAcceptance } from './HandoffAcceptance';
 import { APIError, type JSONRecord } from './HTTP';
+import { InboxEvents } from './InboxEvents';
 import { MailTriggerClient } from './MailTriggerClient';
 import { Logger } from './Logger';
 import { SessionIdentityClient, type SessionIdentity, type ResolvedSession } from './SessionIdentityClient';
@@ -194,6 +195,7 @@ export class RelayV2Service {
     await this.env.DB.prepare(
       "UPDATE messages SET delivery_status = 'sent', external_delivery_id = ? WHERE id = ?",
     ).bind(deliveryID, id).run();
+    await InboxEvents.notify(this.env, id);
 
     return { id, threadId: thread.id, messageId: deliveryID };
   }
