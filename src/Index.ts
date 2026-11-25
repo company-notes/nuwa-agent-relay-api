@@ -7,17 +7,20 @@ import type { SpeakerRequest } from './GatewaySpeaker';
 import { GatewayModeCodec } from './GatewayModeCodec';
 import { GatewayRoster } from './GatewayRoster';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
+import { InboxEvents } from './InboxEvents';
 import { MailReceipt } from './MailReceipt';
 import { OfficeGatewayEnrollment, type OfficeCoworker } from './OfficeGatewayEnrollment';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
 import { RelayManagementPage } from './RelayManagementPage';
 import { ManagementAgentReset } from './ManagementAgentReset';
-import { SessionIdentityClient, type SessionIdentity } from './SessionIdentityClient';
+import { SessionIdentityClient, type AuthorizedSession, type SessionIdentity } from './SessionIdentityClient';
 import { WakeEndpointManagement } from './WakeEndpointManagement';
 import { WakePairing } from './WakePairing';
 import { WakePairingOAuth } from './WakePairingOAuth';
 import { WakeTarget } from './WakeTarget';
 import { WakeService } from './WakeService';
+
+export { InboxStream } from './InboxStream';
 
 export class RelayAPI {
   static isManagementPath(path: string): boolean {
@@ -715,8 +718,16 @@ export class RelayAPI {
   }
 
   private async authorized(
-    request: Request, path: string, identity: SessionIdentity, address: SessionIdentityClient,
+    request: Request, path: string, identity: AuthorizedSession, address: SessionIdentityClient,
   ): Promise<Response> {
+    if (request.method === 'GET' && path === '/v2/inbox/events') {
+      return new InboxEvents(this.env, identity).page(InboxEvents.readCursor(request));
+    }
+
+    if (request.method === 'GET' && path === '/v2/inbox/events/stream') {
+      return new InboxEvents(this.env, identity).subscribe(request, identity);
+    }
+
     const relay = new RelayV2Service(this.env, identity, address);
     const aliases = new AliasService(this.env, identity, address);
     const gatewayBindings = new GatewayBindings(this.env, identity, address);
@@ -765,7 +776,7 @@ export class RelayAPI {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await WakeService.dispatchDue(env, 'scheduled');
+    await Promise.all([WakeService.dispatchDue(env, 'scheduled'), InboxEvents.dispatchDue(env)]);
   },
 
   async fetch(

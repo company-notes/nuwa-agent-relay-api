@@ -32,6 +32,14 @@
     "MAILTRIGGER_API_URL": "https://route.mxnodes.com",
     "MAILTRIGGER_AUTH_SCHEME": "Token"
   },
+  "durable_objects": {
+    "bindings": [
+      { "name": "INBOX_STREAM", "class_name": "InboxStream" }
+    ]
+  },
+  "migrations": [
+    { "tag": "inbox-stream-v1", "new_sqlite_classes": ["InboxStream"] }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
