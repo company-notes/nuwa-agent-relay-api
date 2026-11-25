@@ -64,6 +64,15 @@ describe('Native work Inbox stream', () => {
     client.installExternalTestTransport();
     await client.provisionAgentMailboxes();
 
+    // Resume from the receiving work's last acknowledged event, including
+    // any history from earlier use cases in this Worker test database.
+    const baseline = await client.call('token-b', 'GET',
+      '/v2/inbox/events?session_id=session-b&after_sequence=0');
+    expect(baseline.status).toBe(200);
+    const senderBaseline = await client.call('token-a', 'GET',
+      '/v2/inbox/events?session_id=session-a&after_sequence=0');
+    expect(senderBaseline.status).toBe(200);
+
     const first = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
       to: 'relay-test-org/beta/reviewer',
       body: 'First work request',
@@ -81,7 +90,7 @@ describe('Native work Inbox stream', () => {
     }
 
     const firstPage = await client.call('token-b', 'GET',
-      '/v2/inbox/events?session_id=session-b&after_sequence=0');
+      `/v2/inbox/events?session_id=session-b&after_sequence=${baseline.body.data.cursor}`);
     expect(firstPage.status, 'A resumed work must have an authorized event cursor').toBe(200);
     expect(firstPage.body.data.items.map((item: { messageID: string }) => item.messageID))
       .toEqual(expectedIDs.slice(0, 100));
@@ -100,7 +109,7 @@ describe('Native work Inbox stream', () => {
     expect(reply.status).toBe(201);
 
     const senderEvents = await client.call('token-a', 'GET',
-      '/v2/inbox/events?session_id=session-a&after_sequence=0');
+      `/v2/inbox/events?session_id=session-a&after_sequence=${senderBaseline.body.data.cursor}`);
     expect(senderEvents.status).toBe(200);
     expect(senderEvents.body.data.items.map((item: { messageID: string }) => item.messageID))
       .toEqual([reply.body.data.id]);
