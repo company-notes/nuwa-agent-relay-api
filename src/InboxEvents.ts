@@ -86,6 +86,15 @@ export class InboxEvents {
 
   constructor(private readonly env: Env, private readonly identity: SessionIdentity) {}
 
+  async head(): Promise<Response> {
+    const row = await this.env.DB.prepare(
+      `SELECT COALESCE(MAX(sequence), 0) AS cursor FROM inbox_events
+        WHERE org_id = ? AND session_id = ?`,
+    ).bind(this.identity.organizationID, this.identity.sessionID).first<{ cursor: number }>();
+
+    return HTTP.response({ cursor: row?.cursor ?? 0 });
+  }
+
   async page(cursor: number): Promise<Response> {
     const rows = await this.env.DB.prepare(
       `SELECT sequence, message_id AS messageID FROM inbox_events
