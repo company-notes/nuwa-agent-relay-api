@@ -1,5 +1,6 @@
 import type { Env } from './Env';
 import { APIError, HTTP } from './HTTP';
+import { InboxEvents } from './InboxEvents';
 import { MailTriggerClient } from './MailTriggerClient';
 import { Logger } from './Logger';
 
@@ -154,6 +155,8 @@ export class MailReceipt {
             AND (g.gateway_session_id IS NULL OR g.approved_at <= m.received_at)`,
       ).bind(now, messageId),
     ]);
+
+    await InboxEvents.notify(env, messageId);
 
     return outcomes[0].meta.changes === 1;
   }
