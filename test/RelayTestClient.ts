@@ -807,6 +807,17 @@ export class RelayTestClient {
     return { status: response.status, body: await response.json() };
   }
 
+  async openInboxStream(token: 'token-a' | 'token-b', sessionID: string): Promise<Response> {
+    const query = new URLSearchParams({ session_id: sessionID });
+
+    return exports.default.fetch(new Request(
+      `${RelayTestClient.origin}/v2/inbox/events/stream?${query}`,
+      { headers: { authorization: `Bearer ${token}`,
+        'x-nuwa-runtime-token': token.replace('token-', 'runtime-'),
+        upgrade: 'websocket' } },
+    ));
+  }
+
   async confirmLatestWake(token: 'token-a' | 'token-b' | 'token-c' | 'token-d' | 'token-g' | 'token-h' = 'token-b') {
     const challenge = this.wakeChallenges.at(-1);
     expect(challenge, 'A real challenge POST must reach the target').toBeTruthy();
