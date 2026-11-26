@@ -1,8 +1,9 @@
 import { APIError } from './HTTP';
+import { RelayManagementPage } from './RelayManagementPage';
 
 export class ManagementLocation {
   static readonly sections = ['wake', 'session-replies', 'identity-reset'] as const;
-  static readonly origin = 'https://agent-relay.company-notes.com';
+  static readonly origin = RelayManagementPage.origin;
   static readonly callbackURI = ManagementLocation.origin + '/manage/callback';
 
   static isPage(path: string): boolean {

@@ -2,10 +2,8 @@
  * Relay-owned administration UI. Identity authentication is delegated to
  * Agent Address OAuth; Wake configuration remains in Relay's D1 database.
  */
-import { ManagementLocation } from './ManagementLocation';
-
 export class RelayManagementPage {
-  static readonly origin = ManagementLocation.origin;
+  static readonly origin = 'https://agent-relay.company-notes.com';
 
   static callback(accessToken: string, target: string): Response {
     const data = JSON.stringify({ accessToken, target }).replaceAll('<', '\\u003c');
