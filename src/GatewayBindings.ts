@@ -363,11 +363,10 @@ export class GatewayBindings {
       recipientCanonicalAddress: route.recipientCanonicalAddress,
       recipientBotID: route.recipientBotID,
       body: message.body,
-      ...await MessageBodyIntegrity.describe(message.body),
     };
 
     if (storedRoute.threadMode === GatewayThreadMode.Platform) {
-      return dispatch;
+      return { ...dispatch, ...await MessageBodyIntegrity.describe(message.body) };
     }
 
     if (storedRoute.threadMode !== GatewayThreadMode.Explicit) {
