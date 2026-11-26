@@ -2,9 +2,19 @@
  * Relay-owned administration UI. Identity authentication is delegated to
  * Agent Address OAuth; Wake configuration remains in Relay's D1 database.
  */
+import { ManagementLocation } from './ManagementLocation';
+
 export class RelayManagementPage {
-  static readonly origin = 'https://agent-relay.company-notes.com';
-  static readonly callbackURI = RelayManagementPage.origin + '/manage/callback';
+  static readonly origin = ManagementLocation.origin;
+
+  static callback(accessToken: string, target: string): Response {
+    const data = JSON.stringify({ accessToken, target }).replaceAll('<', '\\u003c');
+
+    return RelayManagementPage.document('<!doctype html><html lang="zh-Hant"><head>' +
+      '<meta charset="utf-8"><title>Nuwa Relay</title></head><body>' +
+      '<script id="management-login" type="application/json">' + data + '</script>' +
+      '<script src="/manage.js" defer></script></body></html>');
+  }
 
   static page(): Response {
     const html = `<!doctype html>
@@ -18,7 +28,19 @@ export class RelayManagementPage {
 body { margin: 0; }
 header { padding: 1.25rem max(1rem, calc((100vw - 60rem) / 2)); background: #e8f4ee; border-bottom: 1px solid #c8dcd2; }
 header strong { font-size: 1.3rem; }
-main { max-width: 60rem; padding: 1.5rem 1rem 4rem; margin: auto; }
+main { max-width: 76rem; padding: 1.5rem 1rem 4rem; margin: auto; }
+.layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+nav { background: white; border: 1px solid #dce8e2; border-radius: .9rem; padding: .9rem; }
+nav a { display: block; color: #173b34; padding: .75rem .6rem; border-radius: .4rem; text-decoration: none; }
+nav a[aria-current="page"] { background: #e5efea; font-weight: 700; }
+nav a:hover { background: #edf3ef; }
+nav button { width: 100%; margin-top: 1rem; }
+.content section { margin-top: 0; margin-bottom: 1rem; }
+@media (max-width: 700px) {
+  .layout { grid-template-columns: 1fr; gap: .8rem; }
+  nav { display: flex; flex-wrap: wrap; gap: .3rem; }
+  nav button { width: auto; margin: 0; }
+}
 section { background: white; border: 1px solid #dce8e2; border-radius: .9rem; padding: 1.4rem; margin-top: 1.3rem; }
 h1 { font-size: 1.6rem; margin: 0 0 .5rem; } h2 { font-size: 1.2rem; }
 p, li { line-height: 1.7; } small { color: #546d61; }
@@ -40,24 +62,32 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 <script src="/manage.js" defer></script>
 </head>
 <body>
-<header><strong>Nuwa Relay</strong> · 接線管理</header>
+<header><strong>Nuwa Management</strong></header>
 <main>
 <h1>Nuwa Relay 管理</h1>
 <p>管理 AI 同事自主通訊及 Wake 接收設定。身分由 Agent Address 安全授權。</p>
 <p id="notice" role="status" aria-live="polite"></p>
-<section id="loginPanel">
+<section id="loginPanel" hidden>
 <h2>登入管理</h2>
 <p>使用 Agent Address 的 Organization 帳戶登入，完成後會回到這個頁面。</p>
 <button id="signIn" type="button">使用 Agent Address 登入</button>
 </section>
+<div class="layout" id="managementLayout" hidden>
+<nav aria-label="管理功能">
+  <a href="https://address.company-notes.com/portal/">帳號、Agent 地址與工作 Session</a>
+  <a href="/manage/session-replies" data-section="session-replies">Session 回覆設定</a>
+  <a href="/manage/wake" data-section="wake">Wake 接收設定</a>
+  <a href="/manage/identity-reset" data-section="identity-reset">身分重製</a>
+  <button id="signOut" type="button" class="secondary">登出</button>
+</nav>
+<div class="content">
 <section id="management" hidden>
-<button id="signOut" type="button" class="secondary">登出</button>
 <h2>已有 Wake 的 Gateway / Session</h2>
 <p><small>清單僅顯示已設定的接收器與公開主機名稱；私密 Webhook 路徑和 Bearer key 不會顯示。</small></p>
 <div id="receivers"></div>
 </section>
 <section id="collaborationPanel" hidden>
-<h2>AI 同事自主通訊</h2>
+<h2>Session 回覆設定</h2>
 <p>選擇是否允許 AI Agent 在原本的 Relay Thread 直接回覆一般工作訊息。此設定適用同一連線身分下的所有工作，隨時可撤銷。</p>
 <p><small>機密資料、附件、超出工作授權範圍的事項仍須取得你的確認；不會變更客戶端原有工具權限。</small></p>
 <p id="collaborationNotice"></p>
@@ -100,10 +130,15 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 </form>
 <small>變更只更新接收目的地。這不會重新配對，也不會改變原有 Gateway 身分、同事名錄或原生對話。</small>
 </section>
-<p><small>Agent Address 身分管理：<a href="https://address.company-notes.com/portal/">Organization Portal</a></small></p>
+</div>
+</div>
 </main>
 </body>
 </html>`;
+    return RelayManagementPage.document(html);
+  }
+
+  private static document(html: string): Response {
     const response = new Response(html, {
       headers: { 'content-type': 'text/html; charset=utf-8' },
     });
@@ -121,17 +156,24 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   static script(): Response {
     const source = `(() => {
   'use strict';
-  const addressAuthorize = 'https://address.company-notes.com/authorize';
-  const callback = 'https://agent-relay.company-notes.com/manage/callback';
   const tokenKey = 'nuwaRelayManagementOAuthToken';
-  const verifierKey = 'nuwaRelayManagementVerifier';
-  const stateKey = 'nuwaRelayManagementState';
-  const clientKey = 'nuwaRelayManagementClient';
-  const collaborationKey = 'nuwaRelayCollaborationTarget';
-  const requestedPolicy = new URLSearchParams(window.location.search).get('collaboration');
-  if (requestedPolicy && /^[a-f0-9-]{36}$/.test(requestedPolicy)) {
-    sessionStorage.setItem(collaborationKey, requestedPolicy);
+  const login = document.getElementById('management-login');
+  if (login) {
+    const data = JSON.parse(login.textContent);
+    sessionStorage.setItem(tokenKey, data.accessToken);
+    window.location.replace(data.target);
+    return;
   }
+
+  const section = window.location.pathname.split('/')[2] || 'wake';
+  const requestedPolicy = new URLSearchParams(window.location.search).get('collaboration');
+  const layout = document.getElementById('managementLayout');
+  const navLinks = document.querySelectorAll('[data-section]');
+  navLinks.forEach((link) => {
+    if (link.dataset.section === section) {
+      link.setAttribute('aria-current', 'page');
+    }
+  });
   const collaborationPanel = document.getElementById('collaborationPanel');
   const collaborationPolicies = document.getElementById('collaborationPolicies');
   const collaborationNotice = document.getElementById('collaborationNotice');
@@ -175,59 +217,15 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
     return result.data;
   }
 
-  function base64URL(bytes) {
-    let raw = '';
-    bytes.forEach((byte) => {
-      raw += String.fromCharCode(byte);
-    });
-    return btoa(raw).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
-  }
-
-  async function signIn() {
-    try {
-      message('前往 Agent Address 授權…');
-      const registration = await api('POST', '/manage/oauth/client', {}, false);
-      const verifier = base64URL(crypto.getRandomValues(new Uint8Array(32)));
-      const state = base64URL(crypto.getRandomValues(new Uint8Array(24)));
-      const digest = await crypto.subtle.digest(
-        'SHA-256', new TextEncoder().encode(verifier));
-      sessionStorage.setItem(verifierKey, verifier);
-      sessionStorage.setItem(stateKey, state);
-      sessionStorage.setItem(clientKey, registration.clientId);
-
-      const query = new URLSearchParams({
-        response_type: 'code', client_id: registration.clientId,
-        redirect_uri: callback, state, code_challenge: base64URL(new Uint8Array(digest)),
-        code_challenge_method: 'S256',
-      });
-      window.location.assign(addressAuthorize + '?' + query.toString());
-    } catch (error) {
-      message(error.message);
+  function signIn(force = false) {
+    const query = new URLSearchParams({ section });
+    if (section === 'session-replies' && requestedPolicy) {
+      query.set('collaboration', requestedPolicy);
     }
-  }
-
-  async function completeSignIn() {
-    if (window.location.pathname !== '/manage/callback') {
-      return;
+    if (force) {
+      query.set('prompt', 'login');
     }
-    const query = new URLSearchParams(window.location.search);
-    const state = query.get('state');
-    const code = query.get('code');
-    const verifier = sessionStorage.getItem(verifierKey);
-    const clientId = sessionStorage.getItem(clientKey);
-
-    if (!code || !state || state !== sessionStorage.getItem(stateKey) ||
-        !verifier || !clientId) {
-      throw new Error('Agent Address 授權不完整，請重新登入。');
-    }
-
-    const value = await api('POST', '/manage/oauth/token',
-      { clientId, code, verifier }, false);
-    sessionStorage.setItem(tokenKey, value.accessToken);
-    [stateKey, verifierKey, clientKey].forEach((key) => sessionStorage.removeItem(key));
-    const policyID = sessionStorage.getItem(collaborationKey);
-    window.history.replaceState({}, '', '/manage' +
-      (policyID ? '?collaboration=' + encodeURIComponent(policyID) : ''));
+    window.location.assign('/manage/session?' + query.toString());
   }
 
   async function showRecoveries(entry) {
@@ -297,7 +295,11 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       collaborationPolicies.textContent = '目前沒有待設定或已設定的工作連線。';
     }
 
-    const requested = sessionStorage.getItem(collaborationKey);
+    const requested = requestedPolicy;
+    if (requested && !data.policies.some((policy) => policy.id === requested)) {
+      collaborationNotice.textContent = '此連線不屬於目前登入的帳號，請切換到正確帳號。';
+      collaborationSignIn.hidden = false;
+    }
     data.policies.forEach((policy) => {
       const row = document.createElement('form');
       row.className = 'receiver';
@@ -332,7 +334,6 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
         try {
           await api('PUT', '/v2/management/collaboration-policies/' + encodeURIComponent(policy.id),
             { mode: select.value, revision: policy.revision }, true);
-          sessionStorage.removeItem(collaborationKey);
           await loadCollaborationPolicies();
           message('通訊授權已儲存。可回到原本工作繼續使用。');
         } catch (error) {
@@ -439,19 +440,8 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
     }
   }
 
-  async function load() {
-    if (!sessionStorage.getItem(tokenKey)) {
-      loginPanel.hidden = false;
-      management.hidden = true;
-      editPanel.hidden = true;
-      recoverPanel.hidden = true;
-      resetPanel.hidden = true;
-      collaborationPanel.hidden = true;
-      return;
-    }
-
+  async function loadWake() {
     const entries = await api('GET', '/v2/management/wake-sessions', undefined, true);
-    loginPanel.hidden = true;
     management.hidden = false;
     receivers.replaceChildren();
     if (entries.length === 0) {
@@ -479,9 +469,29 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       row.append(title, detail, edit, recover);
       receivers.append(row);
     });
-    await loadResetAgents();
-    await loadCollaborationPolicies();
-    message('已載入你有權管理的接線與 Agent 身分。');
+  }
+
+  async function load() {
+    if (!sessionStorage.getItem(tokenKey)) {
+      layout.hidden = true;
+      if (window.location.pathname !== '/manage' && window.location.pathname !== '/manage/') {
+        signIn();
+        return;
+      }
+
+      loginPanel.hidden = false;
+      return;
+    }
+
+    loginPanel.hidden = true;
+    layout.hidden = false;
+    if (section === 'session-replies') {
+      await loadCollaborationPolicies();
+    } else if (section === 'identity-reset') {
+      await loadResetAgents();
+    } else {
+      await loadWake();
+    }
   }
 
   async function save(event) {
@@ -510,11 +520,10 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   }
 
   document.getElementById('signIn').addEventListener('click', () => { void signIn(); });
-  collaborationSignIn.addEventListener('click', () => { void signIn(); });
+  collaborationSignIn.addEventListener('click', () => { signIn(true); });
   document.getElementById('signOut').addEventListener('click', () => {
     sessionStorage.removeItem(tokenKey);
-    void load();
-    message('已登出 Relay 接線管理。');
+    window.location.replace('/manage');
   });
   document.getElementById('cancelEdit').addEventListener('click', () => {
     editPanel.hidden = true;
@@ -540,10 +549,10 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
     void performResetNow(event);
   });
 
-  void completeSignIn().then(load).catch((error) => {
+  void load().catch((error) => {
     sessionStorage.removeItem(tokenKey);
     loginPanel.hidden = false;
-    management.hidden = true;
+    layout.hidden = true;
     message(error.message);
   });
 })();`;

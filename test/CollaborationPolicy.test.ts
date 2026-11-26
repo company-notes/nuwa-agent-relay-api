@@ -2,6 +2,7 @@ import { env, exports } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
 import { RelayTestClient } from './RelayTestClient';
+import { ManagementLoginScenario } from './ManagementLoginScenario';
 
 class CollaborationScenario {
   readonly client = new RelayTestClient();
@@ -30,15 +31,8 @@ class CollaborationScenario {
   }
 
   async owner(code: string) {
-    const registration = await this.request('POST', '/manage/oauth/client', undefined, {});
-    expect(registration.status).toBe(201);
-    const signedIn = await this.request('POST', '/manage/oauth/token', undefined, {
-      clientId: registration.body.data.clientId, code, verifier: 'a'.repeat(64),
-    });
-    expect(signedIn.status).toBe(200);
-    expect(signedIn.cookie).toMatch(/^__Host-nuwa_owner_/);
+    return new ManagementLoginScenario().signIn(code);
 
-    return { token: signedIn.body.data.accessToken as string, cookie: signedIn.cookie! };
   }
 }
 

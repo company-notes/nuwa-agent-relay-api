@@ -1,4 +1,5 @@
 import type { Env } from './Env';
+import { ManagementLocation } from './ManagementLocation';
 import { APIError } from './HTTP';
 import type { SessionIdentity, SessionIdentityClient } from './SessionIdentityClient';
 
@@ -18,7 +19,7 @@ export class CollaborationPolicy {
     return {
       id: row.id, mode: row.mode === 1 ? 'autonomous' : row.mode === 0 ? 'manual' : 'unconfigured',
       revision: row.revision,
-      settingsURL: 'https://agent-relay.company-notes.com/manage?collaboration=' + row.id,
+      settingsURL: ManagementLocation.collaborationURL(row.id),
     };
   }
 
