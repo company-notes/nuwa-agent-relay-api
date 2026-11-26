@@ -1,3 +1,4 @@
+import { MessageBodyIntegrity } from './MessageBodyIntegrity';
 import type { Env } from './Env';
 import { APIError } from './HTTP';
 import { PlatformBotIdentity } from './PlatformBotIdentity';
@@ -362,6 +363,7 @@ export class GatewayBindings {
       recipientCanonicalAddress: route.recipientCanonicalAddress,
       recipientBotID: route.recipientBotID,
       body: message.body,
+      ...await MessageBodyIntegrity.describe(message.body),
     };
 
     if (storedRoute.threadMode === GatewayThreadMode.Platform) {
