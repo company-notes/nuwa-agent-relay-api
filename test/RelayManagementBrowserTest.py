@@ -74,7 +74,7 @@ class ManagementScenarioServer:
 
             def do_GET(self) -> None:
                 path = urlsplit(self.path).path
-                if path in ('/manage', '/manage/callback'):
+                if path in ('/manage', '/manage/callback', '/manage/session-replies', '/manage/wake', '/manage/identity-reset'):
                     self.respond(200, scenario.html)
                     return
 
@@ -269,11 +269,10 @@ class RelayManagementBrowserTest(unittest.TestCase):
                         route.fulfill(status=302, headers={'location': callback})
 
                     page.route('https://address.company-notes.com/authorize**', authorizedRedirect)
-                    page.goto(scenario.origin + '/manage?collaboration=' + scenario.policy['id'])
-                    page.get_by_role('button', name='使用 Agent Address 登入').click()
-                    page.get_by_text('已載入你有權管理的接線與 Agent 身分。').wait_for()
-                    self.assertTrue(page.get_by_text('nuwainfo/gateway/main', exact=True).is_visible())
-                    self.assertTrue(page.get_by_text('old-tunnel.trycloudflare.com').is_visible())
+                    page.goto(scenario.origin + '/manage/session-replies?collaboration=' + scenario.policy['id'])
+                    page.get_by_role('heading', name='Session 回覆設定').wait_for()
+                    self.assertFalse(page.locator('#management').is_visible())
+                    self.assertFalse(page.locator('#resetPanel').is_visible())
 
                     select = page.locator('#collaboration-' + scenario.policy['id'])
                     save = page.get_by_role('button', name='儲存通訊授權')
@@ -288,6 +287,9 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     self.assertEqual(scenario.policy['mode'], 'manual')
                     self.assertEqual(scenario.policy['revision'], 2)
 
+                    page.get_by_role('link', name='Wake 接收設定').click()
+                    page.get_by_text('old-tunnel.trycloudflare.com').wait_for()
+                    self.assertFalse(page.locator('#collaborationPanel').is_visible())
                     page.get_by_role('button', name='更新連線網址').click()
                     page.get_by_label('新的 Tunnel 或完整 Webhook HTTPS URL').fill(
                         'https://new-tunnel.trycloudflare.com')
@@ -304,6 +306,7 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     self.assertEqual(scenario.recovered, 1)
 
                     page.get_by_label('要重製的 Agent').select_option('test-gateway-id')
+                    page.get_by_role('link', name='身分重製').click()
                     page.get_by_role('button', name='預覽清除範圍').click()
                     page.get_by_text('所選身分：nuwainfo/gateway/main').wait_for()
                     self.assertTrue(page.get_by_text('相關對話：2 段').is_visible())
