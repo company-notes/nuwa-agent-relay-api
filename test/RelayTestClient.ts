@@ -168,6 +168,10 @@ export class RelayTestClient {
         ok: true,
         data: {
           account: { email: 'test@example.com' },
+          ...(url.searchParams.get('include_grant') === '1' ? {
+            grantFingerprint: ['token-a', 'token-b', 'token-c', 'token-d', 'token-g', 'token-h', 'token-foreign']
+              .indexOf(token!.slice(7)).toString(16).repeat(64),
+          } : {}),
           organization: token === 'Bearer token-foreign'
             ? { id: 'org-other', slug: 'other-organization', identityRevision: 0 }
             : { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },

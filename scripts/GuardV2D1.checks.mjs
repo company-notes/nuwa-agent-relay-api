@@ -15,12 +15,14 @@ const office = ['gateway_office_coworkers'];
 const delegation = ['gateway_office_delegation'];
 const reset = ['management_agent_resets'];
 const inbox = ['inbox_events'];
+const collaboration = ['collaboration_policies', 'collaboration_owner_sessions'];
 
 test('accepts only a new empty or fully migrated V2 database', () => {
   assert.equal(classifyDatabase(['d1_migrations', '_cf_KV', '_cf_METADATA']), 'empty');
   assert.equal(classifyDatabase([...v2, 'd1_migrations', '_cf_KV']), 'v2');
   assert.equal(classifyDatabase([...v2, ...gateway]), 'v2');
-  assert.equal(classifyDatabase([...v2, ...gateway, ...roster, ...office, ...delegation, ...reset, ...inbox], true), 'v2');
+  assert.equal(classifyDatabase([...v2, ...gateway, ...roster, ...office, ...delegation, ...reset, ...inbox, ...collaboration], true), 'v2');
+  assert.throws(() => classifyDatabase([...v2, ...gateway, ...roster, ...office, ...delegation, ...reset, ...inbox], true), /Collaboration policy migration/);
   assert.throws(() => classifyDatabase([...v2, ...gateway, ...roster, ...office, ...delegation, ...reset], true),
     /Inbox events migration/);
   assert.throws(() => classifyDatabase([...v2, ...gateway, ...roster, ...office, ...delegation], true),

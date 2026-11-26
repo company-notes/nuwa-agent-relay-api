@@ -37,6 +37,8 @@ class ManagementScenarioServer:
         self.updated = 0
         self.recovered = 0
         self.resetCompleted = 0
+        self.policy = {'id': '11111111-1111-4111-8111-111111111111', 'canonical': 'nuwainfo/coder',
+                       'displayName': 'Coder', 'mode': 'unconfigured', 'revision': 0}
         self.updateBody: dict[str, str] = {}
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), self.handler())
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -94,6 +96,14 @@ class ManagementScenarioServer:
                     }]
                     self.respond(200, json.dumps({
                         'ok': True, 'data': entries}), 'application/json')
+                    return
+
+                if path == '/v2/management/collaboration-policies':
+                    if not self.requireOAuth():
+                        return
+                    self.respond(200, json.dumps({'ok': True, 'data': {
+                        'canEdit': True, 'policies': [scenario.policy],
+                    }}), 'application/json')
                     return
 
                 if path == '/v2/management/agents':
@@ -197,6 +207,14 @@ class ManagementScenarioServer:
             def do_PUT(self) -> None:
                 if not self.requireOAuth():
                     return
+                if self.path == '/v2/management/collaboration-policies/' + scenario.policy['id']:
+                    body = self.payload()
+                    assert body['revision'] == scenario.policy['revision']
+                    assert body['mode'] in ('manual', 'autonomous')
+                    scenario.policy.update(mode=body['mode'], revision=body['revision'] + 1)
+                    self.respond(200, json.dumps({'ok': True, 'data': scenario.policy}), 'application/json')
+                    return
+
                 if self.path != '/v2/management/sessions/test-gateway-main/wake-endpoint':
                     self.respond(404, 'Not Found')
                     return
@@ -251,11 +269,24 @@ class RelayManagementBrowserTest(unittest.TestCase):
                         route.fulfill(status=302, headers={'location': callback})
 
                     page.route('https://address.company-notes.com/authorize**', authorizedRedirect)
-                    page.goto(scenario.origin + '/manage')
+                    page.goto(scenario.origin + '/manage?collaboration=' + scenario.policy['id'])
                     page.get_by_role('button', name='使用 Agent Address 登入').click()
                     page.get_by_text('已載入你有權管理的接線與 Agent 身分。').wait_for()
                     self.assertTrue(page.get_by_text('nuwainfo/gateway/main', exact=True).is_visible())
                     self.assertTrue(page.get_by_text('old-tunnel.trycloudflare.com').is_visible())
+
+                    select = page.locator('#collaboration-' + scenario.policy['id'])
+                    save = page.get_by_role('button', name='儲存通訊授權')
+                    self.assertTrue(save.is_disabled())
+                    select.select_option('autonomous')
+                    save.click()
+                    page.get_by_text('通訊授權已儲存。可回到原本工作繼續使用。').wait_for()
+                    self.assertEqual(scenario.policy['mode'], 'autonomous')
+                    select.select_option('manual')
+                    save.click()
+                    page.get_by_text('通訊授權已儲存。可回到原本工作繼續使用。').wait_for()
+                    self.assertEqual(scenario.policy['mode'], 'manual')
+                    self.assertEqual(scenario.policy['revision'], 2)
 
                     page.get_by_role('button', name='更新連線網址').click()
                     page.get_by_label('新的 Tunnel 或完整 Webhook HTTPS URL').fill(

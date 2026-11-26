@@ -42,8 +42,8 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 <body>
 <header><strong>Nuwa Relay</strong> · 接線管理</header>
 <main>
-<h1>Wake 接收設定</h1>
-<p>管理你在 Nuwa Relay 的接線網址。身分由 Agent Address 安全授權，接收設定保存在 Nuwa Relay。</p>
+<h1>Nuwa Relay 管理</h1>
+<p>管理 AI 同事自主通訊及 Wake 接收設定。身分由 Agent Address 安全授權。</p>
 <p id="notice" role="status" aria-live="polite"></p>
 <section id="loginPanel">
 <h2>登入管理</h2>
@@ -55,6 +55,14 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 <h2>已有 Wake 的 Gateway / Session</h2>
 <p><small>清單僅顯示已設定的接收器與公開主機名稱；私密 Webhook 路徑和 Bearer key 不會顯示。</small></p>
 <div id="receivers"></div>
+</section>
+<section id="collaborationPanel" hidden>
+<h2>AI 同事自主通訊</h2>
+<p>選擇是否允許 AI Agent 在原本的 Relay Thread 直接回覆一般工作訊息。此設定適用同一連線身分下的所有工作，隨時可撤銷。</p>
+<p><small>機密資料、附件、超出工作授權範圍的事項仍須取得你的確認；不會變更客戶端原有工具權限。</small></p>
+<p id="collaborationNotice"></p>
+<button id="collaborationSignIn" type="button" hidden>重新登入以變更授權</button>
+<div id="collaborationPolicies"></div>
 </section>
 <section id="resetPanel" hidden>
 <h2>重製 AI 身分（從零開始測試）</h2>
@@ -119,6 +127,15 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   const verifierKey = 'nuwaRelayManagementVerifier';
   const stateKey = 'nuwaRelayManagementState';
   const clientKey = 'nuwaRelayManagementClient';
+  const collaborationKey = 'nuwaRelayCollaborationTarget';
+  const requestedPolicy = new URLSearchParams(window.location.search).get('collaboration');
+  if (requestedPolicy && /^[a-f0-9-]{36}$/.test(requestedPolicy)) {
+    sessionStorage.setItem(collaborationKey, requestedPolicy);
+  }
+  const collaborationPanel = document.getElementById('collaborationPanel');
+  const collaborationPolicies = document.getElementById('collaborationPolicies');
+  const collaborationNotice = document.getElementById('collaborationNotice');
+  const collaborationSignIn = document.getElementById('collaborationSignIn');
   const notice = document.getElementById('notice');
   const loginPanel = document.getElementById('loginPanel');
   const management = document.getElementById('management');
@@ -208,7 +225,9 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       { clientId, code, verifier }, false);
     sessionStorage.setItem(tokenKey, value.accessToken);
     [stateKey, verifierKey, clientKey].forEach((key) => sessionStorage.removeItem(key));
-    window.history.replaceState({}, '', '/manage');
+    const policyID = sessionStorage.getItem(collaborationKey);
+    window.history.replaceState({}, '', '/manage' +
+      (policyID ? '?collaboration=' + encodeURIComponent(policyID) : ''));
   }
 
   async function showRecoveries(entry) {
@@ -266,6 +285,68 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
     document.getElementById('callbackUrl').value = '';
     editPanel.hidden = false;
     document.getElementById('callbackUrl').focus();
+  }
+
+  async function loadCollaborationPolicies() {
+    const data = await api('GET', '/v2/management/collaboration-policies', undefined, true);
+    collaborationPanel.hidden = false;
+    collaborationSignIn.hidden = data.canEdit;
+    collaborationNotice.textContent = data.canEdit ? '' : '請重新登入，以確認由你本人變更通訊授權。';
+    collaborationPolicies.replaceChildren();
+    if (!data.policies.length) {
+      collaborationPolicies.textContent = '目前沒有待設定或已設定的工作連線。';
+    }
+
+    const requested = sessionStorage.getItem(collaborationKey);
+    data.policies.forEach((policy) => {
+      const row = document.createElement('form');
+      row.className = 'receiver';
+      const heading = document.createElement('strong');
+      heading.textContent = policy.canonical + (policy.displayName ? ' · ' + policy.displayName : '');
+      const label = document.createElement('label');
+      label.htmlFor = 'collaboration-' + policy.id;
+      label.textContent = '通訊授權（連線 ' + policy.id.slice(0, 8) + '）';
+      const select = document.createElement('select');
+      select.id = label.htmlFor;
+      [['unconfigured', '尚未設定，請選擇'], ['manual', '由我確認每次回覆'],
+        ['autonomous', '允許日常自主通訊']].forEach(([value, title]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = title;
+        option.disabled = value === 'unconfigured';
+        select.append(option);
+      });
+      select.value = policy.mode;
+      select.disabled = !data.canEdit;
+      const save = document.createElement('button');
+      save.type = 'submit';
+      save.textContent = '儲存通訊授權';
+      save.disabled = !data.canEdit || select.value === 'unconfigured';
+      select.addEventListener('change', () => {
+        save.disabled = !data.canEdit || select.value === 'unconfigured';
+      });
+      row.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (save.disabled) return;
+        save.disabled = true;
+        try {
+          await api('PUT', '/v2/management/collaboration-policies/' + encodeURIComponent(policy.id),
+            { mode: select.value, revision: policy.revision }, true);
+          sessionStorage.removeItem(collaborationKey);
+          await loadCollaborationPolicies();
+          message('通訊授權已儲存。可回到原本工作繼續使用。');
+        } catch (error) {
+          await loadCollaborationPolicies();
+          message(error.message);
+        }
+      });
+      row.append(heading, label, select, save);
+      collaborationPolicies.append(row);
+      if (policy.id === requested) {
+        row.scrollIntoView({ block: 'center' });
+        select.focus();
+      }
+    });
   }
 
   async function loadResetAgents() {
@@ -365,6 +446,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       editPanel.hidden = true;
       recoverPanel.hidden = true;
       resetPanel.hidden = true;
+      collaborationPanel.hidden = true;
       return;
     }
 
@@ -398,6 +480,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       receivers.append(row);
     });
     await loadResetAgents();
+    await loadCollaborationPolicies();
     message('已載入你有權管理的接線與 Agent 身分。');
   }
 
@@ -427,6 +510,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   }
 
   document.getElementById('signIn').addEventListener('click', () => { void signIn(); });
+  collaborationSignIn.addEventListener('click', () => { void signIn(); });
   document.getElementById('signOut').addEventListener('click', () => {
     sessionStorage.removeItem(tokenKey);
     void load();
