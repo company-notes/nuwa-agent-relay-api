@@ -81,7 +81,16 @@ class ManagementScenarioServer:
                     query = urlencode({'code_challenge_method': 'S256', 'state': 'test-state',
                                        'redirect_uri': 'https://agent-relay.company-notes.com/manage/callback'})
                     self.send_response(302)
-                    self.send_header('location', 'https://address.company-notes.com/authorize?' + query)
+                    self.send_header('location', '/test-authorize?' + query)
+                    self.end_headers()
+                    return
+
+                if path == '/test-authorize':
+                    values = parse_qs(urlsplit(self.path).query)
+                    assert values['code_challenge_method'] == ['S256']
+                    assert values['redirect_uri'] == ['https://agent-relay.company-notes.com/manage/callback']
+                    self.send_response(302)
+                    self.send_header('location', '/manage/callback?code=authorized-code&state=' + values['state'][0])
                     self.end_headers()
                     return
 
@@ -260,20 +269,10 @@ class RelayManagementBrowserTest(unittest.TestCase):
                 try:
                     page = browser.new_page()
 
-                    def authorizedRedirect(route) -> None:
-                        request = urlsplit(route.request.url)
-                        values = parse_qs(request.query)
-                        self.assertEqual(values['code_challenge_method'], ['S256'])
-                        self.assertEqual(values['redirect_uri'], [
-                            'https://agent-relay.company-notes.com/manage/callback',
-                        ])
-                        callback = (scenario.origin + '/manage/callback?code=authorized-code&state=' +
-                                    values['state'][0])
-                        route.fulfill(status=302, headers={'location': callback})
-
-                    page.route('https://address.company-notes.com/authorize**', authorizedRedirect)
+                    page.on('pageerror', lambda error: print('Browser error:', error))
                     page.goto(scenario.origin + '/manage/session-replies?collaboration=' + scenario.policy['id'])
                     page.get_by_role('heading', name='Session 回覆設定').wait_for()
+                    self.assertIn('/manage/session-replies?collaboration=', page.url)
                     self.assertFalse(page.locator('#management').is_visible())
                     self.assertFalse(page.locator('#resetPanel').is_visible())
 
