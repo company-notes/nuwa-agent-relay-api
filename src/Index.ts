@@ -5,6 +5,7 @@ import { CollaborationOwnerSession } from './CollaborationOwnerSession';
 import { ManagementBrowserLogin } from './ManagementBrowserLogin';
 import { ManagementLocation } from './ManagementLocation';
 import type { Env } from './Env';
+import { GatewaySpeaker } from './GatewaySpeaker';
 import { GatewayBindings } from './GatewayBindings';
 import { GatewayFirstContactRecovery } from './GatewayFirstContactRecovery';
 import type { SpeakerRequest } from './GatewaySpeaker';
@@ -13,6 +14,8 @@ import { GatewayRoster } from './GatewayRoster';
 import { APIError, HTTP, type JSONRecord } from './HTTP';
 import { InboxEvents } from './InboxEvents';
 import { MailReceipt } from './MailReceipt';
+import { MessageOutbox } from './MessageOutbox';
+import type { DeliveryResult } from './MessageDelivery';
 import { OfficeGatewayEnrollment, type OfficeCoworker } from './OfficeGatewayEnrollment';
 import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
 import { RelayManagementPage } from './RelayManagementPage';
@@ -35,7 +38,7 @@ export class RelayAPI {
     return /^\/v2\/management\/sessions\/[^/]+\/wake-endpoint$/.test(path);
   }
 
-  constructor(private readonly env: Env) {}
+  constructor(private readonly env: Env, private readonly context?: { waitUntil(promise: Promise<unknown>): void }) {}
 
   private static authorization(request: Request): string {
     const header = request.headers.get('authorization');
@@ -66,7 +69,16 @@ export class RelayAPI {
         : HTTP.optionalString(data, 'subject', 255) ?? 'Agent Relay message',
       body: HTTP.requiredString(data, 'body', 100_000),
       artifactLinks: HTTP.artifacts(data),
+      submissionID: MessageOutbox.submissionID(data),
     };
+  }
+
+  private messageResponse(result: DeliveryResult): Response {
+    if (result.outboxStatus === 'queued' && this.context) {
+      this.context.waitUntil(new MessageOutbox(this.env).dispatch(result.id));
+    }
+
+    return HTTP.response(result, 201);
   }
 
   private async aliases(
@@ -109,10 +121,10 @@ export class RelayAPI {
       const handoff = path === '/v2/handoffs';
       const data = await HTTP.json(request);
 
-      return HTTP.response(await relay.send(
+      return this.messageResponse(await relay.send(
         handoff ? 'handoff' : 'message',
         RelayAPI.message(data, handoff),
-      ), 201);
+      ));
     }
 
     if (path === '/v2/inbox' && request.method === 'GET') {
@@ -190,7 +202,7 @@ export class RelayAPI {
         throw new APIError(400, 'invalid_autonomous_flag', 'autonomous must be a boolean.');
       }
 
-      return HTTP.response(await relay.reply(
+      return this.messageResponse(await relay.reply(
         replyID,
         HTTP.requiredString(body, 'body', 100_000),
         HTTP.optionalString(body, 'subject', 255),
@@ -198,7 +210,8 @@ export class RelayAPI {
         RelayAPI.speaker(body),
         body.messageID === undefined ? undefined : HTTP.requiredString(body, 'messageID', 255),
         body.autonomous === true,
-      ), 201);
+        MessageOutbox.submissionID(body),
+      ));
     }
 
     return null;
@@ -759,8 +772,12 @@ export class RelayAPI {
     const receiptID = RelayAPI.match(path, /^\/v2\/messages\/([^/]+)\/receipt$/);
 
     if (receiptID && request.method === 'GET') {
+      const from = new URL(request.url).searchParams.get('from');
+      const speaker = await new GatewaySpeaker(this.env, identity, address).resolve(from === null ? undefined : AliasService.readRecipient(from));
+      const reader = speaker?.identity ?? identity;
+
       return new MailReceipt(this.env).status(
-        receiptID, identity.organizationID, identity.sessionID,
+        receiptID, reader.organizationID, reader.sessionID,
         new URL(request.url).searchParams.get('refresh') === 'archive',
       );
     }
@@ -790,7 +807,10 @@ export class RelayAPI {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await Promise.all([WakeService.dispatchDue(env, 'scheduled'), InboxEvents.dispatchDue(env)]);
+    await Promise.all([
+      WakeService.dispatchDue(env, 'scheduled'), InboxEvents.dispatchDue(env),
+      new MessageOutbox(env).dispatchDue(),
+    ]);
   },
 
   async fetch(
@@ -822,7 +842,7 @@ export default {
     }
 
     try {
-      const response = await new RelayAPI(env).handle(request);
+      const response = await new RelayAPI(env, context).handle(request);
 
       if (!management || managementOrigin) {
         response.headers.set('access-control-allow-origin',

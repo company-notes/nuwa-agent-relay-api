@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
 import { RelayTestClient } from './RelayTestClient';
+import { MessageOutbox } from '../src/MessageOutbox';
 
 describe('Durable message submission after an uncertain provider response', () => {
   it('accepts once, preserves its ID and Thread, and recovers a delayed verified receipt', async () => {
@@ -30,6 +31,7 @@ describe('Durable message submission after an uncertain provider response', () =
       ...request, body: 'A different request must use a different submission ID.',
     })).status).toBe(409);
 
+    await new MessageOutbox(env).dispatchDue();
     await expect.poll(() => client.deliveries.length).toBe(1);
     const receiptPath = '/v2/messages/' + request.submissionID + '/receipt?session_id=session-a';
     await expect.poll(async () => (await client.call('token-a', 'GET', receiptPath)).body.data.outboxStatus)
@@ -58,6 +60,7 @@ describe('Durable message submission after an uncertain provider response', () =
       .bind(request.submissionID).first();
     expect(event).toEqual({ session_id: 'session-b' });
 
+    await new MessageOutbox(env).dispatchDue();
     const final = await client.call('token-a', 'POST', path, request);
     expect(final.body.data.threadId).toBe(threadID);
     expect(final.body.data.submissionStatus).toBe('sent');
