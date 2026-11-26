@@ -2,6 +2,8 @@ import { AliasService } from './AliasService';
 import { AgentAddressTransport } from './AgentAddressTransport';
 import { CollaborationPolicy } from './CollaborationPolicy';
 import { CollaborationOwnerSession } from './CollaborationOwnerSession';
+import { ManagementBrowserLogin } from './ManagementBrowserLogin';
+import { ManagementLocation } from './ManagementLocation';
 import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
 import { GatewayFirstContactRecovery } from './GatewayFirstContactRecovery';
@@ -18,7 +20,6 @@ import { ManagementAgentReset } from './ManagementAgentReset';
 import { SessionIdentityClient, type AuthorizedSession, type SessionIdentity } from './SessionIdentityClient';
 import { WakeEndpointManagement } from './WakeEndpointManagement';
 import { WakePairing } from './WakePairing';
-import { WakePairingOAuth } from './WakePairingOAuth';
 import { WakeTarget } from './WakeTarget';
 import { WakeService } from './WakeService';
 
@@ -453,48 +454,6 @@ export class RelayAPI {
     }
   }
 
-  private async managementOAuth(request: Request, path: string): Promise<Response> {
-    RelayAPI.requireManagementOrigin(request, true);
-
-    if (request.method !== 'POST') {
-      throw new APIError(405, 'method_not_allowed', 'POST is required.');
-    }
-
-    const oauth = new WakePairingOAuth(this.env);
-    let data: unknown;
-    let ownerCookie: string | undefined;
-
-    if (path === '/manage/oauth/client') {
-      const clientId = await oauth.registerClient(
-        RelayManagementPage.callbackURI, 'Nuwa Relay Management',
-      );
-      data = { clientId };
-    } else if (path === '/manage/oauth/token') {
-      const body = await HTTP.json(request);
-      const clientID = HTTP.requiredString(body, 'clientId', 512);
-      const code = HTTP.requiredString(body, 'code', 4096);
-      const verifier = HTTP.requiredString(body, 'verifier', 128);
-
-      if (!/^[a-zA-Z0-9_-]{43,128}$/.test(verifier)) {
-        throw new APIError(400, 'management_oauth_invalid',
-          'The OAuth PKCE verifier is invalid.');
-      }
-
-      const accessToken = await oauth.exchangeToken(clientID, code, verifier, RelayManagementPage.callbackURI);
-      ownerCookie = await new CollaborationOwnerSession(this.env).issue(accessToken);
-      data = { accessToken };
-    } else {
-      throw new APIError(404, 'not_found', 'Management OAuth route not found.');
-    }
-
-    const response = HTTP.response(data, path.endsWith('/client') ? 201 : 200);
-    if (ownerCookie) {
-      response.headers.append('set-cookie', ownerCookie);
-    }
-    response.headers.set('cache-control', 'no-store');
-    return response;
-  }
-
   private async manageCollaboration(request: Request, path: string): Promise<Response> {
     const write = request.method === 'PUT';
     RelayAPI.requireManagementOrigin(request, write);
@@ -696,17 +655,20 @@ export class RelayAPI {
   async handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
 
-    if ((path === '/manage' || path === '/manage/' ||
-      path === '/manage/callback') && request.method === 'GET') {
+    if (request.method === 'GET' && ManagementLocation.isPage(path)) {
       return RelayManagementPage.page();
+    }
+
+    if (request.method === 'GET' && path === '/manage/session') {
+      return new ManagementBrowserLogin(this.env).begin(request);
+    }
+
+    if (request.method === 'GET' && path === '/manage/callback') {
+      return new ManagementBrowserLogin(this.env).complete(request);
     }
 
     if (path === '/manage.js' && request.method === 'GET') {
       return RelayManagementPage.script();
-    }
-
-    if (path === '/manage/oauth/client' || path === '/manage/oauth/token') {
-      return this.managementOAuth(request, path);
     }
 
     if (path === '/v2/management/collaboration-policies' || path.startsWith('/v2/management/collaboration-policies/')) {

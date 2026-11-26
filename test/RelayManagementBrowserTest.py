@@ -9,7 +9,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -23,7 +23,9 @@ class ManagementScenarioServer:
             "import { RelayManagementPage } from './src/RelayManagementPage.ts';"
             "console.log(JSON.stringify({"
             "html: await RelayManagementPage.page().text(),"
-            "script: await RelayManagementPage.script().text()"
+            "script: await RelayManagementPage.script().text(),"
+            "callback: await RelayManagementPage.callback('test-account-token', "
+            "'/manage/session-replies?collaboration=11111111-1111-4111-8111-111111111111').text()"
             "}));"
         )
         compiled = subprocess.check_output(
@@ -33,6 +35,7 @@ class ManagementScenarioServer:
         assets = json.loads(compiled)
         self.html = assets['html']
         self.script = assets['script']
+        self.callback = assets['callback']
         self.callbackHost = 'old-tunnel.trycloudflare.com'
         self.updated = 0
         self.recovered = 0
@@ -74,7 +77,28 @@ class ManagementScenarioServer:
 
             def do_GET(self) -> None:
                 path = urlsplit(self.path).path
-                if path in ('/manage', '/manage/callback'):
+                if path == '/manage/session':
+                    query = urlencode({'code_challenge_method': 'S256', 'state': 'test-state',
+                                       'redirect_uri': 'https://agent-relay.company-notes.com/manage/callback'})
+                    self.send_response(302)
+                    self.send_header('location', '/test-authorize?' + query)
+                    self.end_headers()
+                    return
+
+                if path == '/test-authorize':
+                    values = parse_qs(urlsplit(self.path).query)
+                    assert values['code_challenge_method'] == ['S256']
+                    assert values['redirect_uri'] == ['https://agent-relay.company-notes.com/manage/callback']
+                    self.send_response(302)
+                    self.send_header('location', '/manage/callback?code=authorized-code&state=' + values['state'][0])
+                    self.end_headers()
+                    return
+
+                if path == '/manage/callback':
+                    self.respond(200, scenario.callback)
+                    return
+
+                if path in ('/manage', '/manage/session-replies', '/manage/wake', '/manage/identity-reset'):
                     self.respond(200, scenario.html)
                     return
 
@@ -171,18 +195,6 @@ class ManagementScenarioServer:
                     }), 'application/json')
                     return
 
-                if self.path == '/manage/oauth/client':
-                    self.respond(201, json.dumps({'ok': True, 'data': {
-                        'clientId': 'test-public-client'}}), 'application/json')
-                    return
-
-                if self.path == '/manage/oauth/token':
-                    assert body['clientId'] == 'test-public-client'
-                    assert body['code'] == 'authorized-code'
-                    assert len(body['verifier']) >= 43
-                    self.respond(200, json.dumps({'ok': True, 'data': {
-                        'accessToken': 'test-account-token'}}), 'application/json')
-                    return
 
                 self.respond(404, 'Not Found')
 
@@ -257,23 +269,12 @@ class RelayManagementBrowserTest(unittest.TestCase):
                 try:
                     page = browser.new_page()
 
-                    def authorizedRedirect(route) -> None:
-                        request = urlsplit(route.request.url)
-                        values = parse_qs(request.query)
-                        self.assertEqual(values['code_challenge_method'], ['S256'])
-                        self.assertEqual(values['redirect_uri'], [
-                            'https://agent-relay.company-notes.com/manage/callback',
-                        ])
-                        callback = (scenario.origin + '/manage/callback?code=authorized-code&state=' +
-                                    values['state'][0])
-                        route.fulfill(status=302, headers={'location': callback})
-
-                    page.route('https://address.company-notes.com/authorize**', authorizedRedirect)
-                    page.goto(scenario.origin + '/manage?collaboration=' + scenario.policy['id'])
-                    page.get_by_role('button', name='使用 Agent Address 登入').click()
-                    page.get_by_text('已載入你有權管理的接線與 Agent 身分。').wait_for()
-                    self.assertTrue(page.get_by_text('nuwainfo/gateway/main', exact=True).is_visible())
-                    self.assertTrue(page.get_by_text('old-tunnel.trycloudflare.com').is_visible())
+                    page.on('pageerror', lambda error: print('Browser error:', error))
+                    page.goto(scenario.origin + '/manage/session-replies?collaboration=' + scenario.policy['id'])
+                    page.get_by_role('heading', name='Session 回覆設定').wait_for()
+                    self.assertIn('/manage/session-replies?collaboration=', page.url)
+                    self.assertFalse(page.locator('#management').is_visible())
+                    self.assertFalse(page.locator('#resetPanel').is_visible())
 
                     select = page.locator('#collaboration-' + scenario.policy['id'])
                     save = page.get_by_role('button', name='儲存通訊授權')
@@ -288,6 +289,9 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     self.assertEqual(scenario.policy['mode'], 'manual')
                     self.assertEqual(scenario.policy['revision'], 2)
 
+                    page.get_by_role('link', name='Wake 接收設定').click()
+                    page.get_by_text('old-tunnel.trycloudflare.com').wait_for()
+                    self.assertFalse(page.locator('#collaborationPanel').is_visible())
                     page.get_by_role('button', name='更新連線網址').click()
                     page.get_by_label('新的 Tunnel 或完整 Webhook HTTPS URL').fill(
                         'https://new-tunnel.trycloudflare.com')
@@ -303,6 +307,7 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     page.get_by_text('已解除這一組首次聯絡的保留').wait_for()
                     self.assertEqual(scenario.recovered, 1)
 
+                    page.get_by_role('link', name='身分重製').click()
                     page.get_by_label('要重製的 Agent').select_option('test-gateway-id')
                     page.get_by_role('button', name='預覽清除範圍').click()
                     page.get_by_text('所選身分：nuwainfo/gateway/main').wait_for()
@@ -316,7 +321,7 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     self.assertEqual(scenario.resetCompleted, 1)
 
                     page.get_by_role('button', name='登出').click()
-                    self.assertTrue(page.get_by_role('button', name='使用 Agent Address 登入').is_visible())
+                    page.get_by_role('button', name='使用 Agent Address 登入').wait_for()
                 finally:
                     browser.close()
         finally:

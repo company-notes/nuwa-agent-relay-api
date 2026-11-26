@@ -2,6 +2,7 @@ import { env, exports } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
 import { RelayTestClient } from './RelayTestClient';
+import { ManagementLoginScenario } from './ManagementLoginScenario';
 import { WakeTarget } from '../src/WakeTarget';
 
 const path = '/v2/management/sessions/session-b/wake-endpoint';
@@ -157,23 +158,11 @@ describe('account-owned Wake endpoint migration', () => {
     ));
     expect(script.status).toBe(200);
     const js = await script.text();
-    expect(js).toContain('address.company-notes.com/authorize');
-    expect(js).toContain('code_challenge_method');
+    expect(js).toContain('/manage/session?');
     expect(js).toContain('wake-endpoint');
-    expect(js).toContain(String.raw`replace(/\+/g, '-').replace(/\//g, '_')`);
 
-    const registered = await management('POST', '/manage/oauth/client', null, {});
-    expect(registered.status).toBe(201);
-    expect(registered.body.data.clientId).toBe('test-pairing-oauth-client');
-
-    const exchanged = await management('POST', '/manage/oauth/token', null, {
-      clientId: registered.body.data.clientId,
-      code: 'owned-work',
-      verifier: 'a'.repeat(64),
-    });
-    expect(exchanged.status).toBe(200);
-    expect(exchanged.body.data.accessToken).toBe('token-b');
-    expect(exchanged.headers.get('cache-control')).toBe('no-store');
+    const signedIn = await new ManagementLoginScenario().signIn('owned-work', 'wake');
+    expect(signedIn.token).toBe('token-b');
 
     const listed = await management('GET', '/v2/management/wake-sessions', 'token-b');
     expect(listed.status).toBe(200);
@@ -206,10 +195,10 @@ describe('account-owned Wake endpoint migration', () => {
     ).bind('session-b').first<{ callbackURL: string }>();
     expect(originalWake?.callbackURL).toBe('https://agent-hook.example.com');
 
-    const crossSite = await management('POST', '/manage/oauth/token', null,
-      { clientId: 'test', code: 'owned-work', verifier: 'a'.repeat(64) },
-      'https://evil.example.com');
-    expect(crossSite.status).toBe(403);
+    const wrongTarget = await exports.default.fetch(new Request(
+      RelayTestClient.origin + '/manage/session?section=https://evil.example.com',
+    ));
+    expect(wrongTarget.status).toBe(400);
   });
 
   it('migrates a legacy signed receiver preserving the existing signature secret', async () => {
