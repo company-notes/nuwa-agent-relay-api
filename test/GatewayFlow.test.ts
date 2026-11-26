@@ -191,12 +191,26 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     const forbiddenThread = await scenario.bind('session-a', 'thread-from-client');
     expect(forbiddenThread.status).toBe(409);
 
-    const sent = await scenario.send('a', 'Hello platform-managed Bot.');
+    const report = 'FileShare update report — 完整測試紀錄\n' +
+      'Daemon and P2P updates: 測試與相容性。\n'.repeat(130) + 'END: Known limitations.';
+    const sent = await scenario.send('a', report);
     await scenario.deliver();
 
     const dispatch = scenario.client.wakeCallbacks.find((item) => item.body.messageID === sent)?.body;
     expect(dispatch.recipientBotID).toBe('cosmo-bot-immutable');
     expect(dispatch).not.toHaveProperty('recipientPlatformThreadID');
+    expect(dispatch.body, 'The Wake must preserve the complete long report').toBe(report);
+    const bytes = new TextEncoder().encode(report);
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+      (byte) => byte.toString(16).padStart(2, '0')).join('');
+    expect(dispatch.bodyLength, 'The receiver must know the original Unicode character count').toBe(Array.from(report).length);
+    expect(dispatch.bodyByteLength).toBe(bytes.byteLength);
+    expect(dispatch.bodySHA256).toBe(hash);
+
+    const recovered = await scenario.client.call('token-b', 'GET',
+      '/v2/messages/' + sent + '?session_id=session-b');
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.data.body, 'Authorized recovery must return the original report').toBe(report);
   });
 
   it('automatically creates the first native conversation only once, then continues it', async () => {

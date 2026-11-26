@@ -2,6 +2,7 @@ import type { Env } from './Env';
 import { APIError, HTTP } from './HTTP';
 import { InboxEvents } from './InboxEvents';
 import { MailTriggerClient } from './MailTriggerClient';
+import { MessageOutbox } from './MessageOutbox';
 import { Logger } from './Logger';
 
 type IncomingReceipt = {
@@ -236,8 +237,10 @@ export class MailReceipt {
       `SELECT m.id, m.delivery_status AS deliveryStatus,
               m.received_at AS receivedAt, m.receipt_source AS receiptSource,
               m.archive_checked_at AS archiveCheckedAt,
-              recipient.mailbox_id AS archiveMailboxId
+              recipient.mailbox_id AS archiveMailboxId, q.message_id AS queuedMessageID,
+              q.claimed_at AS claimedAt, q.uncertain_at AS uncertainAt
          FROM messages m JOIN threads t ON t.id = m.thread_id
+         LEFT JOIN message_submissions q ON q.message_id = m.id
          LEFT JOIN agent_mailboxes recipient
            ON recipient.org_id = t.org_id AND recipient.agent_id = m.recipient_agent_id
         WHERE m.id = ? AND t.org_id = ?
@@ -249,13 +252,16 @@ export class MailReceipt {
       receiptSource: 'archive' | 'webhook' | null;
       archiveCheckedAt: string | null;
       archiveMailboxId: string | null;
+      queuedMessageID: string | null;
+      claimedAt: string | null;
+      uncertainAt: string | null;
     }>();
 
     if (!row) {
       throw new APIError(404, 'message_not_found', 'Message does not belong to this Session.');
     }
 
-    if (refreshArchive && row.deliveryStatus === 'sent' && !row.receivedAt &&
+    if (refreshArchive && (!row.queuedMessageID || row.claimedAt || row.deliveryStatus === 'sent') && !row.receivedAt &&
       row.archiveMailboxId &&
       (!row.archiveCheckedAt || row.archiveCheckedAt < new Date(Date.now() - 2 * 60_000).toISOString())) {
       await this.env.DB.prepare(
@@ -280,6 +286,7 @@ export class MailReceipt {
     return HTTP.response({
       messageId: row.id,
       submissionStatus: row.deliveryStatus,
+      ...(row.queuedMessageID ? { outboxStatus: MessageOutbox.status(row) } : {}),
       arrivedInMailTrigger: row.receivedAt !== null,
       receivedAt: row.receivedAt,
       receiptSource: row.receiptSource,

@@ -1,12 +1,12 @@
-import { AgentMailboxService, type DeliveryMailboxes } from './AgentMailboxService';
+import { AgentMailboxService } from './AgentMailboxService';
 import { AliasService, type Recipient } from './AliasService';
 import { CollaborationPolicy } from './CollaborationPolicy';
 import type { Env } from './Env';
 import { GatewaySpeaker, SenderAuthMode, type SpeakerRequest } from './GatewaySpeaker';
 import { HandoffAcceptance } from './HandoffAcceptance';
 import { APIError, type JSONRecord } from './HTTP';
-import { InboxEvents } from './InboxEvents';
-import { MailTriggerClient } from './MailTriggerClient';
+import { MessageDelivery, type DeliveryResult } from './MessageDelivery';
+import { MessageOutbox } from './MessageOutbox';
 import { Logger } from './Logger';
 import { SessionIdentityClient, type SessionIdentity, type ResolvedSession } from './SessionIdentityClient';
 
@@ -46,6 +46,7 @@ export type RelayMessageInput = SpeakerRequest & {
   subject: string;
   body: string;
   artifactLinks: string[];
+  submissionID?: string;
 };
 
 export class RelayV2Service {
@@ -57,7 +58,8 @@ export class RelayV2Service {
     't.recipient_agent_id AS recipientAgentID, t.recipient_session_id AS recipientSessionID, ' +
     't.accepted_session_id AS acceptedSessionID, ' +
     't.notification_session_id AS notificationSessionID';
-  private readonly mail: MailTriggerClient;
+  private readonly delivery: MessageDelivery;
+  private readonly outbox: MessageOutbox;
   private readonly mailboxes: AgentMailboxService;
   private readonly aliases: AliasService;
 
@@ -68,7 +70,8 @@ export class RelayV2Service {
     private readonly actorSessionID?: string,
     private readonly senderAuthMode: SenderAuthMode = SenderAuthMode.Session,
   ) {
-    this.mail = new MailTriggerClient(env);
+    this.delivery = new MessageDelivery(env);
+    this.outbox = new MessageOutbox(env);
     this.mailboxes = new AgentMailboxService(env);
     this.aliases = new AliasService(env, identity, address);
   }
@@ -113,12 +116,24 @@ export class RelayV2Service {
     subject: string,
     body: string,
     artifactLinks: string[],
-    mailboxes: DeliveryMailboxes,
     createThread = false,
-  ): Promise<{ id: string; threadId: string; messageId: string }> {
-    const { sender, recipient } = mailboxes;
-    const id = crypto.randomUUID();
+    submissionID?: string,
+  ): Promise<DeliveryResult> {
+    const id = submissionID ?? crypto.randomUUID();
     const createdAt = new Date().toISOString();
+    const fingerprint = submissionID ? await MessageOutbox.fingerprint([
+      thread.organizationID, this.identity.sessionID, this.actorSessionID ?? this.identity.sessionID,
+      kind, createThread ? null : thread.id, recipientAgentID, recipientSessionID,
+      subject, body, artifactLinks,
+    ]) : undefined;
+
+    if (fingerprint) {
+      const existing = await this.outbox.existing(id, fingerprint);
+
+      if (existing) {
+        return existing;
+      }
+    }
 
     const message = this.env.DB.prepare(
       `INSERT INTO messages
@@ -133,72 +148,33 @@ export class RelayV2Service {
       JSON.stringify(artifactLinks), createdAt,
       this.actorSessionID ?? this.identity.sessionID, this.senderAuthMode);
 
-    if (createThread) {
-      await this.env.DB.batch([this.prepareThread(thread, createdAt), message]);
-    } else {
-      await message.run();
+    const statements = createThread ? [this.prepareThread(thread, createdAt), message] : [message];
+
+    if (fingerprint) {
+      statements.push(this.outbox.prepare(id, fingerprint));
     }
-
-    return this.submitStoredMessage(id, thread, recipientAgentID, recipientSessionID,
-      kind, subject, body, artifactLinks, sender.mailboxID, recipient.mailboxEmail);
-  }
-
-  private async submitStoredMessage(
-    id: string,
-    thread: ThreadRow,
-    recipientAgentID: string,
-    recipientSessionID: string | null,
-    kind: MessageKind,
-    subject: string,
-    body: string,
-    artifactLinks: string[],
-    senderMailboxID: string,
-    recipientMailboxEmail: string,
-  ): Promise<{ id: string; threadId: string; messageId: string }> {
-    const metadata = {
-      protocol: 'nuwa-agent-relay',
-      version: 2,
-      messageId: id,
-      threadId: thread.id,
-      kind,
-      sender: {
-        organizationID: this.identity.organizationID,
-        agentID: this.identity.agentID,
-        sessionID: this.identity.sessionID,
-      },
-      recipient: { agentID: recipientAgentID, sessionID: recipientSessionID },
-      artifactLinks,
-    };
-
-    let deliveryID: string;
 
     try {
-      deliveryID = await this.mail.send(
-        senderMailboxID, recipientMailboxEmail, subject, body, metadata,
-      );
+      await this.env.DB.batch(statements);
     } catch (error) {
-      const receipt = await this.env.DB.prepare(
-        'SELECT received_at AS receivedAt FROM messages WHERE id = ?',
-      ).bind(id).first<{ receivedAt: string | null }>();
+      if (fingerprint) {
+        const existing = await this.outbox.existing(id, fingerprint);
 
-      if (!receipt?.receivedAt) {
-        await this.env.DB.prepare(
-          "UPDATE messages SET delivery_status = 'failed' WHERE id = ? AND delivery_status = 'pending'",
-        ).bind(id).run();
+        if (existing) {
+          RelayV2Service.logger.exception('concurrent_submission_recovered', error, { messageID: id });
 
-        throw error;
+          return existing;
+        }
       }
 
-      RelayV2Service.logger.exception('send_failed_after_verified_arrival', error, { messageID: id });
-      deliveryID = id;
+      throw error;
     }
 
-    await this.env.DB.prepare(
-      "UPDATE messages SET delivery_status = 'sent', external_delivery_id = ? WHERE id = ?",
-    ).bind(deliveryID, id).run();
-    await InboxEvents.notify(this.env, id);
+    if (fingerprint) {
+      return { id, threadId: thread.id, messageId: id, submissionStatus: 'pending', outboxStatus: 'queued' };
+    }
 
-    return { id, threadId: thread.id, messageId: deliveryID };
+    return this.delivery.submit(await this.delivery.load(id));
   }
 
   private async requireSpeakingAgent(): Promise<void> {
@@ -242,7 +218,7 @@ export class RelayV2Service {
       typeof request.to === 'string' && request.to.split('/').length === 2;
     const recipientSessionID = agentHandoff ? null : recipient.id;
 
-    const mailboxes = await this.mailboxes.forDelivery(
+    await this.mailboxes.forDelivery(
       this.identity.organizationID, this.identity.agentID, recipient.agentId,
     );
 
@@ -260,7 +236,7 @@ export class RelayV2Service {
 
     return this.deliver(
       thread, recipient.agentId, recipientSessionID, kind,
-      request.subject, request.body, request.artifactLinks, mailboxes, true,
+      request.subject, request.body, request.artifactLinks, true, request.submissionID,
     );
   }
 
@@ -283,7 +259,7 @@ export class RelayV2Service {
 
   async reply(
     threadID: string, body: string, subject: string | null, artifactLinks: string[],
-    speaker: SpeakerRequest = {}, messageID?: string, autonomous = false,
+    speaker: SpeakerRequest = {}, messageID?: string, autonomous = false, submissionID?: string,
   ) {
     if (autonomous) {
       if (!messageID) {
@@ -305,12 +281,12 @@ export class RelayV2Service {
       return new RelayV2Service(
         this.env, selected.identity, this.address,
         this.identity.sessionID, selected.authMode,
-      ).replyAuthorized(threadID, body, subject, artifactLinks, messageID);
+      ).replyAuthorized(threadID, body, subject, artifactLinks, messageID, submissionID);
     }
 
     await this.requireSpeakingAgent();
 
-    return this.replyAuthorized(threadID, body, subject, artifactLinks, messageID);
+    return this.replyAuthorized(threadID, body, subject, artifactLinks, messageID, submissionID);
   }
 
   private async requireInboundReply(
@@ -332,7 +308,7 @@ export class RelayV2Service {
 
   private async replyAuthorized(
     threadID: string, body: string, subject: string | null, artifactLinks: string[],
-    messageID?: string,
+    messageID?: string, submissionID?: string,
   ) {
     const thread = await this.thread(threadID);
     const fromSender = thread.senderSessionID === this.identity.sessionID;
@@ -349,12 +325,12 @@ export class RelayV2Service {
       await this.requireInboundReply(messageID, threadID, toSessionID);
     }
 
-    const mailboxes = await this.mailboxes.forDelivery(
+    await this.mailboxes.forDelivery(
       this.identity.organizationID, this.identity.agentID, toAgentID,
     );
 
     return this.deliver(thread, toAgentID, toSessionID, 'reply',
-      subject ?? 'Re: Agent Relay thread', body, artifactLinks, mailboxes);
+      subject ?? 'Re: Agent Relay thread', body, artifactLinks, false, submissionID);
   }
 
   async acceptHandoff(messageID: string) {
@@ -401,12 +377,7 @@ export class RelayV2Service {
         'Handoff notification must have provisioned sender and recipient mailboxes.');
     }
 
-    const delivered = await this.submitStoredMessage(
-      accepted.messageID, handoff, handoff.senderAgentID, handoff.senderSessionID,
-      'acceptance', HandoffAcceptance.SUBJECT,
-      HandoffAcceptance.body(this.identity.canonicalAddress), [],
-      sender.mailboxId, recipient.mailboxEmail,
-    );
+    const delivered = await this.delivery.submit(await this.delivery.load(accepted.messageID));
 
     return {
       ...delivered,

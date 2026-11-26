@@ -311,6 +311,7 @@ export class MailTriggerClient {
     subject: string,
     body: string,
     metadata: Record<string, unknown>,
+    timeoutMs?: number,
   ): Promise<string> {
     const messageId = String(metadata.messageId);
     const markedSubject = `[NAR:${messageId}] ${subject}`;
@@ -320,6 +321,7 @@ export class MailTriggerClient {
       {
         method: 'POST',
         headers: this.headers(),
+        ...(timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(timeoutMs) }),
         body: JSON.stringify({
           to: [recipientEmail],
           subject: markedSubject,
