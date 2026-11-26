@@ -32,7 +32,7 @@ export class CollaborationOwnerSession {
   }
 
   async canEdit(request: Request, authorization: string): Promise<boolean> {
-    const tokenDigest = await CollaborationOwnerSession.digest(authorization.replace(/^Bearer\\s+/i, ''));
+    const tokenDigest = await CollaborationOwnerSession.digest(authorization.replace(/^Bearer\s+/i, ''));
     const prefix = CollaborationOwnerSession.name(tokenDigest) + '=';
     const secret = (request.headers.get('cookie') ?? '').split(';').map((item) => item.trim())
       .find((item) => item.startsWith(prefix))?.slice(prefix.length);

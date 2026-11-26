@@ -508,7 +508,7 @@ export class RelayAPI {
 
     const canEdit = await new CollaborationOwnerSession(this.env).canEdit(request, authorization);
     const policy = new CollaborationPolicy(this.env);
-    const id = RelayAPI.match(path, /^\\/v2\\/management\\/collaboration-policies\\/([^/]+)$/);
+    const id = RelayAPI.match(path, /^\/v2\/management\/collaboration-policies\/([^/]+)$/);
 
     if (!id && request.method === 'GET') {
       return HTTP.response({ canEdit, policies: await policy.list(account.organization, address) });
