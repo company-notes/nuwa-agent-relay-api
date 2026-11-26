@@ -53,6 +53,66 @@ describe('Nuwa Agent Relay core messaging flow', () => {
     expect(client.deliveries[0].subject).toMatch(/^\[NAR:/);
   });
 
+  it('only replies to the original coworker for a verified incoming message', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionAgentMailboxes();
+
+    const request = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: 'relay-test-org/beta/reviewer',
+      body: 'Please report the release status.',
+    });
+    expect(request.status).toBe(201);
+    const other = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: 'relay-test-org/beta/reviewer',
+      body: 'A separate conversation.',
+    });
+    expect(other.status).toBe(201);
+
+    const threadID = request.body.data.threadId;
+    const path = `/v2/threads/${threadID}/messages?session_id=session-b`;
+    const wrong = await client.call('token-b', 'POST', path, {
+      messageID: other.body.data.id,
+      body: 'Do not send to an unrelated thread.',
+    });
+    expect(wrong.status, 'An unrelated incoming message must not authorize a reply').toBe(404);
+    const missing = await client.call('token-b', 'POST', path, {
+      messageID: crypto.randomUUID(),
+      body: 'Do not send without a matching incoming message.',
+    });
+    expect(missing.status).toBe(404);
+    const empty = await client.call('token-b', 'POST', path, {
+      messageID: '',
+      body: 'Do not treat invalid evidence as absent.',
+    });
+    expect(empty.status).toBe(400);
+    expect(client.deliveries).toHaveLength(2);
+
+    const reply = await client.call('token-b', 'POST', path, {
+      messageID: request.body.data.id,
+      body: 'Release build verified.',
+    });
+    expect(reply.status).toBe(201);
+    const ownMessage = await client.call('token-b', 'POST', path, {
+      messageID: reply.body.data.id,
+      body: 'Do not treat our outgoing reply as inbound evidence.',
+    });
+    expect(ownMessage.status).toBe(404);
+    const sibling = await client.call('token-c', 'POST',
+      `/v2/threads/${threadID}/messages?session_id=session-c`, {
+        messageID: request.body.data.id,
+        body: 'Do not reply from a different work.',
+      });
+    expect(sibling.status).toBe(404);
+
+    const history = await client.call('token-a', 'GET', `/v2/threads/${threadID}?session_id=session-a`);
+    expect(history.status).toBe(200);
+    expect(history.body.data.map((item: { id: string }) => item.id))
+      .toEqual([request.body.data.id, reply.body.data.id]);
+    expect(history.body.data[1].recipientSessionID).toBe('session-a');
+    expect(client.deliveries).toHaveLength(3);
+  });
+
   it('rolls back a new Thread when its first message cannot be stored', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();

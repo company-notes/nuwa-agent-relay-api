@@ -282,7 +282,7 @@ export class RelayV2Service {
 
   async reply(
     threadID: string, body: string, subject: string | null, artifactLinks: string[],
-    speaker: SpeakerRequest = {},
+    speaker: SpeakerRequest = {}, messageID?: string,
   ) {
     const selected = await new GatewaySpeaker(
       this.env, this.identity, this.address,
@@ -292,16 +292,34 @@ export class RelayV2Service {
       return new RelayV2Service(
         this.env, selected.identity, this.address,
         this.identity.sessionID, selected.authMode,
-      ).replyAuthorized(threadID, body, subject, artifactLinks);
+      ).replyAuthorized(threadID, body, subject, artifactLinks, messageID);
     }
 
     await this.requireSpeakingAgent();
 
-    return this.replyAuthorized(threadID, body, subject, artifactLinks);
+    return this.replyAuthorized(threadID, body, subject, artifactLinks, messageID);
+  }
+
+  private async requireInboundReply(
+    messageID: string, threadID: string, senderSessionID: string,
+  ): Promise<void> {
+    const row = await this.env.DB.prepare(
+      `SELECT id FROM messages
+        WHERE id = ? AND thread_id = ? AND recipient_session_id = ?
+          AND sender_session_id = ? AND delivery_status = 'sent'
+          AND kind IN ('message', 'reply')`,
+    ).bind(messageID, threadID, this.identity.sessionID, senderSessionID)
+      .first<{ id: string }>();
+
+    if (!row) {
+      throw new APIError(404, 'inbound_message_not_found',
+        'The original incoming message is unavailable in this Session and Thread.');
+    }
   }
 
   private async replyAuthorized(
     threadID: string, body: string, subject: string | null, artifactLinks: string[],
+    messageID?: string,
   ) {
     const thread = await this.thread(threadID);
     const fromSender = thread.senderSessionID === this.identity.sessionID;
@@ -312,6 +330,10 @@ export class RelayV2Service {
 
     if (!toSessionID) {
       throw new APIError(409, 'handoff_not_accepted', 'An Agent handoff must be accepted before replies.');
+    }
+
+    if (messageID !== undefined) {
+      await this.requireInboundReply(messageID, threadID, toSessionID);
     }
 
     const mailboxes = await this.mailboxes.forDelivery(

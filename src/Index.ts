@@ -189,6 +189,7 @@ export class RelayAPI {
         HTTP.optionalString(body, 'subject', 255),
         HTTP.artifacts(body),
         RelayAPI.speaker(body),
+        body.messageID === undefined ? undefined : HTTP.requiredString(body, 'messageID', 255),
       ), 201);
     }
 
