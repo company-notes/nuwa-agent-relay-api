@@ -1,5 +1,6 @@
 import { AgentMailboxService, type DeliveryMailboxes } from './AgentMailboxService';
 import { AliasService, type Recipient } from './AliasService';
+import { CollaborationPolicy } from './CollaborationPolicy';
 import type { Env } from './Env';
 import { GatewaySpeaker, SenderAuthMode, type SpeakerRequest } from './GatewaySpeaker';
 import { HandoffAcceptance } from './HandoffAcceptance';
@@ -282,8 +283,20 @@ export class RelayV2Service {
 
   async reply(
     threadID: string, body: string, subject: string | null, artifactLinks: string[],
-    speaker: SpeakerRequest = {}, messageID?: string,
+    speaker: SpeakerRequest = {}, messageID?: string, autonomous = false,
   ) {
+    if (autonomous) {
+      if (!messageID) {
+        throw new APIError(400, 'inbound_message_required', 'Autonomous replies require the original incoming Message ID.');
+      }
+
+      if (speaker.from || artifactLinks.length) {
+        throw new APIError(403, 'collaboration_scope_exceeded', 'Autonomous replies cannot change identity or include attachments.');
+      }
+
+      await new CollaborationPolicy(this.env).requireAutonomous(this.identity, this.address);
+    }
+
     const selected = await new GatewaySpeaker(
       this.env, this.identity, this.address,
     ).resolve(speaker.from);

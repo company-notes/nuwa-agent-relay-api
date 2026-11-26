@@ -1,5 +1,7 @@
 import { AliasService } from './AliasService';
 import { AgentAddressTransport } from './AgentAddressTransport';
+import { CollaborationPolicy } from './CollaborationPolicy';
+import { CollaborationOwnerSession } from './CollaborationOwnerSession';
 import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
 import { GatewayFirstContactRecovery } from './GatewayFirstContactRecovery';
@@ -183,6 +185,10 @@ export class RelayAPI {
     if (replyID && request.method === 'POST') {
       const body = await HTTP.json(request);
 
+      if (body.autonomous !== undefined && typeof body.autonomous !== 'boolean') {
+        throw new APIError(400, 'invalid_autonomous_flag', 'autonomous must be a boolean.');
+      }
+
       return HTTP.response(await relay.reply(
         replyID,
         HTTP.requiredString(body, 'body', 100_000),
@@ -190,6 +196,7 @@ export class RelayAPI {
         HTTP.artifacts(body),
         RelayAPI.speaker(body),
         body.messageID === undefined ? undefined : HTTP.requiredString(body, 'messageID', 255),
+        body.autonomous === true,
       ), 201);
     }
 
@@ -455,6 +462,7 @@ export class RelayAPI {
 
     const oauth = new WakePairingOAuth(this.env);
     let data: unknown;
+    let ownerCookie: string | undefined;
 
     if (path === '/manage/oauth/client') {
       const clientId = await oauth.registerClient(
@@ -472,16 +480,51 @@ export class RelayAPI {
           'The OAuth PKCE verifier is invalid.');
       }
 
-      data = { accessToken: await oauth.exchangeToken(
-        clientID, code, verifier, RelayManagementPage.callbackURI,
-      ) };
+      const accessToken = await oauth.exchangeToken(clientID, code, verifier, RelayManagementPage.callbackURI);
+      ownerCookie = await new CollaborationOwnerSession(this.env).issue(accessToken);
+      data = { accessToken };
     } else {
       throw new APIError(404, 'not_found', 'Management OAuth route not found.');
     }
 
     const response = HTTP.response(data, path.endsWith('/client') ? 201 : 200);
+    if (ownerCookie) {
+      response.headers.append('set-cookie', ownerCookie);
+    }
     response.headers.set('cache-control', 'no-store');
     return response;
+  }
+
+  private async manageCollaboration(request: Request, path: string): Promise<Response> {
+    const write = request.method === 'PUT';
+    RelayAPI.requireManagementOrigin(request, write);
+    const authorization = RelayAPI.authorization(request);
+    const address = this.accountClient(authorization);
+    const account = await address.status();
+
+    if (!account.organization) {
+      throw new APIError(403, 'organization_required', 'An Agent Address Organization is required.');
+    }
+
+    const canEdit = await new CollaborationOwnerSession(this.env).canEdit(request, authorization);
+    const policy = new CollaborationPolicy(this.env);
+    const id = RelayAPI.match(path, /^\\/v2\\/management\\/collaboration-policies\\/([^/]+)$/);
+
+    if (!id && request.method === 'GET') {
+      return HTTP.response({ canEdit, policies: await policy.list(account.organization, address) });
+    }
+
+    if (id && write) {
+      if (!canEdit) {
+        throw new APIError(403, 'owner_browser_required', 'Sign in through Relay management to change collaboration settings.');
+      }
+
+      const body = await HTTP.json(request);
+
+      return HTTP.response(await policy.update(account.organization.id, id, body.mode, body.revision, address));
+    }
+
+    throw new APIError(405, 'method_not_allowed', 'Unsupported collaboration management method.');
   }
 
   private async wakeSessions(request: Request): Promise<Response> {
@@ -666,6 +709,10 @@ export class RelayAPI {
       return this.managementOAuth(request, path);
     }
 
+    if (path === '/v2/management/collaboration-policies' || path.startsWith('/v2/management/collaboration-policies/')) {
+      return this.manageCollaboration(request, path);
+    }
+
     if (path === '/v2/management/wake-sessions' && request.method === 'GET') {
       return this.wakeSessions(request);
     }
@@ -727,6 +774,10 @@ export class RelayAPI {
 
     if (request.method === 'GET' && path === '/v2/inbox/events/stream') {
       return new InboxEvents(this.env, identity).subscribe(request, identity);
+    }
+
+    if (path === '/v2/collaboration-policy' && (request.method === 'GET' || request.method === 'PUT')) {
+      return HTTP.response(await new CollaborationPolicy(this.env).work(identity, address, request.method === 'PUT'));
     }
 
     const relay = new RelayV2Service(this.env, identity, address);

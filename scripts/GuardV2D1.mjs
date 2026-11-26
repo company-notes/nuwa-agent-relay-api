@@ -28,6 +28,7 @@ const OFFICE_TABLES = ['gateway_office_coworkers'];
 const DELEGATION_TABLES = ['gateway_office_delegation'];
 const RESET_TABLES = ['management_agent_resets'];
 const INBOX_TABLES = ['inbox_events'];
+const COLLABORATION_TABLES = ['collaboration_policies', 'collaboration_owner_sessions'];
 
 const KNOWN_INFRASTRUCTURE = new Set(['d1_migrations', 'sqlite_sequence', '_cf_KV', '_cf_METADATA']);
 
@@ -45,7 +46,7 @@ export function classifyDatabase(names, requireMigrated = false) {
   }
 
   const unknown = [...tables].filter((name) => !REQUIRED.includes(name) && !GATEWAY_TABLES.includes(name) && !ROSTER_TABLES.includes(name) && !OFFICE_TABLES.includes(name) && !DELEGATION_TABLES.includes(name) &&
-    !RESET_TABLES.includes(name) && !INBOX_TABLES.includes(name));
+    !RESET_TABLES.includes(name) && !INBOX_TABLES.includes(name) && !COLLABORATION_TABLES.includes(name));
 
   if (unknown.length) {
     throw new Error('Refusing unrecognized D1 tables: ' + unknown.join(', '));
@@ -114,6 +115,11 @@ export function classifyDatabase(names, requireMigrated = false) {
 
   if (requireMigrated && INBOX_TABLES.some((name) => !tables.has(name))) {
     throw new Error('Inbox events migration (0011) is not applied.');
+  }
+
+  const collaboration = COLLABORATION_TABLES.filter((name) => tables.has(name));
+  if ((collaboration.length || requireMigrated) && collaboration.length !== COLLABORATION_TABLES.length) {
+    throw new Error('Collaboration policy migration (0012) is not applied or incomplete.');
   }
 
   return 'v2';

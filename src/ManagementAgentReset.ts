@@ -345,6 +345,8 @@ export class ManagementAgentReset {
     }
 
     add('DELETE FROM wake_events WHERE session_id IN (' + ss + ')', ...sessions);
+    add('DELETE FROM collaboration_policies WHERE org_id = ? AND agent_id IN (' + aa + ')',
+      org, ...agents);
     add('DELETE FROM agent_aliases WHERE org_id = ? AND agent_id IN (' + aa + ')',
       org, ...agents);
     add('DELETE FROM agent_mailboxes WHERE org_id = ? AND agent_id IN (' + aa + ')',

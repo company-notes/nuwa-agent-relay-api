@@ -23,6 +23,7 @@ type OrganizationIdentity = { id: string; slug: string; identityRevision: number
 
 type AccountStatus = {
   organization: { id: string; slug: string } | null;
+  grantFingerprint?: string;
 };
 
 export type SessionSelection = {
@@ -60,6 +61,16 @@ export class SessionIdentityClient {
         origin.hash || origin.username || origin.password) {
       throw new APIError(503, 'address_configuration_invalid', 'Agent Address requires an HTTPS origin.');
     }
+  }
+
+  async grant(organizationID: string): Promise<string> {
+    const account = await this.request<AccountStatus>('GET', '/v2/account/status?include_grant=1');
+
+    if (account.organization?.id !== organizationID || !/^[a-f0-9]{64}$/.test(account.grantFingerprint ?? '')) {
+      throw new APIError(403, 'grant_identity_required', 'Verified grant identity is required for collaboration.');
+    }
+
+    return account.grantFingerprint!;
   }
 
   private async request<T>(method: 'GET' | 'PATCH' | 'POST' | 'PUT' | 'DELETE', path: string, body?: Record<string, string>): Promise<T> {
