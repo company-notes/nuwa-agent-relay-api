@@ -196,7 +196,8 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     const sent = await scenario.send('a', report);
     await scenario.deliver();
 
-    const dispatch = scenario.client.wakeCallbacks.find((item) => item.body.messageID === sent)?.body;
+    const callback = scenario.client.wakeCallbacks.find((item) => item.body.messageID === sent)!;
+    const dispatch = callback.body;
     expect(dispatch.recipientBotID).toBe('cosmo-bot-immutable');
     expect(dispatch).not.toHaveProperty('recipientPlatformThreadID');
     expect(dispatch.body, 'The Wake must preserve the complete long report').toBe(report);
@@ -206,6 +207,22 @@ describe('Nuwa Relay V2 Gateway use cases', () => {
     expect(dispatch.bodyLength, 'The receiver must know the original Unicode character count').toBe(Array.from(report).length);
     expect(dispatch.bodyByteLength).toBe(bytes.byteLength);
     expect(dispatch.bodySHA256).toBe(hash);
+
+    // Reproduce a downstream webhook platform retaining only 4,000 JSON characters.
+    // Relay must not truncate the body or assume that this limit is universal.
+    const prefix = callback.rawBody.slice(0, 4000);
+    expect(callback.rawBody.length).toBeGreaterThan(4000);
+    const bodyKey = prefix.indexOf('"body":');
+    expect(bodyKey, 'The captured prefix must include the start of the original body').toBeGreaterThan(0);
+    const header = JSON.parse(prefix.slice(0, bodyKey) + '"body":""}');
+    expect(header, 'The recipient must retain trusted identity and original integrity data before the body')
+      .toMatchObject({
+        messageID: sent, relayThreadID: dispatch.relayThreadID,
+        recipientBotID: 'cosmo-bot-immutable', senderSessionID: 'session-a',
+        bodyLength: Array.from(report).length, bodyByteLength: bytes.byteLength, bodySHA256: hash,
+      });
+    expect(Object.keys(JSON.parse(callback.rawBody)).at(-1), 'The full body must be the last JSON field').toBe('body');
+    expect(dispatch).not.toHaveProperty('bodyTruncated');
 
     const recovered = await scenario.client.call('token-b', 'GET',
       '/v2/messages/' + sent + '?session_id=session-b');
