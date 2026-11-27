@@ -362,17 +362,19 @@ export class GatewayBindings {
       recipientAgentID: message.recipientAgentID,
       recipientCanonicalAddress: route.recipientCanonicalAddress,
       recipientBotID: route.recipientBotID,
-      body: message.body,
     };
 
     if (storedRoute.threadMode === GatewayThreadMode.Platform) {
-      return { ...dispatch, ...await MessageBodyIntegrity.describe(message.body) };
+      const integrity = await MessageBodyIntegrity.describe(message.body);
+
+      return { ...dispatch, ...integrity, body: message.body };
     }
 
     if (storedRoute.threadMode !== GatewayThreadMode.Explicit) {
       throw new APIError(500, 'gateway_route_invalid', 'Stored Gateway thread mode is invalid.');
     }
 
+    const explicitDispatch = { ...dispatch, body: message.body };
     const conversation = await env.DB.prepare(
       `SELECT native_thread_id AS nativeThreadID
          FROM gateway_conversations
@@ -392,7 +394,7 @@ export class GatewayBindings {
       // A null native Thread indicates a reserved explicit first contact.
       // Omission means the platform manages its own Thread (e.g. GrokBot).
       // The existing V2 Studio Wake Receiver permits this optional field.
-      return { ...dispatch, recipientPlatformThreadID: null };
+      return { ...explicitDispatch, recipientPlatformThreadID: null };
     }
 
     return { ...dispatch, recipientPlatformThreadID: conversation.nativeThreadID };
