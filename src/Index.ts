@@ -4,6 +4,7 @@ import { CollaborationPolicy } from './CollaborationPolicy';
 import { CollaborationOwnerSession } from './CollaborationOwnerSession';
 import { ManagementBrowserLogin } from './ManagementBrowserLogin';
 import { ManagementLocation } from './ManagementLocation';
+import { PublicWebsite } from './PublicWebsite';
 import type { Env } from './Env';
 import { GatewaySpeaker } from './GatewaySpeaker';
 import { GatewayBindings } from './GatewayBindings';
@@ -674,6 +675,10 @@ export class RelayAPI {
 
   async handle(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
+
+    if (PublicWebsite.handles(request)) {
+      return new PublicWebsite(this.env.MCP_WORKER).page(request);
+    }
 
     if (request.method === 'GET' && ManagementLocation.isPage(path)) {
       return RelayManagementPage.page();

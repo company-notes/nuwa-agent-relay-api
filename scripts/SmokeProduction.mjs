@@ -43,4 +43,16 @@ for (const origin of origins) {
     'Legacy external MailTrigger receipt URL must remain available but reject unsigned callers');
 }
 
-console.log('PASS: official Relay API, V2 authorization boundaries and original MailTrigger webhook.');
+for (const [path, contentType, marker] of [
+  ['/', 'text/html', 'Nuwa Relay'],
+  ['/start', 'text/html', 'Nuwa Relay'],
+  ['/start.css', 'text/css', '.diagram-pagination'],
+  ['/start.js', 'text/javascript', 'gatewaySetup'],
+]) {
+  const response = await request(origins[0], path);
+  assert.equal(response.status, 200, 'Canonical website must serve ' + path);
+  assert.ok(response.headers.get('content-type')?.includes(contentType));
+  assert.ok((await response.text()).includes(marker));
+}
+
+console.log('PASS: official Relay API, public website, V2 authorization boundaries and original MailTrigger webhook.');
