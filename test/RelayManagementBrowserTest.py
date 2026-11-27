@@ -122,6 +122,16 @@ class ManagementScenarioServer:
                         'ok': True, 'data': entries}), 'application/json')
                     return
 
+                if path == '/v2/management/account':
+                    if not self.requireOAuth():
+                        return
+
+                    self.respond(200, json.dumps({'ok': True, 'data': {
+                        'account': {'email': 'owner@example.test'},
+                        'organization': {'slug': 'relay-test-org'},
+                    }}), 'application/json')
+                    return
+
                 if path == '/v2/management/collaboration-policies':
                     if not self.requireOAuth():
                         return
@@ -273,6 +283,10 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     page.goto(scenario.origin + '/manage/session-replies?collaboration=' + scenario.policy['id'])
                     page.get_by_role('heading', name='Session 回覆設定').wait_for()
                     self.assertIn('/manage/session-replies?collaboration=', page.url)
+                    page.get_by_text('owner@example.test', exact=True).wait_for()
+                    page.get_by_text('relay-test-org', exact=True).wait_for()
+                    self.assertEqual(page.get_by_role('link', name='帳號、Agent 地址與工作 Session').get_attribute('href'),
+                                     'https://address.company-notes.com/portal/?sso=1')
                     self.assertFalse(page.locator('#management').is_visible())
                     self.assertFalse(page.locator('#resetPanel').is_visible())
 
@@ -291,6 +305,7 @@ class RelayManagementBrowserTest(unittest.TestCase):
 
                     page.get_by_role('link', name='Wake 接收設定').click()
                     page.get_by_text('old-tunnel.trycloudflare.com').wait_for()
+                    page.get_by_text('owner@example.test', exact=True).wait_for()
                     self.assertFalse(page.locator('#collaborationPanel').is_visible())
                     page.get_by_role('button', name='更新連線網址').click()
                     page.get_by_label('新的 Tunnel 或完整 Webhook HTTPS URL').fill(
@@ -322,6 +337,7 @@ class RelayManagementBrowserTest(unittest.TestCase):
 
                     page.get_by_role('button', name='登出').click()
                     page.get_by_role('button', name='使用 Agent Address 登入').wait_for()
+                    self.assertFalse(page.get_by_text('owner@example.test', exact=True).is_visible())
                 finally:
                     browser.close()
         finally:
