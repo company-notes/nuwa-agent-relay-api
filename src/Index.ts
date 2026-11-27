@@ -323,14 +323,21 @@ export class RelayAPI {
       throw new APIError(400, 'invalid_office_roster', 'A list of native coworkers is required.');
     }
 
-    const coworkers: OfficeCoworker[] = data.coworkers.map((record: JSONRecord) => ({
-      displayName: HTTP.requiredString(record, 'displayName', 120),
-      recipientBotID: HTTP.requiredString(record, 'recipientBotID', 192),
-      threadMode: GatewayModeCodec.readThreadMode(HTTP.requiredString(record, 'threadMode', 32)),
-      firstContactMode: GatewayModeCodec.readFirstContactMode(
-        HTTP.optionalString(record, 'firstContactMode', 32) ?? 'manual',
-      ),
-    }));
+    const coworkers: OfficeCoworker[] = data.coworkers.map((record: JSONRecord) => {
+      if (record.rejoinRemoved !== undefined && typeof record.rejoinRemoved !== 'boolean') {
+        throw new APIError(400, 'invalid_office_roster', 'rejoinRemoved must be a boolean.');
+      }
+
+      return {
+        displayName: HTTP.requiredString(record, 'displayName', 120),
+        recipientBotID: HTTP.requiredString(record, 'recipientBotID', 192),
+        threadMode: GatewayModeCodec.readThreadMode(HTTP.requiredString(record, 'threadMode', 32)),
+        firstContactMode: GatewayModeCodec.readFirstContactMode(
+          HTTP.optionalString(record, 'firstContactMode', 32) ?? 'manual',
+        ),
+        rejoinRemoved: record.rejoinRemoved === true,
+      };
+    });
 
     return HTTP.response(await enrollment.enrollOffice(coworkers), 201);
   }

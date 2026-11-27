@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { classifyDatabase, readTableNames, requireOfficeConnectionColumn, requireOfficeIdentityColumns, validateProductionBindings } from './GuardV2D1.mjs';
+import { classifyDatabase, readTableNames, requireOfficeConnectionColumn, requireOfficeIdentityColumns, requireOfficeRemovalColumn, validateProductionBindings } from './GuardV2D1.mjs';
 
 const v2 = [
   'agent_mailboxes', 'agent_aliases', 'threads', 'messages',
@@ -118,4 +118,9 @@ test('requires the independent connection column before deployment', () => {
 test('requires the identity projection columns before deployment', () => {
   assert.throws(() => requireOfficeIdentityColumns(['identity_revision']), /migration \(0009\)/);
   assert.doesNotThrow(() => requireOfficeIdentityColumns(['identity_revision', 'identity_available']));
+});
+
+test('requires the office removal column before deployment', () => {
+  assert.throws(() => requireOfficeRemovalColumn(['activated_at']), /migration \(0014\)/);
+  assert.doesNotThrow(() => requireOfficeRemovalColumn(['activated_at', 'removed_at']));
 });

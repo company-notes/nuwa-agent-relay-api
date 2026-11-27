@@ -41,11 +41,13 @@ class GatewayMigrationScenario {
   verify() {
     const member = this.db.prepare(
       `SELECT recipient_session_id AS sessionID, activated_at AS activatedAt,
-         independent_at AS independentAt FROM gateway_office_coworkers WHERE recipient_bot_id = ?`,
+         independent_at AS independentAt, removed_at AS removedAt
+         FROM gateway_office_coworkers WHERE recipient_bot_id = ?`,
     ).get('bot-live');
     assert.equal(member.sessionID, 'session-b');
     assert.equal(member.activatedAt, '2026-11-12T00:00:00.000Z');
     assert.equal(member.independentAt, null);
+    assert.equal(member.removedAt, null);
 
     const projection = this.db.prepare(
       'SELECT identity_revision AS revision, identity_available AS available FROM gateway_office_coworkers',
@@ -131,6 +133,7 @@ test('upgrade deployed V2 with existing message and pending Wake without data lo
 
     scenario.apply('0008_office_independent_connection.sql');
     scenario.apply('0009_office_identity_projection.sql');
+    scenario.apply('0014_office_removal.sql');
     scenario.verify();
   } finally {
     scenario.close();

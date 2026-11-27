@@ -1982,7 +1982,26 @@ describe('Gateway coworker speaking scenarios', () => {
       '/v2/gateway-teammates?session_id=session-g&recipient_bot_id=' + encodeURIComponent(brian.recipientBotID));
     expect(removed.status).toBe(200);
 
-    const rejoined = await scenario.enroll([{ ...brian, displayName: 'Brian Chen' }]);
+    // Regression (#32): an owner-removed Bot remains in the native directory.
+    // Reconciling the whole office must not silently restore its shared authority.
+    const synchronized = await scenario.enroll([
+      { ...brian, displayName: 'Brian Chen' }, nora,
+      { displayName: 'New colleague', recipientBotID: 'office-new', threadMode: 'platform' },
+    ]);
+    expect(synchronized.status).toBe(201);
+    expect(synchronized.body.data[0], 'An owner-removed coworker stays inactive during office synchronization')
+      .toMatchObject({ recipientSessionID: sessionID, route: 'inactive', removed: true });
+    expect(synchronized.body.data[1].recipientSessionID).toBe(colleague.recipientSessionID);
+
+    const inactive = await scenario.client.call('token-g', 'POST', '/v2/messages?session_id=session-g', {
+      from: 'bot:office-brian', to: 'bot:office-nora', body: 'Removed office voice must remain revoked.',
+    });
+    expect(inactive.status).toBe(403);
+
+    const rejoined = await scenario.client.call('token-g', 'POST',
+      '/v2/gateway-office-coworkers?session_id=session-g', {
+        coworkers: [{ ...brian, displayName: 'Brian Chen', rejoinRemoved: true }],
+      });
     expect(rejoined.status).toBe(201);
     expect(rejoined.body.data[0]).toMatchObject({ recipientSessionID: sessionID, route: 'gateway' });
     expect(scenario.client.officeRegistrations).toHaveLength(3);

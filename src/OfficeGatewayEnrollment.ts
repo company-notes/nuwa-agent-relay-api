@@ -13,6 +13,7 @@ export type OfficeCoworker = {
   recipientBotID: string;
   threadMode: GatewayThreadMode;
   firstContactMode: GatewayFirstContactMode;
+  rejoinRemoved?: boolean;
 };
 
 type Reservation = OfficeReceivingState & {
@@ -22,6 +23,7 @@ type Reservation = OfficeReceivingState & {
   recipientSessionID: string | null;
   recipientCanonicalAddress: string | null;
   activatedAt: string | null;
+  removedAt: string | null;
 };
 
 /** Registers office-owned addresses and routes under one authorized Gateway. */
@@ -64,7 +66,8 @@ export class OfficeGatewayEnrollment {
       `SELECT c.agent_handle AS registrationID, c.display_name AS displayName,
               c.recipient_agent_id AS recipientAgentID, c.recipient_session_id AS recipientSessionID,
               c.recipient_canonical_address AS recipientCanonicalAddress,
-              c.activated_at AS activatedAt, ${OfficeCoworkerRegistry.receivingColumns}
+              c.activated_at AS activatedAt, c.removed_at AS removedAt,
+              ${OfficeCoworkerRegistry.receivingColumns}
          FROM gateway_office_coworkers c ${OfficeCoworkerRegistry.receivingJoins}
         WHERE c.org_id = ? AND c.gateway_session_id = ? AND c.recipient_bot_id = ?`,
     ).bind(this.identity.organizationID, this.identity.sessionID,
@@ -199,6 +202,7 @@ export class OfficeGatewayEnrollment {
             SELECT 1 FROM gateway_office_coworkers c
              WHERE c.org_id = ? AND c.gateway_session_id = ? AND c.recipient_bot_id = ?
                AND c.recipient_session_id = ? AND c.activated_at IS NULL AND c.independent_at IS NULL
+               AND c.removed_at IS ?
                AND NOT EXISTS (SELECT 1 FROM wake_subscriptions w
                  WHERE w.org_id = c.org_id AND w.session_id = c.recipient_session_id)
                AND NOT EXISTS (SELECT 1 FROM gateway_routes r
@@ -207,7 +211,8 @@ export class OfficeGatewayEnrollment {
                  WHERE w.org_id = c.org_id AND w.session_id = c.gateway_session_id)
           )`,
       ).bind(organizationID, gatewaySessionID, recipient.agentId, recipient.id,
-        recipient.canonical, coworker.recipientBotID, threadMode, firstContactMode, now, now, ...scope),
+        recipient.canonical, coworker.recipientBotID, threadMode, firstContactMode, now, now,
+        ...scope, reservation.removedAt),
       this.env.DB.prepare(
         `INSERT INTO gateway_routes
            (org_id, recipient_agent_id, recipient_session_id, recipient_canonical_address,
@@ -219,15 +224,16 @@ export class OfficeGatewayEnrollment {
             AND recipient_session_id = ? AND status = 'active' AND approved_at = ?`,
       ).bind(now, ...scope, now),
       this.env.DB.prepare(
-        `UPDATE gateway_office_coworkers SET activated_at = ?
+        `UPDATE gateway_office_coworkers SET activated_at = ?, removed_at = NULL
           WHERE org_id = ? AND gateway_session_id = ? AND recipient_bot_id = ?
             AND recipient_session_id = ? AND activated_at IS NULL AND independent_at IS NULL
+            AND removed_at IS ?
             AND EXISTS (SELECT 1 FROM gateway_teammates t
               WHERE t.org_id = gateway_office_coworkers.org_id
                 AND t.gateway_session_id = gateway_office_coworkers.gateway_session_id
                 AND t.recipient_session_id = gateway_office_coworkers.recipient_session_id
                 AND t.status = 'active' AND t.approved_at = ?)`,
-      ).bind(now, ...scope, now),
+      ).bind(now, ...scope, reservation.removedAt, now),
     ]);
 
     if (membership.meta.changes !== 1 || route.meta.changes !== 1 || activation.meta.changes !== 1) {
@@ -238,6 +244,16 @@ export class OfficeGatewayEnrollment {
 
   private async enroll(coworker: OfficeCoworker): Promise<Record<string, unknown>> {
     const reservation = await this.reservation(coworker);
+
+    if (reservation.removedAt && !coworker.rejoinRemoved) {
+      return {
+        displayName: reservation.displayName, recipientBotID: coworker.recipientBotID,
+        recipientCanonicalAddress: reservation.recipientCanonicalAddress,
+        recipientSessionID: reservation.recipientSessionID,
+        route: OfficeCoworkerRegistry.route(reservation), removed: true,
+      };
+    }
+
     const recipient = await this.resolveRegistered(coworker, reservation);
     const independentlyConnected = !reservation.activatedAt &&
       OfficeCoworkerRegistry.hasConnection(reservation);
@@ -251,6 +267,7 @@ export class OfficeGatewayEnrollment {
       displayName: coworker.displayName, recipientBotID: coworker.recipientBotID,
       recipientCanonicalAddress: recipient.canonical, recipientSessionID: recipient.id,
       route: independentlyConnected ? OfficeCoworkerRegistry.route(reservation) : 'gateway',
+      ...(independentlyConnected && reservation.removedAt ? { removed: true } : {}),
     };
   }
 
@@ -260,7 +277,8 @@ export class OfficeGatewayEnrollment {
               c.recipient_session_id AS recipientSessionID,
               c.recipient_agent_id AS recipientAgentID,
               c.recipient_canonical_address AS recipientCanonicalAddress,
-              c.activated_at AS activatedAt, c.identity_revision AS identityRevision,
+              c.activated_at AS activatedAt, c.removed_at AS removedAt,
+              c.identity_revision AS identityRevision,
               c.identity_available AS identityAvailable, ${OfficeCoworkerRegistry.receivingColumns}
          FROM gateway_office_coworkers c ${OfficeCoworkerRegistry.receivingJoins}
         WHERE c.org_id = ? AND c.gateway_session_id = ?
@@ -268,7 +286,7 @@ export class OfficeGatewayEnrollment {
     ).bind(this.identity.organizationID, this.identity.sessionID).all<OfficeReceivingState & {
       displayName: string; recipientBotID: string; recipientSessionID: string | null;
       recipientAgentID: string | null; recipientCanonicalAddress: string | null; activatedAt: string | null;
-      identityRevision: number; identityAvailable: number;
+      removedAt: string | null; identityRevision: number; identityAvailable: number;
     }>();
 
     const snapshots = records.results.flatMap((record): OfficeIdentitySnapshot[] =>
@@ -292,6 +310,7 @@ export class OfficeGatewayEnrollment {
         enabled: session?.identityAvailable === 1 && record.activatedAt !== null &&
           record.activeGatewaySessionID === this.identity.sessionID,
         route: OfficeCoworkerRegistry.route(record),
+        ...(record.removedAt ? { removed: true } : {}),
       };
     });
   }
