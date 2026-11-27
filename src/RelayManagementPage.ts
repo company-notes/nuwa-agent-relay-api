@@ -485,6 +485,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 
   async function loadAccount() {
     const identity = await api('GET', '/v2/management/account', undefined, true);
+
     document.getElementById('accountEmail').textContent = identity.account.email;
     document.getElementById('accountOrganization').textContent = identity.organization
       ? identity.organization.slug : '尚未加入組織';
@@ -504,6 +505,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
     }
 
     await loadAccount();
+
     loginPanel.hidden = true;
     layout.hidden = false;
 
