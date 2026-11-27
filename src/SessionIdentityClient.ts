@@ -22,6 +22,7 @@ export type ResolvedSession = {
 type OrganizationIdentity = { id: string; slug: string; identityRevision: number };
 
 type AccountStatus = {
+  account: { email: string };
   organization: { id: string; slug: string } | null;
   grantFingerprint?: string;
 };

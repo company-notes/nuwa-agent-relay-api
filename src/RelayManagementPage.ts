@@ -24,20 +24,25 @@ export class RelayManagementPage {
 <style>
 :root { font-family: system-ui, "Noto Sans TC", sans-serif; color-scheme: light; color: #173b34; background: #f7f9f5; }
 body { margin: 0; }
-header { padding: 1.25rem max(1rem, calc((100vw - 60rem) / 2)); background: #e8f4ee; border-bottom: 1px solid #c8dcd2; }
-header strong { font-size: 1.3rem; }
+header { background: #e8f4ee; border-bottom: 1px solid #c8dcd2; }
+.header-inner { max-width: 76rem; margin: auto; padding: 1rem; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; }
+.brand { color: #173b34; font-size: 1.3rem; font-weight: 700; text-decoration: none; }
+.account-identity { display: grid; gap: .2rem; text-align: right; overflow-wrap: anywhere; }
+.account-identity strong { font-size: .95rem; }
+.account-identity small { font-size: .85rem; }
 main { max-width: 76rem; padding: 1.5rem 1rem 4rem; margin: auto; }
 .layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 1.5rem; align-items: start; }
-nav { background: white; border: 1px solid #dce8e2; border-radius: .9rem; padding: .9rem; }
-nav a { display: block; color: #173b34; padding: .75rem .6rem; border-radius: .4rem; text-decoration: none; }
-nav a[aria-current="page"] { background: #e5efea; font-weight: 700; }
+nav { display: grid; gap: .5rem; background: white; border: 1px solid #dce8e2; border-radius: .9rem; padding: .9rem; }
+nav a { display: block; color: #173b34; padding: .75rem .6rem; border: 1px solid #dce8e2; border-radius: .4rem; text-decoration: none; }
+nav a[aria-current="page"] { background: #e5efea; border-color: #88ae9b; font-weight: 700; }
 nav a:hover { background: #edf3ef; }
-nav button { width: 100%; margin-top: 1rem; }
+nav a:focus-visible, nav button:focus-visible, .brand:focus-visible { outline: 2px solid #14664c; outline-offset: 2px; }
+.nav-account { border-top: 1px solid #dce8e2; margin-top: .4rem; padding-top: .9rem; }
+nav button { width: 100%; }
 .content section { margin-top: 0; margin-bottom: 1rem; }
 @media (max-width: 700px) {
   .layout { grid-template-columns: 1fr; gap: .8rem; }
-  nav { display: flex; flex-wrap: wrap; gap: .3rem; }
-  nav button { width: auto; margin: 0; }
+  .account-identity { text-align: left; }
 }
 section { background: white; border: 1px solid #dce8e2; border-radius: .9rem; padding: 1.4rem; margin-top: 1.3rem; }
 h1 { font-size: 1.6rem; margin: 0 0 .5rem; } h2 { font-size: 1.2rem; }
@@ -60,7 +65,15 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 <script src="/manage.js" defer></script>
 </head>
 <body>
-<header><strong>Nuwa Management</strong></header>
+<header>
+<div class="header-inner">
+  <a class="brand" href="/" aria-label="Nuwa Relay 首頁">Nuwa Agent Relay</a>
+  <div id="accountIdentity" class="account-identity" hidden>
+    <strong id="accountEmail"></strong>
+    <small>Organization：<span id="accountOrganization"></span></small>
+  </div>
+</div>
+</header>
 <main>
 <h1>Nuwa Relay 管理</h1>
 <p>管理 AI 同事自主通訊及 Wake 接收設定。身分由 Agent Address 安全授權。</p>
@@ -72,11 +85,11 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 </section>
 <div class="layout" id="managementLayout" hidden>
 <nav aria-label="管理功能">
-  <a href="https://address.company-notes.com/portal/">帳號、Agent 地址與工作 Session</a>
+  <a href="https://address.company-notes.com/portal/?sso=1">帳號、Agent 地址與工作 Session</a>
   <a href="/manage/session-replies" data-section="session-replies">Session 回覆設定</a>
   <a href="/manage/wake" data-section="wake">Wake 接收設定</a>
   <a href="/manage/identity-reset" data-section="identity-reset">身分重製</a>
-  <button id="signOut" type="button" class="secondary">登出</button>
+  <div class="nav-account"><button id="signOut" type="button" class="secondary">登出</button></div>
 </nav>
 <div class="content">
 <section id="management" hidden>
@@ -166,6 +179,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
   const section = window.location.pathname.split('/')[2] || 'wake';
   const requestedPolicy = new URLSearchParams(window.location.search).get('collaboration');
   const layout = document.getElementById('managementLayout');
+  const accountIdentity = document.getElementById('accountIdentity');
   const navLinks = document.querySelectorAll('[data-section]');
   navLinks.forEach((link) => {
     if (link.dataset.section === section) {
@@ -469,6 +483,14 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
     });
   }
 
+  async function loadAccount() {
+    const identity = await api('GET', '/v2/management/account', undefined, true);
+    document.getElementById('accountEmail').textContent = identity.account.email;
+    document.getElementById('accountOrganization').textContent = identity.organization
+      ? identity.organization.slug : '尚未加入組織';
+    accountIdentity.hidden = false;
+  }
+
   async function load() {
     if (!sessionStorage.getItem(tokenKey)) {
       layout.hidden = true;
@@ -481,8 +503,10 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
       return;
     }
 
+    await loadAccount();
     loginPanel.hidden = true;
     layout.hidden = false;
+
     if (section === 'session-replies') {
       await loadCollaborationPolicies();
     } else if (section === 'identity-reset') {
@@ -549,6 +573,7 @@ label { display: block; margin: .8rem 0 .3rem; font-weight: 600; }
 
   void load().catch((error) => {
     sessionStorage.removeItem(tokenKey);
+    accountIdentity.hidden = true;
     loginPanel.hidden = false;
     layout.hidden = true;
     message(error.message);

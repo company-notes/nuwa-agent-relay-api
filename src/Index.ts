@@ -475,6 +475,22 @@ export class RelayAPI {
     }
   }
 
+  private async manageAccount(request: Request): Promise<Response> {
+    RelayAPI.requireManagementOrigin(request, false);
+    const address = this.accountClient(RelayAPI.authorization(request));
+    const { account, organization } = await address.status();
+
+    if (typeof account?.email !== 'string' || !account.email ||
+        organization !== null && (typeof organization?.slug !== 'string' || !organization.slug)) {
+      throw new APIError(502, 'address_response_invalid', 'Agent Address returned an invalid account.');
+    }
+
+    return HTTP.response({
+      account: { email: account.email },
+      organization: organization ? { slug: organization.slug } : null,
+    });
+  }
+
   private async manageCollaboration(request: Request, path: string): Promise<Response> {
     const write = request.method === 'PUT';
     RelayAPI.requireManagementOrigin(request, write);
@@ -694,6 +710,10 @@ export class RelayAPI {
 
     if (path === '/manage.js' && request.method === 'GET') {
       return RelayManagementPage.script();
+    }
+
+    if (path === '/v2/management/account' && request.method === 'GET') {
+      return this.manageAccount(request);
     }
 
     if (path === '/v2/management/collaboration-policies' || path.startsWith('/v2/management/collaboration-policies/')) {
