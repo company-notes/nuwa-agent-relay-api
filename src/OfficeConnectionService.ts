@@ -78,7 +78,8 @@ export class OfficeConnectionService {
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${eligible}
          ON CONFLICT(org_id, gateway_session_id, recipient_bot_id) DO UPDATE SET
            display_name = excluded.display_name, activated_at = excluded.activated_at,
-           recipient_canonical_address = excluded.recipient_canonical_address, independent_at = NULL`,
+           recipient_canonical_address = excluded.recipient_canonical_address,
+           independent_at = NULL, removed_at = NULL`,
       ).bind(organizationID, gatewaySessionID, recipientBotID, handle, displayName,
         agentID, sessionID, canonicalAddress, now, now, ...args),
       this.env.DB.prepare(
@@ -129,10 +130,11 @@ export class OfficeConnectionService {
 
     statements.push(
       this.env.DB.prepare(
-        `UPDATE gateway_office_coworkers SET activated_at = NULL, independent_at = ?
+        `UPDATE gateway_office_coworkers SET activated_at = NULL, independent_at = ?, removed_at = ?
           WHERE org_id = ? AND recipient_session_id = ? AND gateway_session_id = ?
             AND ${eligible}`,
-      ).bind(gatewayOwned ? null : now, ...scope, gatewaySessionID, ...args),
+      ).bind(gatewayOwned ? null : now, gatewayOwned ? now : null,
+        ...scope, gatewaySessionID, ...args),
       this.env.DB.prepare(
         `DELETE FROM gateway_teammates WHERE org_id = ? AND recipient_session_id = ? AND ${eligible}`,
       ).bind(...scope, ...args),

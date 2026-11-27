@@ -171,6 +171,12 @@ export function requireOfficeIdentityColumns(names) {
   }
 }
 
+export function requireOfficeRemovalColumn(names) {
+  if (!names.includes('removed_at')) {
+    throw new Error('Office removal migration (0014) is not applied.');
+  }
+}
+
 function inspectNames(query) {
   const output = WranglerRunner.execute([
     'd1', 'execute', 'DB', '--remote',
@@ -196,6 +202,7 @@ export function guardRemoteDatabase(requireMigrated = false) {
     );
     requireOfficeConnectionColumn(columns);
     requireOfficeIdentityColumns(columns);
+    requireOfficeRemovalColumn(columns);
   }
 
   process.stdout.write('Verified isolated Relay V2 D1: ' + classification + '\n');
