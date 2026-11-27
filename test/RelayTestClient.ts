@@ -37,7 +37,7 @@ export class RelayTestClient {
   readonly routeCreationBodies: Array<Record<string, unknown>> = [];
   readonly webhookParameters = new Map<number, Array<Record<string, unknown>>>();
   private readonly mailboxArchives = new Map<number, Array<{ id: string; subject: string; body: string }>>();
-  readonly wakeCallbacks: Array<{ body: any; signature: string | null }> = [];
+  readonly wakeCallbacks: Array<{ body: any; rawBody: string; signature: string | null }> = [];
   readonly wakeChallenges: Array<{ verificationId: string; challenge: string; sessionID: string }> = [];
   readonly wakeRequests: Array<{ body: any; authorization: string | null; url: string; redirect: RequestRedirect | undefined }> = [];
   readonly officeRegistrations: Array<{ displayName: string; agentName: string }> = [];
@@ -734,7 +734,8 @@ export class RelayTestClient {
     }
 
     if (['agent-hook.example.com', 'api2.cursor.sh', 'agent-demo.ngrok-free.app'].includes(url.hostname)) {
-      const body = JSON.parse(String(init?.body));
+      const rawBody = String(init?.body);
+      const body = JSON.parse(rawBody);
       const headers = new Headers(init?.headers);
       this.wakeRequests.push({
         body, authorization: headers.get('authorization'),
@@ -745,7 +746,7 @@ export class RelayTestClient {
         this.wakeChallenges.push(body);
       } else {
         this.wakeCallbacks.push({
-          body,
+          body, rawBody,
           signature: headers.get('x-nuwa-wake-signature'),
         });
       }
