@@ -397,6 +397,6 @@ export class GatewayBindings {
       return { ...explicitDispatch, recipientPlatformThreadID: null };
     }
 
-    return { ...dispatch, recipientPlatformThreadID: conversation.nativeThreadID };
+    return { ...explicitDispatch, recipientPlatformThreadID: conversation.nativeThreadID };
   }
 }
