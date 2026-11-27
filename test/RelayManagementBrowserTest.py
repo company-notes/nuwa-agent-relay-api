@@ -283,8 +283,10 @@ class RelayManagementBrowserTest(unittest.TestCase):
                     page.goto(scenario.origin + '/manage/session-replies?collaboration=' + scenario.policy['id'])
                     page.get_by_role('heading', name='Session 回覆設定').wait_for()
                     self.assertIn('/manage/session-replies?collaboration=', page.url)
-                    page.get_by_text('owner@example.test', exact=True).wait_for()
-                    page.get_by_text('relay-test-org', exact=True).wait_for()
+                    self.assertTrue(page.get_by_text('owner@example.test', exact=True).is_visible(),
+                                    'Management must display the authenticated account email.')
+                    self.assertTrue(page.get_by_text('relay-test-org', exact=True).is_visible(),
+                                    'Management must display the authenticated Organization.')
                     self.assertEqual(page.get_by_role('link', name='帳號、Agent 地址與工作 Session').get_attribute('href'),
                                      'https://address.company-notes.com/portal/?sso=1')
                     self.assertFalse(page.locator('#management').is_visible())
