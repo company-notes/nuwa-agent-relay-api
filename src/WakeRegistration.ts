@@ -1,7 +1,7 @@
 import type { Env } from './Env';
 import { GatewayRoster } from './GatewayRoster';
 import { APIError } from './HTTP';
-import type { SessionIdentity } from './SessionIdentityClient';
+import { OfficeWakeScope, type WakeScope } from './OfficeWakeScope';
 import { WakeTarget, type WakeAuthMode } from './WakeTarget';
 import { Logger } from './Logger';
 
@@ -14,13 +14,15 @@ type PendingRegistration = {
   expiresAt: string;
   createdAt: string;
   failures: number;
+  officeGatewaySessionID: string | null;
+  officeApprovedAt: string | null;
 };
 
 export class WakeRegistration {
   private static readonly logger = Logger.forModule('wake.registration');
   constructor(
     private readonly env: Env,
-    private readonly identity: Pick<SessionIdentity, 'organizationID' | 'sessionID'>,
+    private readonly identity: WakeScope,
   ) {}
 
   private static hex(bytes: Uint8Array): string {
@@ -46,11 +48,19 @@ export class WakeRegistration {
     return difference === 0;
   }
 
+  private async requireRegistrationAuthority(): Promise<void> {
+    if (this.identity.office) {
+      await OfficeWakeScope.requireCurrent(this.env, this.identity);
+    } else {
+      await GatewayRoster.requireIndependentRoute(
+        this.env, this.identity.organizationID, this.identity.sessionID,
+      );
+    }
+  }
+
   /** A pending challenge never disables the previously verified subscription. */
   async begin(callbackURL: string, authMode: WakeAuthMode, bearerToken?: string) {
-    await GatewayRoster.requireIndependentRoute(
-      this.env, this.identity.organizationID, this.identity.sessionID,
-    );
+    await this.requireRegistrationAuthority();
 
     const config = WakeTarget.validateConfig(callbackURL, authMode, bearerToken);
     const encryptedTarget = await WakeTarget.encrypt(this.env, config);
@@ -66,8 +76,9 @@ export class WakeRegistration {
     const updated = await this.env.DB.prepare(
       `INSERT INTO wake_registration_attempts
         (session_id, org_id, verification_id, callback_url, auth_mode,
-         encrypted_target, verification_digest, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         encrypted_target, verification_digest, expires_at, created_at,
+         office_gateway_session_id, office_approved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
          org_id = excluded.org_id,
          verification_id = excluded.verification_id,
@@ -77,10 +88,13 @@ export class WakeRegistration {
          verification_digest = excluded.verification_digest,
          expires_at = excluded.expires_at,
          created_at = excluded.created_at,
-         failures = 0
+         failures = 0,
+         office_gateway_session_id = excluded.office_gateway_session_id,
+         office_approved_at = excluded.office_approved_at
        WHERE wake_registration_attempts.created_at < ?`,
     ).bind(this.identity.sessionID, this.identity.organizationID, verificationId,
-      publicURL, authMode, encryptedTarget, digest, expiresAt, createdAt, cooldown).run();
+      publicURL, authMode, encryptedTarget, digest, expiresAt, createdAt,
+      this.identity.office?.gatewaySessionID ?? null, this.identity.office?.approvedAt ?? null, cooldown).run();
 
     if (updated.meta.changes !== 1) {
       throw new APIError(429, 'wake_registration_cooldown',
@@ -141,9 +155,7 @@ export class WakeRegistration {
   }
 
   async verify(verificationId: string, challenge: string) {
-    await GatewayRoster.requireIndependentRoute(
-      this.env, this.identity.organizationID, this.identity.sessionID,
-    );
+    await this.requireRegistrationAuthority();
 
     const row = await this.env.DB.prepare(
       `SELECT verification_id AS verificationId,
@@ -151,7 +163,8 @@ export class WakeRegistration {
               encrypted_target AS encryptedTarget,
               callback_url AS publicURL, auth_mode AS authMode,
               expires_at AS expiresAt, created_at AS createdAt,
-              failures
+              failures, office_gateway_session_id AS officeGatewaySessionID,
+              office_approved_at AS officeApprovedAt
          FROM wake_registration_attempts
         WHERE session_id = ? AND org_id = ?`,
     ).bind(this.identity.sessionID, this.identity.organizationID).first<PendingRegistration>();
@@ -160,6 +173,12 @@ export class WakeRegistration {
       row.expiresAt <= new Date().toISOString()) {
       throw new APIError(409, 'wake_verification_not_pending',
         'No matching unexpired Wake verification is pending for this Session.');
+    }
+
+    if (row.officeGatewaySessionID !== (this.identity.office?.gatewaySessionID ?? null) ||
+        row.officeApprovedAt !== (this.identity.office?.approvedAt ?? null)) {
+      throw new APIError(409, 'wake_verification_not_pending',
+        'No matching Wake verification is pending for this authority.');
     }
 
     if (row.failures >= 5) {
@@ -188,10 +207,12 @@ export class WakeRegistration {
            FROM wake_registration_attempts
           WHERE session_id = ? AND org_id = ? AND verification_id = ?
             AND expires_at > ? AND failures < 5
-            AND NOT EXISTS (SELECT 1 FROM gateway_teammates t
-              WHERE t.org_id = wake_registration_attempts.org_id
-                AND t.recipient_session_id = wake_registration_attempts.session_id
-                AND t.status = 'active')
+            AND office_gateway_session_id IS ? AND office_approved_at IS ?
+            AND ((office_gateway_session_id IS NOT NULL AND ${OfficeWakeScope.currentAttempt})
+              OR (office_gateway_session_id IS NULL AND NOT EXISTS (SELECT 1 FROM gateway_teammates t
+                WHERE t.org_id = wake_registration_attempts.org_id
+                  AND t.recipient_session_id = wake_registration_attempts.session_id
+                  AND t.status = 'active')))
          ON CONFLICT(session_id) DO UPDATE SET
            org_id = excluded.org_id,
            callback_url = excluded.callback_url,
@@ -200,7 +221,8 @@ export class WakeRegistration {
            encrypted_target = excluded.encrypted_target,
            auth_mode = excluded.auth_mode`,
       ).bind(new Date().toISOString(), this.identity.sessionID, this.identity.organizationID,
-        verificationId, new Date().toISOString()),
+        verificationId, new Date().toISOString(),
+        this.identity.office?.gatewaySessionID ?? null, this.identity.office?.approvedAt ?? null),
       this.env.DB.prepare(
         `DELETE FROM wake_registration_attempts
           WHERE session_id = ? AND org_id = ? AND verification_id = ?`,

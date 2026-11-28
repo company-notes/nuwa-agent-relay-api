@@ -31,12 +31,12 @@ export class OfficeCoworkerRegistry {
   }
 
   static route(state: OfficeReceivingState): 'gateway' | 'direct' | 'inbox' | 'inactive' {
-    if (state.activeGatewaySessionID) {
-      return 'gateway';
-    }
-
     if (state.directWakeSessionID) {
       return 'direct';
+    }
+
+    if (state.activeGatewaySessionID) {
+      return 'gateway';
     }
 
     return state.independentAt || state.nativeRouteSessionID ? 'inbox' : 'inactive';

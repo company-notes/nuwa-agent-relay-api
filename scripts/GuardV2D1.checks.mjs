@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { classifyDatabase, readTableNames, requireOfficeConnectionColumn, requireOfficeIdentityColumns, requireOfficeRemovalColumn, validateProductionBindings } from './GuardV2D1.mjs';
+import { classifyDatabase, readTableNames, requireOfficeConnectionColumn, requireOfficeIdentityColumns, requireOfficeRemovalColumn, requireOfficeWakeColumns, validateProductionBindings } from './GuardV2D1.mjs';
 
 const v2 = [
   'agent_mailboxes', 'agent_aliases', 'threads', 'messages',
@@ -123,4 +123,9 @@ test('requires the identity projection columns before deployment', () => {
 test('requires the office removal column before deployment', () => {
   assert.throws(() => requireOfficeRemovalColumn(['activated_at']), /migration \(0014\)/);
   assert.doesNotThrow(() => requireOfficeRemovalColumn(['activated_at', 'removed_at']));
+});
+
+test('requires the targeted office Wake columns before deployment', () => {
+  assert.throws(() => requireOfficeWakeColumns(['office_gateway_session_id']), /migration \(0015\)/);
+  assert.doesNotThrow(() => requireOfficeWakeColumns(['office_gateway_session_id', 'office_approved_at']));
 });

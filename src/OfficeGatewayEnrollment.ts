@@ -266,7 +266,8 @@ export class OfficeGatewayEnrollment {
     return {
       displayName: coworker.displayName, recipientBotID: coworker.recipientBotID,
       recipientCanonicalAddress: recipient.canonical, recipientSessionID: recipient.id,
-      route: independentlyConnected ? OfficeCoworkerRegistry.route(reservation) : 'gateway',
+      route: independentlyConnected || reservation.activatedAt
+        ? OfficeCoworkerRegistry.route(reservation) : 'gateway',
       ...(independentlyConnected && reservation.removedAt ? { removed: true } : {}),
     };
   }

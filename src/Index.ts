@@ -22,6 +22,7 @@ import { RelayV2Service, type RelayMessageInput } from './RelayV2Service';
 import { RelayManagementPage } from './RelayManagementPage';
 import { ManagementAgentReset } from './ManagementAgentReset';
 import { SessionIdentityClient, type AuthorizedSession, type SessionIdentity } from './SessionIdentityClient';
+import { OfficeWakeScope } from './OfficeWakeScope';
 import { WakeEndpointManagement } from './WakeEndpointManagement';
 import { WakePairing } from './WakePairing';
 import { WakeTarget } from './WakeTarget';
@@ -419,7 +420,11 @@ export class RelayAPI {
     const wake = new WakeService(this.env, identity);
 
     if (path === '/v2/wake-pairings' && request.method === 'POST') {
-      return HTTP.response(await new WakePairing(this.env).create(identity), 201);
+      const data = request.body ? await HTTP.json(request) : {};
+      const botID = data.recipientBotID === undefined ? null : HTTP.requiredString(data, 'recipientBotID', 192);
+      const scope = botID ? await OfficeWakeScope.resolve(this.env, identity, botID) : identity;
+
+      return HTTP.response(await new WakePairing(this.env).create(scope), 201);
     }
 
     if (path === '/v2/wake-subscription' && request.method === 'POST') {
@@ -436,14 +441,20 @@ export class RelayAPI {
     if (path === '/v2/wake-subscription/verification' && request.method === 'POST') {
       const data = await HTTP.json(request);
 
-      return HTTP.response(await wake.verify(
+      const botID = data.recipientBotID === undefined ? null : HTTP.requiredString(data, 'recipientBotID', 192);
+      const scope = botID ? await OfficeWakeScope.resolve(this.env, identity, botID) : identity;
+
+      return HTTP.response(await new WakeService(this.env, scope).verify(
         HTTP.requiredString(data, 'verificationId', 64),
         HTTP.requiredString(data, 'challenge', 128),
       ));
     }
 
     if (path === '/v2/wake-subscription' && request.method === 'GET') {
-      return HTTP.response(await wake.getSubscription());
+      const botID = new URL(request.url).searchParams.get('recipient_bot_id');
+      const scope = botID === null ? identity : await OfficeWakeScope.resolve(this.env, identity, botID);
+
+      return HTTP.response(await new WakeService(this.env, scope).getSubscription());
     }
 
     if (path === '/v2/wake-subscription' && request.method === 'DELETE') {
