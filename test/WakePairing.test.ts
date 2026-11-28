@@ -208,6 +208,7 @@ describe('user-controlled Wake Pairing', () => {
 
     const independent = await client.callAsSession(ava.recipientSessionID, 'DELETE', '/v2/gateway-invitation');
     expect(independent.status).toBe(200);
+
     const direct = await client.callAsSession(ava.recipientSessionID, 'GET', '/v2/wake-subscription');
     expect(direct.body.data).toMatchObject({ enabled: true, receiverMode: 'direct' });
 
@@ -220,6 +221,7 @@ describe('user-controlled Wake Pairing', () => {
       to: claire.recipientCanonicalAddress, body: 'Ava sends directly without from.',
     });
     expect(independentSend.status).toBe(201);
+
     await MailReceipt.confirmArrival(env, independentSend.body.data.id, 'webhook');
     await WakeService.dispatchDue(env);
     expect(client.wakeRequests.filter((entry) => entry.body.messageID === independentSend.body.data.id)
@@ -229,6 +231,7 @@ describe('user-controlled Wake Pairing', () => {
       from: 'bot:native-claire', to: ava.recipientCanonicalAddress, body: 'The direct receiver remains active.',
     });
     expect(newInbound.status).toBe(201);
+
     await MailReceipt.confirmArrival(env, newInbound.body.data.id, 'webhook');
     await WakeService.dispatchDue(env);
     expect(client.wakeRequests.filter((entry) => entry.body.messageID === newInbound.body.data.id)

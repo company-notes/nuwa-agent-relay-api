@@ -474,6 +474,7 @@ export class RelayAPI {
     const client = new SessionIdentityClient(
       this.env.ADDRESS_API_URL, authorization, transport.request.bind(transport),
     );
+
     await client.requireOwner();
 
     return client;
