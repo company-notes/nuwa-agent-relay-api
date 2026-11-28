@@ -1,6 +1,8 @@
 import { env, exports } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
+import { MailReceipt } from '../src/MailReceipt';
+import { WakeService } from '../src/WakeService';
 import { RelayTestClient } from './RelayTestClient';
 
 const origin = RelayTestClient.origin;
@@ -74,6 +76,96 @@ async function resetCopiedHeaderScenario(): Promise<void> {
 }
 
 describe('user-controlled Wake Pairing', () => {
+  it('pairs a direct receiver for one office coworker without changing the shared MCP identity', async () => {
+    const client = new RelayTestClient();
+    client.installExternalTestTransport();
+    await client.provisionAgentMailboxes();
+
+    const call = (method: string, path: string, data?: object) =>
+      client.call('token-g', method, path + '?session_id=session-g', data);
+    const gateway = await call('POST', '/v2/wake-subscription', {
+      callbackUrl: 'https://agent-hook.example.com/office-gateway',
+    });
+    expect(gateway.status).toBe(201);
+    await client.confirmLatestWake('token-g');
+
+    const coworkers = [
+      { displayName: 'Ava', recipientBotID: 'native-ava', threadMode: 'platform' },
+      { displayName: 'Claire', recipientBotID: 'native-claire', threadMode: 'platform' },
+    ];
+    const enrolled = await call('POST', '/v2/gateway-office-coworkers', { coworkers });
+    expect(enrolled.status).toBe(201);
+    const [ava, claire] = enrolled.body.data;
+
+    const denied = await client.call('token-a', 'POST',
+      '/v2/wake-pairings?session_id=session-a', { recipientBotID: 'native-ava' });
+    expect(denied.status).toBe(404);
+
+    const pairing = await call('POST', '/v2/wake-pairings', { recipientBotID: 'native-ava' });
+    expect(pairing.status).toBe(201);
+    expect(pairing.body.data.sessionID).toBe(ava.recipientSessionID);
+
+    const start = await open(pairing.body.data.pairingUrl);
+    const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
+    const oauthCookie = extractCookie(start, '__Host-nuwa_pair_oauth_' + state.split('.')[1]);
+    const foreign = await open(origin + '/wake-pair/oauth/callback?' +
+      new URLSearchParams({ state, code: 'different-owner' }), oauthCookie);
+    expect(foreign.status).toBe(403);
+
+    const callback = await open(origin + '/wake-pair/oauth/callback?' +
+      new URLSearchParams({ state, code: 'owned-work' }), oauthCookie);
+    expect(callback.status).toBe(303);
+    const cookie = extractCookie(callback, '__Host-nuwa_pair_session');
+    const form = await open(origin + '/wake-pair/complete', cookie);
+    const csrfToken = extractCSRF(await form.text());
+    const posted = await open(origin + '/wake-pair/complete', cookie, {
+      method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        callbackUrl: 'https://agent-hook.example.com/ava-direct',
+        bearerToken: 'test-ava-private-webhook-key', csrfToken,
+      }),
+    });
+    expect(posted.status).toBe(200);
+    const proof = client.wakeChallenges.at(-1)!;
+    expect(proof.sessionID).toBe(ava.recipientSessionID);
+
+    const before = await call('GET', '/v2/gateway-office-coworkers');
+    expect(before.body.data.find((row: any) => row.recipientBotID === 'native-ava').route).toBe('gateway');
+    const wrong = await call('POST', '/v2/wake-subscription/verification', {
+      recipientBotID: 'native-claire', verificationId: proof.verificationId, challenge: proof.challenge,
+    });
+    expect(wrong.status).toBe(409);
+    const confirmed = await call('POST', '/v2/wake-subscription/verification', {
+      recipientBotID: 'native-ava', verificationId: proof.verificationId, challenge: proof.challenge,
+    });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.data.sessionID).toBe(ava.recipientSessionID);
+
+    const synced = await call('POST', '/v2/gateway-office-coworkers', { coworkers });
+    expect(synced.body.data[0]).toMatchObject({ recipientSessionID: ava.recipientSessionID, route: 'direct' });
+    expect(synced.body.data[1]).toMatchObject({ recipientSessionID: claire.recipientSessionID, route: 'gateway' });
+
+    for (const [member, address] of [[ava, '/ava-direct'], [claire, '/office-gateway']] as const) {
+      const sent = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+        to: member.recipientCanonicalAddress, body: 'Office delivery to ' + member.recipientBotID,
+      });
+      expect(sent.status).toBe(201);
+      await MailReceipt.confirmArrival(env, sent.body.data.id, 'webhook');
+      await WakeService.dispatchDue(env);
+      const requests = client.wakeRequests.filter((entry) => entry.body.messageID === sent.body.data.id);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe('https://agent-hook.example.com' + address);
+      expect(requests[0].body.recipientBotID).toBe(member.recipientBotID);
+    }
+
+    const reply = await call('POST', '/v2/messages', {
+      from: 'bot:native-ava', to: 'bot:native-claire', body: 'Ava still uses the shared connection.',
+    });
+    expect(reply.status).toBe(201);
+    const ownWake = await call('GET', '/v2/wake-subscription');
+    expect(ownWake.body.data).toMatchObject({ sessionID: 'session-g', enabled: true });
+  });
+
   it('OAuth-verifies exact Session, accepts key only in private browser form, and emits one challenge', async () => {
     const client = new RelayTestClient();
     client.installExternalTestTransport();
