@@ -468,12 +468,16 @@ export class RelayAPI {
     return null;
   }
 
-  private accountClient(authorization: string): SessionIdentityClient {
+  private async accountClient(authorization: string): Promise<SessionIdentityClient> {
     const transport = new AgentAddressTransport(this.env.ADDRESS_WORKER);
 
-    return new SessionIdentityClient(
+    const client = new SessionIdentityClient(
       this.env.ADDRESS_API_URL, authorization, transport.request.bind(transport),
     );
+
+    await client.requireOwner();
+
+    return client;
   }
 
   private static requireManagementOrigin(request: Request, write: boolean): void {
@@ -488,7 +492,7 @@ export class RelayAPI {
 
   private async manageAccount(request: Request): Promise<Response> {
     RelayAPI.requireManagementOrigin(request, false);
-    const address = this.accountClient(RelayAPI.authorization(request));
+    const address = await this.accountClient(RelayAPI.authorization(request));
     const { account, organization } = await address.status();
 
     if (typeof account?.email !== 'string' || !account.email ||
@@ -506,7 +510,7 @@ export class RelayAPI {
     const write = request.method === 'PUT';
     RelayAPI.requireManagementOrigin(request, write);
     const authorization = RelayAPI.authorization(request);
-    const address = this.accountClient(authorization);
+    const address = await this.accountClient(authorization);
     const account = await address.status();
 
     if (!account.organization) {
@@ -536,7 +540,7 @@ export class RelayAPI {
 
   private async wakeSessions(request: Request): Promise<Response> {
     RelayAPI.requireManagementOrigin(request, false);
-    const address = this.accountClient(RelayAPI.authorization(request));
+    const address = await this.accountClient(RelayAPI.authorization(request));
     const account = await address.status();
 
     if (!account.organization) {
@@ -592,7 +596,7 @@ export class RelayAPI {
     const sessionID = path.match(
       /^\/v2\/management\/sessions\/([^/]+)\/wake-endpoint$/,
     )![1];
-    const address = this.accountClient(RelayAPI.authorization(request));
+    const address = await this.accountClient(RelayAPI.authorization(request));
     const selected = await address.selectSessions([sessionID]);
 
     if (selected.sessions.length !== 1 || selected.sessions[0].id !== sessionID) {
@@ -631,7 +635,7 @@ export class RelayAPI {
     RelayAPI.requireManagementOrigin(request, write);
 
     const gatewaySessionID = match[1];
-    const address = this.accountClient(RelayAPI.authorization(request));
+    const address = await this.accountClient(RelayAPI.authorization(request));
     const selected = await address.selectSessions([gatewaySessionID]);
 
     if (selected.sessions.length !== 1 || selected.sessions[0].id !== gatewaySessionID) {
@@ -675,7 +679,7 @@ export class RelayAPI {
 
     const authorization = RelayAPI.authorization(request);
     const manager = new ManagementAgentReset(
-      this.env, this.accountClient(authorization), authorization,
+      this.env, await this.accountClient(authorization), authorization,
     );
     let data: unknown;
 
@@ -786,6 +790,11 @@ export class RelayAPI {
   private async authorized(
     request: Request, path: string, identity: AuthorizedSession, address: SessionIdentityClient,
   ): Promise<Response> {
+    if (identity.resourceScoped && path.startsWith('/v2/gateway-') &&
+        !(path === '/v2/gateway-invitation' && ['GET', 'DELETE'].includes(request.method))) {
+      throw new APIError(403, 'resource_delegation_forbidden', 'An address-scoped grant cannot manage the office Gateway.');
+    }
+
     if (request.method === 'GET' && path === '/v2/inbox/events') {
       return new InboxEvents(this.env, identity).page(InboxEvents.readCursor(request));
     }

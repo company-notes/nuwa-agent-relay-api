@@ -110,6 +110,10 @@ export class GatewaySpeaker {
       return null;
     }
 
+    if (this.actor.resourceScoped) {
+      throw new APIError(403, 'resource_delegation_forbidden', 'An address-scoped grant cannot speak for another Session.');
+    }
+
     const office = await this.resolveSender(from);
 
     return {

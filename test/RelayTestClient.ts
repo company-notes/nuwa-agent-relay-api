@@ -152,10 +152,18 @@ export class RelayTestClient {
     this.identityRevision += 1;
   }
 
+  readonly scopedSessions = new Map<string, string>();
+
   private requestAgentAddress(url: URL, token: string | null, init?: RequestInit): Response {
     if (!['Bearer token-a', 'Bearer token-b', 'Bearer token-c', 'Bearer token-d', 'Bearer token-g', 'Bearer token-h', 'Bearer token-foreign'].includes(token ?? '')) {
       return Response.json({ ok: false, error: { code: 'unauthorized' } }, { status: 401 });
     }
+
+    const scopedID = this.scopedSessions.get(token?.replace('Bearer ', '') ?? '');
+    const scoped = scopedID ? this.sessions().find((entry) => entry.id === scopedID) : undefined;
+    const relayResource = scoped ? {
+      resource: 'https://mcp.agent-relay.company-notes.com/mcp/' + scoped.canonical, sessionID: scoped.id,
+    } : undefined;
 
     if (url.pathname === '/v2/account/status') {
       this.accountStatusLookups += 1;
@@ -168,6 +176,7 @@ export class RelayTestClient {
         ok: true,
         data: {
           account: { email: 'test@example.com' },
+          ...(relayResource ? { relayResource } : {}),
           ...(url.searchParams.get('include_grant') === '1' ? {
             grantFingerprint: ['token-a', 'token-b', 'token-c', 'token-d', 'token-g', 'token-h', 'token-foreign']
               .indexOf(token!.slice(7)).toString(16).repeat(64),
@@ -330,6 +339,10 @@ export class RelayTestClient {
       }
 
       if (matched[2]) {
+        if (scopedID && scopedID !== session.id) {
+          return Response.json({ ok: false, error: { code: 'relay_resource_restricted' } }, { status: 403 });
+        }
+
         this.runtimeLeaseLookups += 1;
 
         if (this.failAddressStatus) {
@@ -348,6 +361,7 @@ export class RelayTestClient {
             expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
             ...(url.searchParams.get('include_identity') === '1' ? {
               session,
+              ...(relayResource ? { relayResource } : {}),
               organization: token === 'Bearer token-foreign'
                 ? { id: 'org-other', slug: 'other-organization', identityRevision: 0 }
                 : { id: 'org-id', slug: this.organizationSlug, identityRevision: this.identityRevision },
