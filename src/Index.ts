@@ -421,7 +421,7 @@ export class RelayAPI {
 
     if (path === '/v2/wake-pairings' && request.method === 'POST') {
       const data = request.body ? await HTTP.json(request) : {};
-      const botID = HTTP.optionalString(data, 'recipientBotID', 192);
+      const botID = data.recipientBotID === undefined ? null : HTTP.requiredString(data, 'recipientBotID', 192);
       const scope = botID ? await OfficeWakeScope.resolve(this.env, identity, botID) : identity;
 
       return HTTP.response(await new WakePairing(this.env).create(scope), 201);
@@ -441,7 +441,7 @@ export class RelayAPI {
     if (path === '/v2/wake-subscription/verification' && request.method === 'POST') {
       const data = await HTTP.json(request);
 
-      const botID = HTTP.optionalString(data, 'recipientBotID', 192);
+      const botID = data.recipientBotID === undefined ? null : HTTP.requiredString(data, 'recipientBotID', 192);
       const scope = botID ? await OfficeWakeScope.resolve(this.env, identity, botID) : identity;
 
       return HTTP.response(await new WakeService(this.env, scope).verify(
@@ -452,7 +452,7 @@ export class RelayAPI {
 
     if (path === '/v2/wake-subscription' && request.method === 'GET') {
       const botID = new URL(request.url).searchParams.get('recipient_bot_id');
-      const scope = botID ? await OfficeWakeScope.resolve(this.env, identity, botID) : identity;
+      const scope = botID === null ? identity : await OfficeWakeScope.resolve(this.env, identity, botID);
 
       return HTTP.response(await new WakeService(this.env, scope).getSubscription());
     }

@@ -48,8 +48,7 @@ export class WakeRegistration {
     return difference === 0;
   }
 
-  /** A pending challenge never disables the previously verified subscription. */
-  async begin(callbackURL: string, authMode: WakeAuthMode, bearerToken?: string) {
+  private async requireRegistrationAuthority(): Promise<void> {
     if (this.identity.office) {
       await OfficeWakeScope.requireCurrent(this.env, this.identity);
     } else {
@@ -57,6 +56,11 @@ export class WakeRegistration {
         this.env, this.identity.organizationID, this.identity.sessionID,
       );
     }
+  }
+
+  /** A pending challenge never disables the previously verified subscription. */
+  async begin(callbackURL: string, authMode: WakeAuthMode, bearerToken?: string) {
+    await this.requireRegistrationAuthority();
 
     const config = WakeTarget.validateConfig(callbackURL, authMode, bearerToken);
     const encryptedTarget = await WakeTarget.encrypt(this.env, config);
@@ -151,13 +155,7 @@ export class WakeRegistration {
   }
 
   async verify(verificationId: string, challenge: string) {
-    if (this.identity.office) {
-      await OfficeWakeScope.requireCurrent(this.env, this.identity);
-    } else {
-      await GatewayRoster.requireIndependentRoute(
-        this.env, this.identity.organizationID, this.identity.sessionID,
-      );
-    }
+    await this.requireRegistrationAuthority();
 
     const row = await this.env.DB.prepare(
       `SELECT verification_id AS verificationId,

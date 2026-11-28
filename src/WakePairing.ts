@@ -4,7 +4,6 @@ import { Logger } from './Logger';
 import { WakePairingOAuth } from './WakePairingOAuth';
 import { WakeRegistration } from './WakeRegistration';
 import { WakeTarget } from './WakeTarget';
-
 import { OfficeWakeScope, type WakeScope } from './OfficeWakeScope';
 
 type PairingRow = {

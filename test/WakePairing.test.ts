@@ -101,6 +101,9 @@ describe('user-controlled Wake Pairing', () => {
       '/v2/wake-pairings?session_id=session-a', { recipientBotID: 'native-ava' });
     expect(denied.status).toBe(404);
 
+    const malformed = await call('POST', '/v2/wake-pairings', { recipientBotID: '' });
+    expect(malformed.status).toBe(400);
+
     const pairing = await call('POST', '/v2/wake-pairings', { recipientBotID: 'native-ava' });
     expect(pairing.status).toBe(201);
     expect(pairing.body.data.sessionID).toBe(ava.recipientSessionID);
@@ -131,6 +134,13 @@ describe('user-controlled Wake Pairing', () => {
 
     const before = await call('GET', '/v2/gateway-office-coworkers');
     expect(before.body.data.find((row: any) => row.recipientBotID === 'native-ava').route).toBe('gateway');
+
+    const queued = await client.call('token-a', 'POST', '/v2/messages?session_id=session-a', {
+      to: ava.recipientCanonicalAddress, body: 'Arrived while direct Wake verification is pending.',
+    });
+    expect(queued.status).toBe(201);
+    await MailReceipt.confirmArrival(env, queued.body.data.id, 'webhook');
+
     const wrong = await call('POST', '/v2/wake-subscription/verification', {
       recipientBotID: 'native-claire', verificationId: proof.verificationId, challenge: proof.challenge,
     });
@@ -140,6 +150,11 @@ describe('user-controlled Wake Pairing', () => {
     });
     expect(confirmed.status).toBe(200);
     expect(confirmed.body.data.sessionID).toBe(ava.recipientSessionID);
+
+    await WakeService.dispatchDue(env);
+    const queuedRequests = client.wakeRequests.filter((entry) => entry.body.messageID === queued.body.data.id);
+    expect(queuedRequests).toHaveLength(1);
+    expect(queuedRequests[0].url).toBe('https://agent-hook.example.com/office-gateway');
 
     const synced = await call('POST', '/v2/gateway-office-coworkers', { coworkers });
     expect(synced.body.data[0]).toMatchObject({ recipientSessionID: ava.recipientSessionID, route: 'direct' });
@@ -156,6 +171,13 @@ describe('user-controlled Wake Pairing', () => {
       expect(requests).toHaveLength(1);
       expect(requests[0].url).toBe('https://agent-hook.example.com' + address);
       expect(requests[0].body.recipientBotID).toBe(member.recipientBotID);
+
+      if (member.recipientBotID === 'native-ava') {
+        const replied = await call('POST', '/v2/threads/' + requests[0].body.relayThreadID + '/messages', {
+          from: 'bot:native-ava', messageID: sent.body.data.id, body: 'Ava received the direct Wake.',
+        });
+        expect(replied.status).toBe(201);
+      }
     }
 
     const reply = await call('POST', '/v2/messages', {
