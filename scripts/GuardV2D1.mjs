@@ -177,6 +177,12 @@ export function requireOfficeRemovalColumn(names) {
   }
 }
 
+export function requireOfficeWakeColumns(names) {
+  if (!names.includes('office_gateway_session_id') || !names.includes('office_approved_at')) {
+    throw new Error('Office direct Wake migration (0015) is not applied.');
+  }
+}
+
 function inspectNames(query) {
   const output = WranglerRunner.execute([
     'd1', 'execute', 'DB', '--remote',
@@ -203,6 +209,12 @@ export function guardRemoteDatabase(requireMigrated = false) {
     requireOfficeConnectionColumn(columns);
     requireOfficeIdentityColumns(columns);
     requireOfficeRemovalColumn(columns);
+
+    for (const table of ['wake_pairing_requests', 'wake_registration_attempts']) {
+      requireOfficeWakeColumns(inspectNames(
+        "SELECT name FROM pragma_table_info('" + table + "') ORDER BY name",
+      ));
+    }
   }
 
   process.stdout.write('Verified isolated Relay V2 D1: ' + classification + '\n');

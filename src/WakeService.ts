@@ -2,7 +2,7 @@ import type { Env } from './Env';
 import { GatewayBindings } from './GatewayBindings';
 import { GatewayRoster } from './GatewayRoster';
 import { APIError, HTTP } from './HTTP';
-import type { SessionIdentity } from './SessionIdentityClient';
+import type { WakeScope } from './OfficeWakeScope';
 import { WakeRegistration } from './WakeRegistration';
 import { WakeTarget, type WakeAuthMode } from './WakeTarget';
 import { Logger } from './Logger';
@@ -31,7 +31,7 @@ export class WakeService {
 
   constructor(
     private readonly env: Env,
-    private readonly identity: SessionIdentity,
+    private readonly identity: WakeScope,
   ) {}
 
   async subscribe(callbackURL: string, authMode: WakeAuthMode = 'hmac', bearerToken?: string) {
@@ -59,13 +59,13 @@ export class WakeService {
     }>();
 
     const pending = await new WakeRegistration(this.env, this.identity).pending();
-    const callback = shared ?? row;
+    const callback = row ?? shared;
 
     return {
       sessionID: this.identity.sessionID,
       enabled: Boolean(callback),
-      receiverMode: shared ? 'gateway' : row ? 'direct' : 'none',
-      gatewaySessionID: shared?.gatewaySessionID ?? null,
+      receiverMode: row ? 'direct' : shared ? 'gateway' : 'none',
+      gatewaySessionID: row ? null : shared?.gatewaySessionID ?? null,
       callbackHost: callback ? new URL(callback.callbackURL).hostname : null,
       authMode: callback?.authMode ?? null,
       pending,

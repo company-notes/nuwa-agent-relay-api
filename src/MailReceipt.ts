@@ -147,6 +147,9 @@ export class MailReceipt {
           AND g.recipient_session_id = COALESCE(m.recipient_session_id,
             t.accepted_session_id, t.notification_session_id)
           AND g.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM wake_subscriptions direct
+            WHERE direct.org_id = t.org_id AND direct.session_id = g.recipient_session_id
+              AND direct.created_at <= m.received_at)
          JOIN wake_subscriptions s
            ON s.org_id = t.org_id
           AND s.session_id = COALESCE(g.gateway_session_id, m.recipient_session_id,
@@ -186,6 +189,9 @@ export class MailReceipt {
           AND g.recipient_session_id = COALESCE(m.recipient_session_id,
             t.accepted_session_id, t.notification_session_id)
           AND g.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM wake_subscriptions direct
+            WHERE direct.org_id = t.org_id AND direct.session_id = g.recipient_session_id
+              AND direct.created_at <= m.created_at)
          JOIN wake_subscriptions subscription
            ON subscription.org_id = t.org_id
           AND subscription.session_id = COALESCE(g.gateway_session_id,

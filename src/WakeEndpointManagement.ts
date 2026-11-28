@@ -1,5 +1,4 @@
 import type { Env } from './Env';
-import { GatewayRoster } from './GatewayRoster';
 import { APIError } from './HTTP';
 import { WakeTarget, type WakeAuthMode, type WakeTargetConfig } from './WakeTarget';
 
@@ -51,11 +50,7 @@ export class WakeEndpointManagement {
   }
 
   async changeURL(callbackURL: string) {
-    // Shared-office coworkers receive through their authorized Gateway.
-    await GatewayRoster.requireIndependentRoute(
-      this.env, this.organizationID, this.sessionID,
-    );
-
+    // Only an existing verified direct subscription can be relocated.
     const current = await this.subscription();
     const encrypted = current.encryptedTarget
       ? await WakeTarget.decrypt(this.env, current.encryptedTarget) : null;
