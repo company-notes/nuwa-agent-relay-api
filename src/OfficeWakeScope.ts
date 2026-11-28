@@ -11,6 +11,7 @@ export type WakeScope = {
   organizationID: string;
   sessionID: string;
   office?: OfficeWakeAuthority;
+  resourceScoped?: true;
 };
 
 type OfficeRecipient = {
@@ -35,6 +36,10 @@ export class OfficeWakeScope {
       AND c.identity_available = 1 AND r.thread_mode = 'platform'`;
 
   static async resolve(env: Env, gateway: WakeScope, botID: string): Promise<WakeScope> {
+    if (gateway.resourceScoped) {
+      throw new APIError(403, 'resource_delegation_forbidden', 'An address-scoped grant cannot manage another Session’s Wake.');
+    }
+
     PlatformBotIdentity.requireID(botID, 'recipientBotID');
     const rows = await env.DB.prepare(
       `SELECT t.recipient_session_id AS sessionID, t.approved_at AS approvedAt,

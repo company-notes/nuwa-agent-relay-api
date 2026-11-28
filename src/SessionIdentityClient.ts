@@ -10,6 +10,7 @@ export type SessionIdentity = {
   sessionID: string;
   canonicalAddress: string;
   agentDisplayName?: string | null;
+  resourceScoped?: true;
 };
 
 export type ResolvedSession = {
@@ -21,10 +22,13 @@ export type ResolvedSession = {
 
 type OrganizationIdentity = { id: string; slug: string; identityRevision: number };
 
+type RelayResource = { resource: string; sessionID: string };
+
 type AccountStatus = {
   account: { email: string };
   organization: { id: string; slug: string } | null;
   grantFingerprint?: string;
+  relayResource?: RelayResource;
 };
 
 export type SessionSelection = {
@@ -36,6 +40,7 @@ type Lease = {
   expiresAt: string;
   organization: OrganizationIdentity | null;
   session: ResolvedSession;
+  relayResource?: RelayResource;
 };
 
 export type AuthorizedSession = SessionIdentity & { leaseExpiresAt: string };
@@ -51,6 +56,8 @@ export type DirectoryAgent = {
 
 export class SessionIdentityClient {
   private static readonly logger = Logger.forModule('relay.address');
+  private ownerAccount?: AccountStatus;
+
   constructor(
     private readonly addressURL: Env['ADDRESS_API_URL'],
     private readonly authorization: string,
@@ -210,7 +217,17 @@ export class SessionIdentityClient {
   }
 
   async status(): Promise<AccountStatus> {
-    return this.request<AccountStatus>('GET', '/v2/account/status');
+    return this.ownerAccount ?? this.request<AccountStatus>('GET', '/v2/account/status');
+  }
+
+  async requireOwner(): Promise<void> {
+    const account = await this.status();
+
+    if (account.relayResource !== undefined) {
+      throw new APIError(403, 'owner_grant_required', 'Management requires an owner OAuth grant.');
+    }
+
+    this.ownerAccount = account;
   }
 
   async session(sessionID: string): Promise<ResolvedSession> {
@@ -290,6 +307,12 @@ export class SessionIdentityClient {
       throw new APIError(502, 'address_response_invalid', 'Runtime lease was not renewed.');
     }
 
+    if (lease.relayResource !== undefined &&
+        (!lease.relayResource || lease.relayResource.sessionID !== sessionID ||
+          typeof lease.relayResource.resource !== 'string')) {
+      throw new APIError(403, 'resource_session_mismatch', 'OAuth resource does not authorize this Session.');
+    }
+
     return {
       organizationID: organization.id,
       organizationSlug: organization.slug,
@@ -299,6 +322,7 @@ export class SessionIdentityClient {
       canonicalAddress: verifiedSession.canonical,
       agentDisplayName: verifiedSession.agentDisplayName ?? null,
       leaseExpiresAt: lease.expiresAt,
+      ...(lease.relayResource ? { resourceScoped: true as const } : {}),
     };
   }
 }
