@@ -186,6 +186,53 @@ describe('user-controlled Wake Pairing', () => {
     expect(reply.status).toBe(201);
     const ownWake = await call('GET', '/v2/wake-subscription');
     expect(ownWake.body.data).toMatchObject({ sessionID: 'session-g', enabled: true });
+
+    // An address-specific grant is not an office administrator, even when its
+    // Session is the Gateway. It cannot delegate voice or another Bot's Wake.
+    client.scopedSessions.set('token-g', 'session-g');
+    const delegated = await call('POST', '/v2/messages', {
+      from: 'bot:native-claire', to: ava.recipientCanonicalAddress, body: 'Forbidden delegated voice.',
+    });
+    expect(delegated.status).toBe(403);
+
+    const otherWake = await call('POST', '/v2/wake-pairings', { recipientBotID: 'native-claire' });
+    expect(otherWake.status).toBe(403);
+    expect((await call('GET', '/v2/gateway-office-coworkers')).status).toBe(403);
+    client.scopedSessions.delete('token-g');
+
+    // Owner approved a separate grant for Ava's existing Session. Detach only
+    // shared speaking, keeping the direct receiver and native Bot mapping.
+    client.scopedSessions.set('token-a', ava.recipientSessionID);
+    const ownerManagement = await client.call('token-a', 'GET', '/v2/management/wake-sessions');
+    expect(ownerManagement.status).toBe(403);
+
+    const independent = await client.callAsSession(ava.recipientSessionID, 'DELETE', '/v2/gateway-invitation');
+    expect(independent.status).toBe(200);
+    const direct = await client.callAsSession(ava.recipientSessionID, 'GET', '/v2/wake-subscription');
+    expect(direct.body.data).toMatchObject({ enabled: true, receiverMode: 'direct' });
+
+    const forbiddenOldVoice = await call('POST', '/v2/messages', {
+      from: 'bot:native-ava', to: claire.recipientCanonicalAddress, body: 'Old shared voice is no longer authorized.',
+    });
+    expect(forbiddenOldVoice.status).toBe(403);
+
+    const independentSend = await client.callAsSession(ava.recipientSessionID, 'POST', '/v2/messages', {
+      to: claire.recipientCanonicalAddress, body: 'Ava sends directly without from.',
+    });
+    expect(independentSend.status).toBe(201);
+    await MailReceipt.confirmArrival(env, independentSend.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+    expect(client.wakeRequests.filter((entry) => entry.body.messageID === independentSend.body.data.id)
+      .map((entry) => new URL(entry.url).pathname)).toEqual(['/office-gateway']);
+
+    const newInbound = await call('POST', '/v2/messages', {
+      from: 'bot:native-claire', to: ava.recipientCanonicalAddress, body: 'The direct receiver remains active.',
+    });
+    expect(newInbound.status).toBe(201);
+    await MailReceipt.confirmArrival(env, newInbound.body.data.id, 'webhook');
+    await WakeService.dispatchDue(env);
+    expect(client.wakeRequests.filter((entry) => entry.body.messageID === newInbound.body.data.id)
+      .map((entry) => new URL(entry.url).pathname)).toEqual(['/ava-direct']);
   });
 
   it('OAuth-verifies exact Session, accepts key only in private browser form, and emits one challenge', async () => {
